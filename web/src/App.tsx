@@ -1,30 +1,40 @@
 import { useState } from 'react';
-import { Moon, Sun, Cpu } from 'lucide-react';
-import InputPanel from './components/InputPanel';
-import ResultsPanel from './components/ResultsPanel';
-import { generateAIAnalysis } from './lib/mockAI';
-import { AnalysisResult } from './lib/supabase';
-
-type InputMode = 'text' | 'excel';
+import { LogOut, Moon, Sun } from 'lucide-react';
+import { useAuth } from './contexts/AuthContext';
+import LoginPage from './components/LoginPage';
+import AdminRSDashboard from './components/AdminRSDashboard';
+import AdminMetaDashboard from './components/AdminMetaDashboard';
 
 function App() {
+  const { user, isLoading: authLoading, isAuthenticated, logout } = useAuth();
   const [isDark, setIsDark] = useState(true);
-  const [inputMode, setInputMode] = useState<InputMode>('text');
-  const [diagnosis, setDiagnosis] = useState('');
-  const [procedure, setProcedure] = useState('');
-  const [medication, setMedication] = useState('');
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const handleGenerate = async () => {
-    setIsLoading(true);
-    try {
-      const analysisResult = await generateAIAnalysis(diagnosis, procedure, medication);
-      setResult(analysisResult);
-    } catch (error) {
-      console.error('Analysis failed:', error);
-    } finally {
-      setIsLoading(false);
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-slate-900">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-cyan-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage isDark={isDark} />;
+  }
+
+  // Determine which dashboard to show based on user role
+  const renderDashboard = () => {
+    if (user?.role === 'Admin Meta') {
+      return <AdminMetaDashboard isDark={isDark} />;
+    } else if (user?.role === 'Admin RS') {
+      return <AdminRSDashboard isDark={isDark} />;
+    } else {
+      // Default dashboard for regular users (if any)
+      return <AdminRSDashboard isDark={isDark} />;
     }
   };
 
@@ -54,15 +64,8 @@ function App() {
               : 'bg-gradient-to-r from-blue-600/90 to-blue-800/90 border-b border-blue-400/30'
           } backdrop-blur-xl shadow-2xl flex-shrink-0`}
         >
-          <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
+          <div className="px-6 py-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div
-                className={`p-2 rounded-lg ${
-                  isDark ? 'bg-cyan-500/20' : 'bg-white/20'
-                } backdrop-blur-sm`}
-              >
-                <Cpu className={`w-8 h-8 ${isDark ? 'text-cyan-400' : 'text-white'}`} />
-              </div>
               <div>
                 <h1
                   className={`text-2xl font-bold ${
@@ -78,118 +81,44 @@ function App() {
                     isDark ? 'text-slate-400' : 'text-blue-100'
                   }`}
                 >
-                  Smart Clinical Analyzer
+                  {user?.role || 'User'} Dashboard
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={() => setIsDark(!isDark)}
-              className={`p-3 rounded-lg ${
-                isDark
-                  ? 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400'
-                  : 'bg-white/20 hover:bg-white/30 text-white'
-              } backdrop-blur-sm transition-all duration-300 hover:scale-110 active:scale-95`}
-            >
-              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
+            <div className="flex items-center gap-3">
+              <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-blue-100'}`}>
+                {user?.full_name}
+              </div>
+              <button
+                onClick={() => setIsDark(!isDark)}
+                className={`p-3 rounded-lg ${
+                  isDark
+                    ? 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400'
+                    : 'bg-white/20 hover:bg-white/30 text-white'
+                } backdrop-blur-sm transition-all duration-300 hover:scale-110 active:scale-95`}
+                title="Toggle Theme"
+              >
+                {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={logout}
+                className={`p-3 rounded-lg ${
+                  isDark
+                    ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                    : 'bg-red-500/20 hover:bg-red-500/30 text-red-600'
+                } backdrop-blur-sm transition-all duration-300 hover:scale-110 active:scale-95`}
+                title="Logout"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </header>
 
         <main className="flex-1 overflow-hidden">
-          <div className="max-w-7xl mx-auto px-6 py-8 h-full flex flex-col">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-hidden">
-              <div
-                className={`rounded-2xl p-6 ${
-                  isDark
-                    ? 'bg-slate-800/40 border border-cyan-500/20'
-                    : 'bg-white/60 border border-blue-100'
-                } backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden`}
-              >
-                <h2
-                  className={`text-lg font-semibold mb-4 ${
-                    isDark ? 'text-cyan-300' : 'text-blue-700'
-                  }`}
-                >
-                  Smart Input Hybrid
-                </h2>
-
-                <div className="flex gap-2 mb-6 flex-shrink-0">
-                  <button
-                    onClick={() => {
-                      setInputMode('text');
-                      setDiagnosis('');
-                      setProcedure('');
-                      setMedication('');
-                    }}
-                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
-                      inputMode === 'text'
-                        ? isDark
-                          ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                          : 'bg-blue-200 text-blue-700 border border-blue-400'
-                        : isDark
-                        ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                        : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
-                    }`}
-                  >
-                    Text Input
-                  </button>
-                  <button
-                    onClick={() => {
-                      setInputMode('excel');
-                      setDiagnosis('');
-                      setProcedure('');
-                      setMedication('');
-                    }}
-                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
-                      inputMode === 'excel'
-                        ? isDark
-                          ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                          : 'bg-blue-200 text-blue-700 border border-blue-400'
-                        : isDark
-                        ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                        : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
-                    }`}
-                  >
-                    Excel Import
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                  <InputPanel
-                    mode={inputMode}
-                    diagnosis={diagnosis}
-                    procedure={procedure}
-                    medication={medication}
-                    onDiagnosisChange={setDiagnosis}
-                    onProcedureChange={setProcedure}
-                    onMedicationChange={setMedication}
-                    onGenerate={handleGenerate}
-                    isLoading={isLoading}
-                    isDark={isDark}
-                  />
-                </div>
-              </div>
-
-              <div
-                className={`rounded-2xl p-6 ${
-                  isDark
-                    ? 'bg-slate-800/40 border border-cyan-500/20'
-                    : 'bg-white/60 border border-blue-100'
-                } backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden`}
-              >
-                <h2
-                  className={`text-lg font-semibold mb-6 flex-shrink-0 ${
-                    isDark ? 'text-cyan-300' : 'text-blue-700'
-                  }`}
-                >
-                  Hasil Analisis AI
-                </h2>
-                <div className="flex-1 overflow-y-auto">
-                  <ResultsPanel result={result} isDark={isDark} />
-                </div>
-              </div>
-            </div>
+          <div className="px-6 py-6 h-full">
+            {renderDashboard()}
           </div>
         </main>
       </div>

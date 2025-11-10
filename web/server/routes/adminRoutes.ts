@@ -1,0 +1,209 @@
+import express, { Request, Response } from 'express';
+import { adminService } from '../services/adminService.js';
+import { analysisService } from '../services/analysisService.js';
+import { authenticate, authorize } from '../middleware/authMiddleware.js';
+
+const router = express.Router();
+
+// All routes require authentication and Admin Meta role
+router.use(authenticate);
+router.use(authorize('Admin Meta'));
+
+// Create Admin RS account
+router.post('/admin-rs', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password, full_name, active_until } = req.body;
+
+    // Validation
+    if (!email || !password || !full_name) {
+      res.status(400).json({
+        success: false,
+        message: 'Email, password, and full name are required',
+      });
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid email format',
+      });
+      return;
+    }
+
+    // Password validation
+    if (password.length < 6) {
+      res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters',
+      });
+      return;
+    }
+
+    const created_by = req.user!.userId;
+    const activeUntilDate = active_until ? new Date(active_until) : null;
+
+    const adminRS = await adminService.createAdminRS({
+      email,
+      password,
+      full_name,
+      active_until: activeUntilDate,
+      created_by,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Admin RS account created successfully',
+      data: adminRS,
+    });
+  } catch (error: any) {
+    console.error('Create Admin RS error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to create Admin RS account',
+    });
+  }
+});
+
+// Get all Admin RS accounts
+router.get('/admin-rs', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const adminRSUsers = await adminService.getAllAdminRS();
+
+    res.status(200).json({
+      success: true,
+      data: adminRSUsers,
+    });
+  } catch (error: any) {
+    console.error('Get Admin RS list error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get Admin RS list',
+    });
+  }
+});
+
+// Update Admin RS account status
+router.patch('/admin-rs/:id/status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user_id = parseInt(req.params.id);
+    const { is_active, active_until } = req.body;
+
+    if (isNaN(user_id)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid user ID',
+      });
+      return;
+    }
+
+    const activeUntilDate = active_until !== undefined 
+      ? (active_until ? new Date(active_until) : null)
+      : undefined;
+
+    const updatedUser = await adminService.updateAccountStatus({
+      user_id,
+      is_active,
+      active_until: activeUntilDate,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Account status updated successfully',
+      data: updatedUser,
+    });
+  } catch (error: any) {
+    console.error('Update account status error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to update account status',
+    });
+  }
+});
+
+// Delete Admin RS account
+router.delete('/admin-rs/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user_id = parseInt(req.params.id);
+
+    if (isNaN(user_id)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid user ID',
+      });
+      return;
+    }
+
+    await adminService.deleteAdminRS(user_id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Admin RS account deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('Delete Admin RS error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to delete Admin RS account',
+    });
+  }
+});
+
+// Check and deactivate expired accounts (can be called manually or via cron job)
+router.post('/admin-rs/check-expiration', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const deactivatedCount = await adminService.deactivateExpiredAccounts();
+
+    res.status(200).json({
+      success: true,
+      message: `${deactivatedCount} expired accounts deactivated`,
+      data: { deactivated_count: deactivatedCount },
+    });
+  } catch (error: any) {
+    console.error('Check expiration error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to check expiration',
+    });
+  }
+});
+
+// Get analysis statistics per user
+router.get('/statistics/users', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const stats = await analysisService.getAnalysisStatsByUser();
+
+    res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error: any) {
+    console.error('Get statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get statistics',
+    });
+  }
+});
+
+// Get overall statistics
+router.get('/statistics/overall', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const stats = await analysisService.getOverallStats();
+
+    res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error: any) {
+    console.error('Get overall statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get overall statistics',
+    });
+  }
+});
+
+export default router;

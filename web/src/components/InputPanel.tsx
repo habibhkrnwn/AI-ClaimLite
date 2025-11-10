@@ -110,61 +110,64 @@ export default function InputPanel({
   }
 
   return (
-    <div className="space-y-6 h-full flex flex-col">
-      <div className="space-y-2 flex-1 overflow-y-auto">
+    <div className="space-y-4 flex flex-col">
+      <div className="space-y-2">
         <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
           <FileText className="w-4 h-4" />
           Diagnosis
         </label>
-        <textarea
+        <input
+          type="text"
           value={diagnosis}
           onChange={(e) => onDiagnosisChange(e.target.value)}
           placeholder="Masukkan diagnosis pasien..."
-          className={`w-full h-20 px-4 py-3 rounded-lg border ${
+          className={`w-full px-4 py-3 rounded-lg border ${
             isDark
               ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
               : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
           } backdrop-blur-sm focus:outline-none focus:ring-2 ${
             isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
-          } transition-all duration-300 resize-none`}
+          } transition-all duration-300`}
         />
       </div>
 
-      <div className="space-y-2 flex-1 overflow-y-auto">
+      <div className="space-y-2">
         <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
           <Activity className="w-4 h-4" />
           Tindakan
         </label>
-        <textarea
+        <input
+          type="text"
           value={procedure}
           onChange={(e) => onProcedureChange(e.target.value)}
           placeholder="Masukkan tindakan medis yang dilakukan..."
-          className={`w-full h-20 px-4 py-3 rounded-lg border ${
+          className={`w-full px-4 py-3 rounded-lg border ${
             isDark
               ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
               : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
           } backdrop-blur-sm focus:outline-none focus:ring-2 ${
             isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
-          } transition-all duration-300 resize-none`}
+          } transition-all duration-300`}
         />
       </div>
 
-      <div className="space-y-2 flex-1 overflow-y-auto">
+      <div className="space-y-2">
         <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
           <Pill className="w-4 h-4" />
           Obat
         </label>
-        <textarea
+        <input
+          type="text"
           value={medication}
           onChange={(e) => onMedicationChange(e.target.value)}
           placeholder="Masukkan daftar obat yang diresepkan..."
-          className={`w-full h-20 px-4 py-3 rounded-lg border ${
+          className={`w-full px-4 py-3 rounded-lg border ${
             isDark
               ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
               : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
           } backdrop-blur-sm focus:outline-none focus:ring-2 ${
             isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
-          } transition-all duration-300 resize-none`}
+          } transition-all duration-300`}
         />
       </div>
 
