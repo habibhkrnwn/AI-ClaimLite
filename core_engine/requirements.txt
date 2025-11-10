@@ -1,0 +1,50 @@
+# ============================================================
+# AI-CLAIM LITE CORE ENGINE - Python Dependencies
+# ============================================================
+
+# Web Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Database (PostgreSQL)
+sqlalchemy
+psycopg2-binary
+asyncpg
+
+# OpenAI
+openai
+
+# Data Processing
+pandas
+openpyxl
+xlrd
+
+# PDF Generation
+reportlab
+
+# Fuzzy Matching untuk ICD-9 mapping
+rapidfuzz
+
+# Environment Variables
+python-dotenv
+
+# HTTP Client
+httpx
+requests
+
+# Date/Time
+python-dateutil
+
+# Validation & Parsing
+email-validator
+python-multipart
+
+# Security
+passlib[bcrypt]
+python-jose[cryptography]
+bcrypt
+
+# Logging
+python-json-logger
