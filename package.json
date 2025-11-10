@@ -1,0 +1,27 @@
+{
+  "name": "aiclaimlite",
+  "version": "1.0.0",
+  "description": "AI-CLAIM Lite - Smart Clinical Analyzer",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "cd api && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "install:all": "npm install && cd api && npm install && cd ../web && npm install",
+    "build": "cd api && npm run build && cd ../web && npm run build",
+    "start": "concurrently \"npm run start:api\" \"npm run start:web\"",
+    "start:api": "cd api && npm start",
+    "start:web": "cd web && npm run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "keywords": [
+    "medical",
+    "claims",
+    "ai",
+    "analyzer"
+  ],
+  "author": "",
+  "license": "ISC"
+}
