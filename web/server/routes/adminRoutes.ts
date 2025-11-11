@@ -12,7 +12,7 @@ router.use(authorize('Admin Meta'));
 // Create Admin RS account
 router.post('/admin-rs', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, full_name, active_until } = req.body;
+    const { email, password, full_name, active_until, daily_ai_limit } = req.body;
 
     // Validation
     if (!email || !password || !full_name) {
@@ -51,6 +51,7 @@ router.post('/admin-rs', async (req: Request, res: Response): Promise<void> => {
       full_name,
       active_until: activeUntilDate,
       created_by,
+      daily_ai_limit: daily_ai_limit || 100, // Default 100
     });
 
     res.status(201).json({
@@ -202,6 +203,43 @@ router.get('/statistics/overall', async (req: Request, res: Response): Promise<v
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get overall statistics',
+    });
+  }
+});
+
+// Update user's daily AI limit
+router.patch('/users/:id/ai-limit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user_id = parseInt(req.params.id);
+    const { daily_ai_limit } = req.body;
+
+    if (isNaN(user_id)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid user ID',
+      });
+      return;
+    }
+
+    if (daily_ai_limit === undefined || daily_ai_limit < 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Daily AI limit must be a positive number',
+      });
+      return;
+    }
+
+    await adminService.updateDailyAILimit(user_id, daily_ai_limit);
+
+    res.status(200).json({
+      success: true,
+      message: 'Daily AI limit updated successfully',
+    });
+  } catch (error: any) {
+    console.error('Update AI limit error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to update AI limit',
     });
   }
 });

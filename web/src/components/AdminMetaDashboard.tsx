@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Users, UserCheck, FileText, Calendar, TrendingUp, Plus, Ban, Clock, Trash2 } from 'lucide-react';
 import { apiService, User } from '../lib/api';
+import UserManagement from './UserManagement';
 
 interface UserStats {
   user_id: number;
@@ -34,7 +35,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'statistics'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'statistics' | 'management'>('users');
 
   // Create form state
   const [formData, setFormData] = useState({
@@ -42,6 +43,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
     password: '',
     full_name: '',
     active_until: '',
+    daily_ai_limit: 100,
   });
 
   // Load all Admin RS users
@@ -88,7 +90,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
       };
       await apiService.createAdminRS(data);
       setShowCreateForm(false);
-      setFormData({ email: '', password: '', full_name: '', active_until: '' });
+      setFormData({ email: '', password: '', full_name: '', active_until: '', daily_ai_limit: 100 });
       await loadAdminRSUsers();
       await loadStatistics();
       alert('Admin RS account created successfully');
@@ -113,7 +115,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
 
   // Handle extend expiration
   const handleExtendExpiration = async (userId: number) => {
-    const days = prompt('Extend account for how many days?');
+    const days = prompt('Extend account for how many days?', '30');
     if (!days) return;
 
     const daysNum = parseInt(days);
@@ -122,15 +124,30 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
       return;
     }
 
-    const newDate = new Date();
-    newDate.setDate(newDate.getDate() + daysNum);
+    // Get current user to check their active_until
+    const currentUser = adminRSUsers.find(u => u.id === userId);
+    if (!currentUser) return;
+
+    let newDate: Date;
+    
+    // If account is expired or has no expiration date, extend from today
+    if (!currentUser.active_until || new Date(currentUser.active_until) < new Date()) {
+      newDate = new Date();
+      newDate.setDate(newDate.getDate() + daysNum);
+    } else {
+      // If account is still active, extend from current expiration date
+      newDate = new Date(currentUser.active_until);
+      newDate.setDate(newDate.getDate() + daysNum);
+    }
 
     try {
+      // Update both active_until and set is_active to true
       await apiService.updateAdminRSStatus(userId, {
         active_until: newDate.toISOString(),
+        is_active: true,
       });
       await loadAdminRSUsers();
-      alert(`Account extended for ${daysNum} days`);
+      alert(`Account extended for ${daysNum} days until ${newDate.toLocaleDateString('id-ID')}`);
     } catch (err: any) {
       alert(err.message || 'Failed to extend account');
     }
@@ -292,6 +309,20 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
             User Management
           </button>
           <button
+            onClick={() => setActiveTab('management')}
+            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'management'
+                ? isDark
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-blue-600 text-white'
+                : isDark
+                  ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            AI Limit Management
+          </button>
+          <button
             onClick={() => setActiveTab('statistics')}
             className={`px-6 py-2 rounded-lg font-medium transition-colors ${
               activeTab === 'statistics'
@@ -412,6 +443,30 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                     }`}
                     placeholder="dd / mm / yyyy"
                   />
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDark ? 'text-slate-300' : 'text-gray-700'
+                  }`}>
+                    Daily AI Limit
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.daily_ai_limit}
+                    onChange={(e) => setFormData({ ...formData, daily_ai_limit: parseInt(e.target.value) || 100 })}
+                    className={`w-full px-4 py-2 rounded-lg focus:ring-2 focus:border-transparent ${
+                      isDark
+                        ? 'bg-slate-700 border border-slate-600 text-white focus:ring-cyan-500'
+                        : 'bg-white border border-gray-300 text-gray-900 focus:ring-blue-500'
+                    }`}
+                    placeholder="100"
+                  />
+                  <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                    Maximum AI analysis requests per day (default: 100)
+                  </p>
                 </div>
 
                 <div className="flex gap-3 pt-2">
@@ -576,7 +631,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2">
                               <button
-                                onClick={() => handleToggleStatus(user.id, !user.is_active)}
+                                onClick={() => handleToggleStatus(user.id, user.is_active)}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all shadow-sm flex items-center gap-1.5 ${
                                   isDark
                                     ? 'bg-slate-800 text-red-400 border-red-500/50 hover:bg-red-600 hover:text-white hover:border-red-600'
@@ -584,7 +639,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                                 }`}
                               >
                                 <Ban className="h-3.5 w-3.5" />
-                                Deactivate
+                                {user.is_active ? 'Deactivate' : 'Activate'}
                               </button>
                               <button
                                 onClick={() => handleExtendExpiration(user.id)}
@@ -618,6 +673,11 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
               )}
             </div>
           </div>
+        )}
+
+        {/* AI Limit Management */}
+        {activeTab === 'management' && (
+          <UserManagement isDark={isDark} />
         )}
 
         {/* Usage Statistics */}

@@ -218,6 +218,42 @@ class ApiService {
   async getOverallStatistics(): Promise<{ success: boolean; data: any }> {
     return this.request('/api/admin/statistics/overall');
   }
+
+  // AI Analysis endpoints
+  async analyzeClaimAI(data: {
+    mode?: 'form' | 'text';
+    diagnosis?: string;
+    procedure?: string;
+    medication?: string;
+    input_text?: string;
+  }): Promise<{ 
+    success: boolean; 
+    data: any;
+    usage?: { used: number; remaining: number; limit: number };
+  }> {
+    return this.request('/api/ai/analyze', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async validateClaimInput(data: {
+    diagnosis: string;
+    procedure: string;
+    medication: string;
+  }): Promise<{ success: boolean; data: any }> {
+    return this.request('/api/ai/validate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Get AI usage status
+  async getAIUsageStatus(): Promise<{ success: boolean; data: { used: number; remaining: number; limit: number } }> {
+    return this.request('/api/ai/usage', {
+      method: 'GET',
+    });
+  }
 }
 
 export const apiService = new ApiService();
