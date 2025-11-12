@@ -68,56 +68,93 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
 
         // Transform API response to match AnalysisResult interface
         const aiResult = response.data;
+        console.log('[AdminRS] Full AI Result:', JSON.stringify(aiResult, null, 2));
         
-        // Map severity from AI result
-        let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
-        const severityTingkat = aiResult.severity?.tingkat?.toLowerCase();
-        if (severityTingkat === 'mild' || severityTingkat === 'ringan') {
-          severityLevel = 'ringan';
-        } else if (severityTingkat === 'severe' || severityTingkat === 'berat') {
-          severityLevel = 'berat';
-        }
+        // Extract ICD codes from klasifikasi
+        const diagnosisText = aiResult.klasifikasi?.diagnosis || '';
+        const icd10Match = diagnosisText.match(/\(([A-Z]\d{2}(?:\.\d{1,2})?)\)/);
+        const icd10Code = icd10Match ? icd10Match[1] : '';
+        
+        // Extract ICD-9 codes from tindakan array
+        const tindakanArray = aiResult.klasifikasi?.tindakan || [];
+        const icd9Codes = tindakanArray
+          .map((t: any) => {
+            if (typeof t === 'string') {
+              const match = t.match(/\((\d{2}\.\d{2})\)/);
+              return match ? match[1] : null;
+            }
+            return null;
+          })
+          .filter((code: any) => code !== null);
 
-        // Map validation status
+        // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';
-        const validStatus = aiResult.validasi_klinis?.status?.toLowerCase();
-        if (validStatus === 'invalid' || validStatus === 'tidak valid') {
+        const sesuaiCP = aiResult.validasi_klinis?.sesuai_cp;
+        const sesuaiFornas = aiResult.validasi_klinis?.sesuai_fornas;
+        
+        if (sesuaiCP === false || sesuaiFornas === false) {
           validationStatus = 'invalid';
-        } else if (validStatus === 'warning' || validStatus === 'peringatan') {
+        } else if (sesuaiCP === 'parsial' || sesuaiFornas === 'parsial') {
           validationStatus = 'warning';
         }
 
-        // Map Fornas status
+        // Extract severity from konsistensi.tingkat (percentage)
+        let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
+        const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
+        if (konsistensiTingkat >= 80) {
+          severityLevel = 'ringan';
+        } else if (konsistensiTingkat < 60) {
+          severityLevel = 'berat';
+        }
+
+        // Map Fornas status from fornas_summary
         let fornasStatus: 'sesuai' | 'tidak-sesuai' | 'perlu-review' = 'sesuai';
-        const fornasKepatuhan = aiResult.fornas?.tingkat_kepatuhan || 100;
-        if (fornasKepatuhan < 50) {
+        const fornasSummary = aiResult.fornas_summary || {};
+        const sesuaiCount = fornasSummary.sesuai || 0;
+        const totalObat = fornasSummary.total_obat || 1;
+        const fornasPercentage = (sesuaiCount / totalObat) * 100;
+        
+        if (fornasPercentage < 50) {
           fornasStatus = 'tidak-sesuai';
-        } else if (fornasKepatuhan < 80) {
+        } else if (fornasPercentage < 80) {
           fornasStatus = 'perlu-review';
         }
         
+        // Format CP Ringkas
+        const cpRingkasText = Array.isArray(aiResult.cp_ringkas) 
+          ? aiResult.cp_ringkas.map((item: any) => {
+              if (typeof item === 'string') return item;
+              return `${item.tahap || item.stage_name || ''}: ${item.keterangan || item.description || ''}`;
+            }).join(' • ')
+          : (typeof aiResult.cp_ringkas === 'string' ? aiResult.cp_ringkas : '-');
+        
+        // Format Required Docs
+        const requiredDocs = Array.isArray(aiResult.checklist_dokumen)
+          ? aiResult.checklist_dokumen.map((doc: any) => {
+              if (typeof doc === 'string') return doc;
+              return doc.nama_dokumen || doc.document || doc.name || '';
+            }).filter((d: string) => d)
+          : [];
+        
         const analysisResult: AnalysisResult = {
           classification: {
-            icd10: aiResult.klasifikasi?.icd10 ? [aiResult.klasifikasi.icd10] : [],
-            icd9: aiResult.klasifikasi?.icd9 ? 
-              (Array.isArray(aiResult.klasifikasi.icd9) ? aiResult.klasifikasi.icd9 : [aiResult.klasifikasi.icd9]) 
-              : [],
+            icd10: icd10Code ? [icd10Code] : [],
+            icd9: icd9Codes,
           },
           validation: {
             status: validationStatus,
-            message: aiResult.validasi_klinis?.keterangan || aiResult.insight_ai || 'Analisis berhasil',
+            message: aiResult.validasi_klinis?.catatan || 
+                    `CP: ${sesuaiCP ? '✓ Sesuai' : '✗ Tidak sesuai'}, Fornas: ${sesuaiFornas ? '✓ Sesuai' : '✗ Tidak sesuai'}`,
           },
           severity: severityLevel,
-          cpNasional: aiResult.cp_ringkas?.map((item: any) => 
-            `${item.nama_tindakan}: ${item.tarif_ringkas}`
-          ).join(', ') || '-',
-          requiredDocs: aiResult.checklist_dokumen?.map((doc: any) => doc.nama_dokumen) || [],
+          cpNasional: cpRingkasText,
+          requiredDocs: requiredDocs,
           fornas: {
             status: fornasStatus,
-            message: `Kepatuhan: ${fornasKepatuhan}% - ${aiResult.fornas?.catatan || 'Sesuai standar'}`,
+            message: `${sesuaiCount}/${totalObat} obat sesuai Fornas (${Math.round(fornasPercentage)}%)`,
           },
           aiInsight: aiResult.insight_ai || 'Analisis berhasil dilakukan.',
-          consistency: aiResult.konsistensi?.skor_keseluruhan || 85,
+          consistency: aiResult.konsistensi?.tingkat || 85,
         };
 
         setResult(analysisResult);

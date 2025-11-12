@@ -29,6 +29,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce verbosity from watchfiles / uvicorn internal loggers which spam "1 change detected"
+# These are INFO-level by default; raise to WARNING so they don't clutter the console during normal runs.
+logging.getLogger('watchfiles').setLevel(logging.WARNING)
+logging.getLogger('watchfiles.main').setLevel(logging.WARNING)
+logging.getLogger('uvicorn.error').setLevel(logging.WARNING)
+logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+
 # Create FastAPI app
 app = FastAPI(
     title="AI-CLAIM Lite",
@@ -622,10 +629,24 @@ if __name__ == "__main__":
     import uvicorn
     
     # Run with uvicorn for development
+    # Only watch Python files in main directory and services
     uvicorn.run(
         "main:app",
         host=os.getenv("APP_HOST", "0.0.0.0"),
         port=int(os.getenv("APP_PORT", 8003)),
         reload=os.getenv("DEBUG", "false").lower() == "true",
+        reload_dirs=[".", "services"] if os.getenv("DEBUG", "false").lower() == "true" else None,
+        reload_excludes=[
+            "logs",
+            "temp", 
+            "__pycache__",
+            "venv",
+            ".env",
+            "*.log",
+            "*.pyc",
+            "*.pyo",
+            "*.db",
+            "*.sqlite*"
+        ],
         log_level=os.getenv("LOG_LEVEL", "info").lower()
     )
