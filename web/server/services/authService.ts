@@ -13,12 +13,16 @@ export interface User {
   is_active: boolean;
   active_until?: Date | null;
   created_at: Date;
+  daily_ai_limit?: number;
+  ai_usage_count?: number;
+  ai_usage_date?: Date;
 }
 
 export interface RegisterData {
   email: string;
   password: string;
   full_name: string;
+  daily_ai_limit?: number;
 }
 
 export interface LoginData {
@@ -29,7 +33,7 @@ export interface LoginData {
 export const authService = {
   // Register new user
   async register(data: RegisterData): Promise<User> {
-    const { email, password, full_name } = data;
+    const { email, password, full_name, daily_ai_limit = 100 } = data;
 
     // Check if user already exists
     const existingUser = await query(
@@ -44,12 +48,12 @@ export const authService = {
     // Hash password
     const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    // Insert new user
+    // Insert new user with AI limit
     const result = await query(
-      `INSERT INTO users (email, password_hash, full_name) 
-       VALUES ($1, $2, $3) 
-       RETURNING id, email, full_name, role, is_active, created_at`,
-      [email, password_hash, full_name]
+      `INSERT INTO users (email, password_hash, full_name, daily_ai_limit, ai_usage_count, ai_usage_date) 
+       VALUES ($1, $2, $3, $4, 0, CURRENT_DATE) 
+       RETURNING id, email, full_name, role, is_active, created_at, daily_ai_limit, ai_usage_count, ai_usage_date`,
+      [email, password_hash, full_name, daily_ai_limit]
     );
 
     return result.rows[0];
@@ -189,12 +193,205 @@ export const authService = {
   // Get user by ID
   async getUserById(userId: number): Promise<User | null> {
     const result = await query(
-      `SELECT id, email, full_name, role, is_active, active_until, created_at 
+      `SELECT id, email, full_name, role, is_active, active_until, created_at,
+              daily_ai_limit, ai_usage_count, ai_usage_date
        FROM users WHERE id = $1`,
       [userId]
     );
 
     return result.rows.length > 0 ? result.rows[0] : null;
+  },
+
+  // Check AI usage limit (without incrementing)
+  async checkAIUsageLimit(userId: number): Promise<{ allowed: boolean; remaining: number; limit: number; current: number }> {
+    console.log(`[checkAIUsageLimit] Checking limit for userId: ${userId}`);
+    
+    // Get user's current usage with SQL date comparison
+    const result = await query(
+      `SELECT 
+        daily_ai_limit, 
+        ai_usage_count, 
+        ai_usage_date,
+        CASE 
+          WHEN ai_usage_date = CURRENT_DATE THEN ai_usage_count 
+          ELSE 0 
+        END as current_count,
+        (ai_usage_date = CURRENT_DATE) as is_today
+       FROM users 
+       WHERE id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('User tidak ditemukan');
+    }
+
+    const { daily_ai_limit, ai_usage_date, current_count, is_today } = result.rows[0];
+
+    console.log(`[checkAIUsageLimit] DB - count: ${current_count}, limit: ${daily_ai_limit}, date: ${ai_usage_date}, is_today: ${is_today}`);
+
+    // Reset count in DB if date changed
+    if (!is_today) {
+      console.log(`[checkAIUsageLimit] Date changed, resetting count to 0`);
+      await query(
+        `UPDATE users SET ai_usage_count = 0, ai_usage_date = CURRENT_DATE WHERE id = $1`,
+        [userId]
+      );
+    }
+
+    // Check if limit exceeded
+    const allowed = current_count < daily_ai_limit;
+    
+    const returnValue = {
+      allowed,
+      remaining: Math.max(0, daily_ai_limit - current_count),
+      limit: daily_ai_limit,
+      current: current_count,
+    };
+    
+    console.log(`[checkAIUsageLimit] Returning:`, returnValue);
+
+    return returnValue;
+  },
+
+  // Increment AI usage count (call after successful analysis)
+  async incrementAIUsage(userId: number): Promise<{ used: number; remaining: number; limit: number }> {
+    console.log(`[incrementAIUsage] Starting for userId: ${userId}`);
+    
+    // Increment usage count
+    const result = await query(
+      `UPDATE users 
+       SET ai_usage_count = ai_usage_count + 1 
+       WHERE id = $1
+       RETURNING daily_ai_limit, ai_usage_count`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('User tidak ditemukan');
+    }
+
+    const { daily_ai_limit, ai_usage_count } = result.rows[0];
+    
+    console.log(`[incrementAIUsage] After increment - count: ${ai_usage_count}, limit: ${daily_ai_limit}`);
+
+    // Update usage history
+    await query(
+      `INSERT INTO ai_usage_history (user_id, usage_date, request_count, last_request_at)
+       VALUES ($1, CURRENT_DATE, 1, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id, usage_date) 
+       DO UPDATE SET 
+         request_count = ai_usage_history.request_count + 1,
+         last_request_at = CURRENT_TIMESTAMP`,
+      [userId]
+    );
+
+    const returnValue = {
+      used: ai_usage_count,
+      remaining: Math.max(0, daily_ai_limit - ai_usage_count),
+      limit: daily_ai_limit,
+    };
+    
+    console.log(`[incrementAIUsage] Returning:`, returnValue);
+
+    return returnValue;
+  },
+
+  // Check and update AI usage (legacy - for backward compatibility)
+  async checkAndIncrementAIUsage(userId: number): Promise<{ allowed: boolean; remaining: number; limit: number }> {
+    // Get user's current usage
+    const result = await query(
+      `SELECT daily_ai_limit, ai_usage_count, ai_usage_date FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('User tidak ditemukan');
+    }
+
+    const { daily_ai_limit, ai_usage_count, ai_usage_date } = result.rows[0];
+    const today = new Date().toISOString().split('T')[0];
+    const usageDate = ai_usage_date ? new Date(ai_usage_date).toISOString().split('T')[0] : null;
+
+    let currentCount = ai_usage_count;
+
+    // Reset count if date changed
+    if (usageDate !== today) {
+      currentCount = 0;
+      await query(
+        `UPDATE users SET ai_usage_count = 0, ai_usage_date = CURRENT_DATE WHERE id = $1`,
+        [userId]
+      );
+    }
+
+    // Check if limit exceeded
+    if (currentCount >= daily_ai_limit) {
+      return {
+        allowed: false,
+        remaining: 0,
+        limit: daily_ai_limit,
+      };
+    }
+
+    // Increment usage count
+    await query(
+      `UPDATE users SET ai_usage_count = ai_usage_count + 1 WHERE id = $1`,
+      [userId]
+    );
+
+    // Update usage history
+    await query(
+      `INSERT INTO ai_usage_history (user_id, usage_date, request_count, last_request_at)
+       VALUES ($1, CURRENT_DATE, 1, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id, usage_date) 
+       DO UPDATE SET 
+         request_count = ai_usage_history.request_count + 1,
+         last_request_at = CURRENT_TIMESTAMP`,
+      [userId]
+    );
+
+    return {
+      allowed: true,
+      remaining: daily_ai_limit - currentCount - 1,
+      limit: daily_ai_limit,
+    };
+  },
+
+  // Get current AI usage status
+  async getAIUsageStatus(userId: number): Promise<{ used: number; remaining: number; limit: number }> {
+    console.log(`[getAIUsageStatus] Getting usage for userId: ${userId}`);
+    
+    const result = await query(
+      `SELECT 
+        daily_ai_limit, 
+        ai_usage_count, 
+        ai_usage_date,
+        CASE 
+          WHEN ai_usage_date = CURRENT_DATE THEN ai_usage_count 
+          ELSE 0 
+        END as current_count
+       FROM users 
+       WHERE id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('User tidak ditemukan');
+    }
+
+    const { daily_ai_limit, ai_usage_date, current_count } = result.rows[0];
+
+    console.log(`[getAIUsageStatus] DB values - current_count: ${current_count}, limit: ${daily_ai_limit}, date: ${ai_usage_date}`);
+
+    const returnValue = {
+      used: current_count,
+      remaining: Math.max(0, daily_ai_limit - current_count),
+      limit: daily_ai_limit,
+    };
+    
+    console.log(`[getAIUsageStatus] Returning:`, returnValue);
+
+    return returnValue;
   },
 };
 

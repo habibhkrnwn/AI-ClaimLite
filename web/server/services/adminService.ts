@@ -9,6 +9,7 @@ export interface CreateAdminRSData {
   full_name: string;
   active_until?: Date | null;
   created_by: number;
+  daily_ai_limit?: number;
 }
 
 export interface UpdateAccountStatusData {
@@ -26,12 +27,15 @@ export interface AdminRSUser {
   active_until: Date | null;
   created_at: Date;
   created_by: number | null;
+  daily_ai_limit?: number;
+  ai_usage_count?: number;
+  ai_usage_date?: Date;
 }
 
 export const adminService = {
   // Create Admin RS account (only accessible by Admin Meta)
   async createAdminRS(data: CreateAdminRSData): Promise<AdminRSUser> {
-    const { email, password, full_name, active_until, created_by } = data;
+    const { email, password, full_name, active_until, created_by, daily_ai_limit = 100 } = data;
 
     // Check if user already exists
     const existingUser = await query(
@@ -46,12 +50,12 @@ export const adminService = {
     // Hash password
     const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    // Insert new Admin RS user
+    // Insert new Admin RS user with AI limit
     const result = await query(
-      `INSERT INTO users (email, password_hash, full_name, role, active_until, created_by) 
-       VALUES ($1, $2, $3, $4, $5, $6) 
+      `INSERT INTO users (email, password_hash, full_name, role, active_until, created_by, daily_ai_limit, ai_usage_count, ai_usage_date) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, CURRENT_DATE) 
        RETURNING id, email, full_name, role, is_active, active_until, created_at, created_by`,
-      [email, password_hash, full_name, 'Admin RS', active_until, created_by]
+      [email, password_hash, full_name, 'Admin RS', active_until, created_by, daily_ai_limit]
     );
 
     return result.rows[0];
@@ -60,7 +64,8 @@ export const adminService = {
   // Get all Admin RS accounts
   async getAllAdminRS(): Promise<AdminRSUser[]> {
     const result = await query(
-      `SELECT id, email, full_name, role, is_active, active_until, created_at, created_by
+      `SELECT id, email, full_name, role, is_active, active_until, created_at, created_by,
+              daily_ai_limit, ai_usage_count, ai_usage_date
        FROM users 
        WHERE role = $1
        ORDER BY created_at DESC`,
@@ -165,5 +170,23 @@ export const adminService = {
     );
 
     return result.rowCount || 0;
-  }
+  },
+
+  // Update user's daily AI limit
+  async updateDailyAILimit(user_id: number, daily_ai_limit: number): Promise<void> {
+    if (daily_ai_limit < 0) {
+      throw new Error('Daily AI limit must be a positive number');
+    }
+
+    const result = await query(
+      `UPDATE users 
+       SET daily_ai_limit = $1 
+       WHERE id = $2`,
+      [daily_ai_limit, user_id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('User not found');
+    }
+  },
 };

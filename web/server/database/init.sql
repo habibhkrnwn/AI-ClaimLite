@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   is_active BOOLEAN DEFAULT true,
   active_until TIMESTAMP NULL,
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  daily_ai_limit INTEGER DEFAULT 100,
+  ai_usage_count INTEGER DEFAULT 0,
+  ai_usage_date DATE DEFAULT CURRENT_DATE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   last_login TIMESTAMP
@@ -54,3 +57,27 @@ CREATE TRIGGER update_users_updated_at
   BEFORE UPDATE ON users 
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
+
+-- Create AI usage history table for detailed tracking
+CREATE TABLE IF NOT EXISTS ai_usage_history (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  request_count INTEGER DEFAULT 0,
+  last_request_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create unique constraint on user_id and usage_date
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_history_user_date 
+ON ai_usage_history(user_id, usage_date);
+
+-- Create trigger to update ai_usage_history updated_at
+CREATE TRIGGER update_ai_usage_history_updated_at 
+  BEFORE UPDATE ON ai_usage_history 
+  FOR EACH ROW 
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Create index for faster AI usage limit checking
+CREATE INDEX IF NOT EXISTS idx_users_ai_usage ON users(ai_usage_date, ai_usage_count);
