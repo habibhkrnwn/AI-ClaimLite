@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Core Engine (Python FastAPI)
+  core_engine:
+    build:
+      context: ./core_engine
+      dockerfile: Dockerfile
+    container_name: aiclaimlite-core-engine
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./core_engine/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./core_engine:/app
+      - /app/__pycache__
+    command: python main.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiclaimlite-network
+    restart: unless-stopped
+
+  # Web Backend (Node.js + Express)
+  web_backend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.backend
+    container_name: aiclaimlite-web-backend
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./web/.env
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - core_engine
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiclaimlite-network
+    restart: unless-stopped
+
+  # Web Frontend (Vite)
+  web_frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.frontend
+    container_name: aiclaimlite-web-frontend
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./web/.env
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - web_backend
+    networks:
+      - aiclaimlite-network
+    restart: unless-stopped
+
+networks:
+  aiclaimlite-network:
+    driver: bridge
