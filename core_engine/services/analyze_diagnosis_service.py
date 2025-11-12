@@ -362,9 +362,6 @@ def summarize_multilayer_rules(rule_list):
     
     # Gabung dengan separator yang rapi
     return " ".join(combined[:2]) if combined else "-"  # Max 2 poin untuk ringkas
-
-
-# ==============================
 # INTEGRATOR GPT + RULES (HYBRID APPROACH)
 # ==============================
 def process_analyze_diagnosis(input_data: dict) -> dict:
@@ -379,6 +376,7 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
     claim_id = input_data.get("claim_id")
     disease_name = input_data.get("disease_name", "")
     rekam_medis = input_data.get("rekam_medis", [])
+    tindakan_input = input_data.get("tindakan")  # Accept tindakan from input
     rs_id = input_data.get("rs_id")
     region_id = input_data.get("region_id")
 
@@ -737,7 +735,7 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
         print("[ANALYZE_DIAGNOSIS] ✅ AI fallback completed.")
 
     # ============================================================
-    # 8️⃣ Notifikasi (tidak diubah)
+    # 8️⃣ Notifikasi
     # ============================================================
     notifications = {}
     if gpt_result and gpt_result.get("notifications"):
@@ -749,74 +747,139 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             if any(w in txt_lower for w in ["salah", "tidak valid", "keliru"]):
                 status = "error"
             else:
-                status = "info"  
+                status = "info"
             notifications[key] = {"status": status, "message": text}
         result["notifications"] = notifications
 
     # ============================================================
-    # 8️⃣ Proses Tindakan dengan ICD-9 Mapping
+    # 9️⃣ Proses Tindakan dengan ICD-9 Mapping (PRIORITIZE INPUT)
     # ============================================================
-    # Proses tindakan: AI sebagai primary (context-aware), JSON sebagai enrichment
     tindakan_rules = rule_data.get("tindakan", [])
     tindakan_ai = gpt_result.get("tindakan", []) if gpt_result else []
     
-    # HYBRID APPROACH: Merge AI + JSON
     result["tindakan"] = []
     import time
     
-    # Process AI tindakan first (context-aware)
-    for ai_t in tindakan_ai:
-        if not isinstance(ai_t, dict):
-            continue
+    # 1️⃣ PRIORITY: Use input tindakan if available
+    if tindakan_input:
+        print(f"[TINDAKAN] 🎯 Using INPUT tindakan: {tindakan_input}")
         
-        nama_standar = ai_t.get("nama", "")  # WHO standard name
-        nama_indonesia = ai_t.get("nama_indonesia", nama_standar)  # Fallback ke nama standar
+        # Parse input tindakan (could be string or list)
+        if isinstance(tindakan_input, str):
+            # Split by comma or semicolon for multiple tindakan
+            tindakan_list = [t.strip() for t in tindakan_input.replace(';', ',').split(',') if t.strip()]
+        elif isinstance(tindakan_input, list):
+            tindakan_list = tindakan_input
+        else:
+            tindakan_list = []
         
-        # 🔥 APPLY ICD-9 MAPPING
-        icd9_mapped = map_icd9_smart(
-            procedure_name=nama_standar,
-            ai_code=ai_t.get("icd9"),  # Jika AI kasih kode, validasi juga
-            use_fuzzy=True,
-            threshold=85
-        )
-        
-        # Cari enrichment dari JSON rules (regulasi, fornas, dll)
-        matching_rule = None
-        if tindakan_rules:
-            nama_lower = nama_standar.lower()
-            for rule in tindakan_rules:
-                if isinstance(rule, dict):
-                    rule_nama = rule.get("nama", "").lower()
-                    if rule_nama and (rule_nama in nama_lower or nama_lower in rule_nama):
-                        matching_rule = rule
-                        break
-        
-        # Build result dengan mapping + enrichment
-        tindakan_item = {
-            "nama": nama_indonesia,  # Display name (Indonesia)
-            "tindakan": nama_indonesia,  # Alias
-            "deskripsi": f"ICD-9: {icd9_mapped['kode']}, Status: {ai_t.get('status', '-')}",
-            "icd9_code": icd9_mapped["kode"],  # ✅ Validated code
-            "icd9_desc": icd9_mapped["deskripsi"],  # ✅ WHO official description
-            "icd9_valid": icd9_mapped["valid"],  # ✅ Validation flag
-            "icd9_confidence": icd9_mapped["confidence"],  # ✅ Match confidence
-            "icd9_source": icd9_mapped["source"],  # ✅ Source info
-            "status": ai_t.get("status", "-"),
-            "kategori": ai_t.get("kategori", "-"),
-            "regulasi": matching_rule.get("regulasi", "-") if matching_rule else ai_t.get("regulasi", "-"),
-            "fornas": matching_rule.get("fornas", []) if matching_rule else [],
-            "syarat_klinis": ai_t.get("syarat_klinis", "-"),
-            "ina_cbg_impact": ai_t.get("ina_cbg_impact", "-"),
-            "id": int(time.time() * 1000) + len(result["tindakan"])
-        }
-        
-        result["tindakan"].append(tindakan_item)
-        
-        print(f"[TINDAKAN] ✅ Mapped: {nama_indonesia} → ICD-9: {icd9_mapped['kode']} (confidence: {icd9_mapped['confidence']}%)")
+        # Process input tindakan
+        for tindakan_name in tindakan_list:
+            # Extract name if it's a dict
+            if isinstance(tindakan_name, dict):
+                nama_tindakan = tindakan_name.get("name") or tindakan_name.get("nama", "")
+            else:
+                nama_tindakan = str(tindakan_name)
+            
+            if not nama_tindakan:
+                continue
+            
+            # 🔥 APPLY ICD-9 MAPPING for input tindakan
+            icd9_mapped = map_icd9_smart(
+                procedure_name=nama_tindakan,
+                ai_code=None,
+                use_fuzzy=True,
+                threshold=85
+            )
+            
+            # Cari enrichment dari JSON rules
+            matching_rule = None
+            if tindakan_rules:
+                nama_lower = nama_tindakan.lower()
+                for rule in tindakan_rules:
+                    if isinstance(rule, dict):
+                        rule_nama = rule.get("nama", "").lower()
+                        if rule_nama and (rule_nama in nama_lower or nama_lower in rule_nama):
+                            matching_rule = rule
+                            break
+            
+            # Build result
+            tindakan_item = {
+                "nama": nama_tindakan,
+                "tindakan": nama_tindakan,
+                "deskripsi": f"ICD-9: {icd9_mapped['kode']}, Source: Direct Input",
+                "icd9_code": icd9_mapped["kode"],
+                "icd9_desc": icd9_mapped["deskripsi"],
+                "icd9_valid": icd9_mapped["valid"],
+                "icd9_confidence": icd9_mapped["confidence"],
+                "icd9_source": icd9_mapped["source"],
+                "status": matching_rule.get("status", "-") if matching_rule else "-",
+                "kategori": matching_rule.get("kategori", "-") if matching_rule else "-",
+                "regulasi": matching_rule.get("regulasi", "-") if matching_rule else "-",
+                "fornas": matching_rule.get("fornas", []) if matching_rule else [],
+                "syarat_klinis": matching_rule.get("syarat_klinis", "-") if matching_rule else "-",
+                "ina_cbg_impact": matching_rule.get("ina_cbg_impact", "-") if matching_rule else "-",
+                "id": int(time.time() * 1000) + len(result["tindakan"])
+            }
+            
+            result["tindakan"].append(tindakan_item)
+            print(f"[TINDAKAN] ✅ INPUT Mapped: {nama_tindakan} → ICD-9: {icd9_mapped['kode']} (confidence: {icd9_mapped['confidence']}%)")
     
-    # Jika AI tidak menghasilkan tindakan, fallback ke rules
+    # 2️⃣ FALLBACK: Use AI tindakan if no input provided
+    if not result["tindakan"] and tindakan_ai:
+        print("[TINDAKAN] 🤖 Using AI tindakan (no input provided)")
+        
+        for ai_t in tindakan_ai:
+            if not isinstance(ai_t, dict):
+                continue
+            
+            nama_standar = ai_t.get("nama", "")
+            nama_indonesia = ai_t.get("nama_indonesia", nama_standar)
+            
+            # 🔥 APPLY ICD-9 MAPPING
+            icd9_mapped = map_icd9_smart(
+                procedure_name=nama_standar,
+                ai_code=ai_t.get("icd9"),
+                use_fuzzy=True,
+                threshold=85
+            )
+            
+            # Cari enrichment dari JSON rules
+            matching_rule = None
+            if tindakan_rules:
+                nama_lower = nama_standar.lower()
+                for rule in tindakan_rules:
+                    if isinstance(rule, dict):
+                        rule_nama = rule.get("nama", "").lower()
+                        if rule_nama and (rule_nama in nama_lower or nama_lower in rule_nama):
+                            matching_rule = rule
+                            break
+            
+            # Build result
+            tindakan_item = {
+                "nama": nama_indonesia,
+                "tindakan": nama_indonesia,
+                "deskripsi": f"ICD-9: {icd9_mapped['kode']}, Status: {ai_t.get('status', '-')}",
+                "icd9_code": icd9_mapped["kode"],
+                "icd9_desc": icd9_mapped["deskripsi"],
+                "icd9_valid": icd9_mapped["valid"],
+                "icd9_confidence": icd9_mapped["confidence"],
+                "icd9_source": icd9_mapped["source"],
+                "status": ai_t.get("status", "-"),
+                "kategori": ai_t.get("kategori", "-"),
+                "regulasi": matching_rule.get("regulasi", "-") if matching_rule else ai_t.get("regulasi", "-"),
+                "fornas": matching_rule.get("fornas", []) if matching_rule else [],
+                "syarat_klinis": ai_t.get("syarat_klinis", "-"),
+                "ina_cbg_impact": ai_t.get("ina_cbg_impact", "-"),
+                "id": int(time.time() * 1000) + len(result["tindakan"])
+            }
+            
+            result["tindakan"].append(tindakan_item)
+            print(f"[TINDAKAN] ✅ AI Mapped: {nama_indonesia} → ICD-9: {icd9_mapped['kode']} (confidence: {icd9_mapped['confidence']}%)")
+    
+    # 3️⃣ LAST RESORT: Use JSON rules if no input and no AI
     if not result["tindakan"] and tindakan_rules:
-        print("[TINDAKAN] ⚠️ AI tidak menghasilkan tindakan, menggunakan rules dari JSON")
+        print("[TINDAKAN] 📋 Using JSON rules (no input, no AI)")
         for rule_t in tindakan_rules:
             if isinstance(rule_t, dict):
                 nama = rule_t.get("nama", "-")

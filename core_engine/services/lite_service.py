@@ -1,13 +1,15 @@
-# services/ai_claim_lite_service.py (ENHANCED)
+# services/ai_claim_lite_service.py (FULL OPENAI VERSION)
 
 """
-AI-CLAIM Lite Service - Enhanced Version
-Simplified wrapper dengan validasi kuat dan parsing yang lebih baik
+AI-CLAIM Lite Service - Full OpenAI Parsing Version
+All parsing menggunakan OpenAI untuk consistency & accuracy maksimal
 """
 
 import json
 import re
-from typing import Dict, List, Optional, Any, Tuple
+import os
+import logging
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import pandas as pd
 from openpyxl import Workbook
@@ -16,318 +18,421 @@ from io import BytesIO
 
 from services.rules_loader import load_rules_for_diagnosis
 from services.analyze_diagnosis_service import process_analyze_diagnosis
+from services.fornas_service import match_multiple_obat, get_fornas_compliance_status
+from services.fornas_lite_service import FornasLiteValidator
+
+# Setup logger
+logger = logging.getLogger(__name__)
+
+# OpenAI client
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI not installed. Install with: pip install openai")
 
 # ============================================================
-# 🔹 ENHANCED TEXT PARSER dengan Regex yang Lebih Baik
+# 🔹 OPENAI MEDICAL PARSER (Main Parser)
 # ============================================================
-class MedicalTextParser:
-    """Enhanced parser untuk resume medis dengan pattern matching yang lebih akurat"""
+class OpenAIMedicalParser:
+    """
+    Pure OpenAI parser untuk medical text
+    Menggantikan semua regex dengan AI parsing
+    """
     
-    # Kompilasi regex patterns untuk performance
-    DIAGNOSIS_PATTERNS = [
-        re.compile(r'(?:diagnosis|dx|penyakit)\s*:?\s*([^,\n.]+)', re.IGNORECASE),
-        re.compile(r'^([A-Z][a-zA-Z]+(?:\s+[a-zA-Z]+){0,3})', re.MULTILINE),
-        re.compile(r'(?:menderita|dengan|sakit)\s+([a-zA-Z\s]+)', re.IGNORECASE),
-    ]
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize OpenAI client
+        
+        Args:
+            api_key: OpenAI API key (optional, bisa dari env)
+        """
+        if not OPENAI_AVAILABLE:
+            raise ImportError("OpenAI library not installed. Run: pip install openai")
+        
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
+        
+        self.client = OpenAI(api_key=api_key)
+        self.model = "gpt-4o-mini"  # Cost-efficient model
+        
+        # Statistics tracking
+        self._total_requests = 0
+        self._total_tokens = 0
+        self._total_cost = 0.0
+        self._failed_requests = 0
     
-    TINDAKAN_PATTERNS = {
-        'nebulisasi': re.compile(r'nebuli[sz]asi|nebulizer', re.IGNORECASE),
-        'rontgen': re.compile(r'(?:rontgen|radiologi|x-?ray)\s*(?:thorax|paru|chest|abdomen)?', re.IGNORECASE),
-        'ct_scan': re.compile(r'ct\s*scan|computerized\s*tomography', re.IGNORECASE),
-        'kultur': re.compile(r'kultur|culture\s*(?:darah|sputum|urine)?', re.IGNORECASE),
-        'ventilator': re.compile(r'ventilator|ventilasi\s*(?:mekanik)?', re.IGNORECASE),
-        'infus': re.compile(r'infus|iv\s*line|intravenous', re.IGNORECASE),
-        'lab': re.compile(r'(?:pemeriksaan|cek|test)\s*(?:lab|darah|urine|feses)', re.IGNORECASE),
-        'agd': re.compile(r'agd|analisa\s*gas\s*darah|arterial\s*blood\s*gas', re.IGNORECASE),
+    
+    def parse(self, text: str, input_mode: str = "text") -> Dict[str, Any]:
+        """
+        Parse medical text menggunakan OpenAI
+        
+        Args:
+            text: Medical resume text
+            input_mode: "text" | "form" | "excel" (for context)
+        
+        Returns:
+            {
+                "diagnosis": str,
+                "diagnosis_icd10": Optional[str],
+                "tindakan": List[Dict],  # [{name, icd9}, ...]
+                "obat": List[Dict],      # [{name, dosis, fornas_level}, ...]
+                "confidence": float,
+                "parsing_metadata": Dict
+            }
+        """
+        if not text or len(text.strip()) < 5:
+            return self._empty_result("Input terlalu pendek")
+        
+        try:
+            start_time = datetime.now()
+            
+            # Build prompt based on input mode
+            prompt = self._build_prompt(text, input_mode)
+            
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": self._get_system_prompt()
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                temperature=0.1,  # Low for consistent extraction
+                max_tokens=800,
+                response_format={"type": "json_object"}  # Force JSON
+            )
+            
+            # Parse response
+            content = response.choices[0].message.content
+            result = json.loads(content)
+            
+            # Track statistics
+            self._total_requests += 1
+            self._total_tokens += response.usage.total_tokens
+            
+            # Calculate cost (GPT-4o-mini pricing)
+            # $0.15 per 1M input tokens, $0.60 per 1M output tokens
+            cost = (response.usage.prompt_tokens * 0.00000015 + 
+                   response.usage.completion_tokens * 0.00000060)
+            self._total_cost += cost
+            
+            # Add metadata
+            result["parsing_metadata"] = {
+                "method": "openai",
+                "model": self.model,
+                "tokens_used": response.usage.total_tokens,
+                "cost_usd": round(cost, 6),
+                "processing_time_ms": self._elapsed_ms(start_time),
+                "input_mode": input_mode,
+                "success": True
+            }
+            
+            # Validate & normalize result
+            result = self._validate_and_normalize(result)
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            self._failed_requests += 1
+            print(f"❌ OpenAI returned invalid JSON: {e}")
+            print(f"   Raw response: {content[:200]}...")
+            return self._empty_result(f"AI parsing error: Invalid JSON")
+        
+        except Exception as e:
+            self._failed_requests += 1
+            print(f"❌ OpenAI parsing failed: {e}")
+            return self._empty_result(f"AI parsing error: {str(e)}")
+    
+    
+    def _get_system_prompt(self) -> str:
+        """System prompt untuk medical parsing"""
+        return """Kamu adalah AI medical text parser expert untuk sistem klaim BPJS Indonesia.
+
+TUGAS: Extract informasi medis dari resume/catatan dokter dengan akurat.
+
+RULES PENTING:
+1. Diagnosis harus SINGKAT (max 50 karakter), hanya nama penyakit utama
+2. Jangan tambahkan informasi yang tidak ada di input
+3. **DETEKSI KODE ICD-10 DALAM KURUNG**: Jika diagnosis ditulis seperti "Pneumonia (J18.9)" atau "Diabetes (E11.9)", extract kode dalam kurung sebagai diagnosis_icd10
+4. **DETEKSI KODE ICD-9 DALAM TINDAKAN**: Jika tindakan ditulis seperti "Rontgen Thorax (87.44)", extract kode sebagai icd9
+5. Normalize nama obat ke nama generik (contoh: "Panadol" → "Paracetamol")
+6. Confidence score berdasarkan seberapa jelas informasi di input
+
+CONTOH EXTRACTION KODE:
+- Input: "Pneumonia (J18.9)" → diagnosis: "Pneumonia", diagnosis_icd10: "J18.9"
+- Input: "Diabetes Mellitus Type 2 (E11.9)" → diagnosis: "Diabetes Mellitus Type 2", diagnosis_icd10: "E11.9"
+- Input: "Rontgen Thorax (87.44)" → tindakan: [{name: "Rontgen Thorax", icd9: "87.44"}]
+- Input: "Pneumonia" → diagnosis: "Pneumonia", diagnosis_icd10: null
+
+OUTPUT FORMAT (STRICT JSON):
+{
+  "diagnosis": "string (nama penyakit singkat, TANPA kode dalam kurung)",
+  "diagnosis_icd10": "string atau null (kode ICD-10 jika ada, format: A00-Z99)",
+  "tindakan": [
+    {
+      "name": "string (nama tindakan, TANPA kode dalam kurung)",
+      "icd9": "string atau null (kode ICD-9 jika ada, format: 00.00-99.99)"
     }
-    
-    OBAT_PATTERNS = [
-        re.compile(r'\b([A-Z][a-z]+(?:cillin|mycin|xone|zole|floxacin|dipine|pril|sartan|statin))\b(?:\s+(?:injeksi|inj|tablet|tab|sirup|kapsul))?\s*(?:\d+\s*(?:mg|ml|g))?', re.IGNORECASE),
-        re.compile(r'\b(Ceftriaxone|Cefotaxime|Amoxicillin|Azithromycin|Levofloxacin|Ciprofloxacin|Paracetamol|Ibuprofen|Omeprazol)\b[^,\n.]*', re.IGNORECASE),
-    ]
-    
-    @classmethod
-    def parse(cls, text: str) -> Dict[str, Any]:
-        """
-        Parse resume medis dengan algoritma yang lebih robust
-        
-        Returns:
-            {
-                "diagnosis": str,
-                "diagnosis_confidence": float (0-1),
-                "tindakan": List[str],
-                "obat": List[str],
-                "rekam_medis": List[str],
-                "parsing_quality": str (high/medium/low)
-            }
-        """
-        if not text or not text.strip():
-            return cls._empty_result()
-        
-        # Normalisasi text
-        text = cls._normalize_text(text)
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        
-        # Parse each component
-        diagnosis, dx_confidence = cls._extract_diagnosis(text, lines)
-        tindakan_list = cls._extract_tindakan(text)
-        obat_list = cls._extract_obat(text)
-        
-        # Assess parsing quality
-        quality = cls._assess_quality(diagnosis, tindakan_list, obat_list, dx_confidence)
-        
-        return {
-            "diagnosis": diagnosis,
-            "diagnosis_confidence": dx_confidence,
-            "tindakan": tindakan_list,
-            "obat": obat_list,
-            "rekam_medis": lines,
-            "parsing_quality": quality
-        }
-    
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        """Normalize text untuk parsing yang lebih baik"""
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-        # Normalize common medical abbreviations
-        replacements = {
-            'dg': 'dengan',
-            'tdk': 'tidak',
-            'hrs': 'harus',
-            'TD': 'Tekanan Darah',
-            'HR': 'Heart Rate',
-            'RR': 'Respiratory Rate',
-        }
-        for old, new in replacements.items():
-            text = re.sub(rf'\b{old}\b', new, text, flags=re.IGNORECASE)
-        return text
-    
-    @classmethod
-    def _extract_diagnosis(cls, text: str, lines: List[str]) -> Tuple[str, float]:
-        """Extract diagnosis dengan confidence score - ENHANCED"""
-        for pattern in cls.DIAGNOSIS_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                diagnosis = match.group(1).strip()
-                
-                # Clean up
-                diagnosis = re.sub(r'\s+', ' ', diagnosis)
-                
-                # ✅ CRITICAL FIX: Stop at first period, comma, or "dengan"
-                # Examples:
-                # "Pneumonia berat. Rawat inap 5 hari" -> "Pneumonia berat"
-                # "Pneumonia berat, sesak napas" -> "Pneumonia berat"
-                # "Pneumonia berat dengan infiltrat" -> "Pneumonia berat"
-                diagnosis = re.split(r'[.,]|dengan|di ruang|rawat|diberikan', diagnosis, flags=re.IGNORECASE)[0].strip()
-                
-                # ✅ Remove ICD code in parentheses (akan diambil terpisah)
-                diagnosis = re.sub(r'\s*\([A-Z]\d+\.?\d*\)', '', diagnosis).strip()
-                
-                # ✅ Limit to max 50 chars untuk avoid overly long diagnosis names
-                if len(diagnosis) > 50:
-                    # Ambil hanya 2-3 kata pertama (medical term biasanya pendek)
-                    words = diagnosis.split()
-                    diagnosis = ' '.join(words[:3])
-                
-                # Calculate confidence based on context
-                confidence = 0.9 if 'diagnosis' in text.lower() else 0.7
-                return diagnosis[:50], confidence  # Max 50 chars
-        
-        # Fallback: ambil kalimat pertama (cleaned)
-        if lines:
-            first_line = lines[0]
-            # Clean up sama seperti di atas
-            first_line = re.sub(r'\s*\([A-Z]\d+\.?\d*\)', '', first_line).strip()
-            first_line = re.split(r'[.,]|dengan|di ruang|rawat|diberikan', first_line, flags=re.IGNORECASE)[0].strip()
-            return first_line[:50], 0.5
-        
-        return "Diagnosis tidak terdeteksi", 0.0
-    
-    @classmethod
-    def _extract_tindakan(cls, text: str) -> List[str]:
-        """Extract tindakan dengan deduplication"""
-        tindakan_found = []
-        seen = set()
-        
-        for name, pattern in cls.TINDAKAN_PATTERNS.items():
-            matches = pattern.finditer(text)
-            for match in matches:
-                tindakan = match.group(0).strip()
-                # Normalize untuk dedup
-                normalized = tindakan.lower().replace('-', '').replace(' ', '')
-                if normalized not in seen:
-                    seen.add(normalized)
-                    tindakan_found.append(tindakan.title())  # Capitalize properly
-        
-        return tindakan_found[:10]  # Max 10 tindakan
-    
-    @classmethod
-    def _extract_obat(cls, text: str) -> List[str]:
-        """Extract obat dengan detail dosis"""
-        obat_found = []
-        seen = set()
-        
-        for pattern in cls.OBAT_PATTERNS:
-            matches = pattern.finditer(text)
-            for match in matches:
-                obat = match.group(0).strip()
-                # Normalize nama obat untuk dedup
-                obat_name = obat.split()[0].lower()
-                if obat_name not in seen:
-                    seen.add(obat_name)
-                    obat_found.append(obat)
-        
-        return obat_found[:15]  # Max 15 obat
-    
-    @staticmethod
-    def _assess_quality(diagnosis: str, tindakan: List, obat: List, dx_conf: float) -> str:
-        """Assess parsing quality"""
-        score = 0
-        
-        # Diagnosis quality
-        if dx_conf >= 0.8:
-            score += 40
-        elif dx_conf >= 0.6:
-            score += 25
-        elif dx_conf >= 0.4:
-            score += 10
-        
-        # Tindakan presence
-        if len(tindakan) >= 2:
-            score += 30
-        elif len(tindakan) == 1:
-            score += 20
-        
-        # Obat presence
-        if len(obat) >= 2:
-            score += 30
-        elif len(obat) == 1:
-            score += 20
-        
-        # Classify
-        if score >= 80:
-            return "high"
-        elif score >= 50:
-            return "medium"
-        else:
-            return "low"
-    
-    @staticmethod
-    def _empty_result() -> Dict[str, Any]:
-        return {
-            "diagnosis": "Input kosong",
-            "diagnosis_confidence": 0.0,
-            "tindakan": [],
-            "obat": [],
-            "rekam_medis": [],
-            "parsing_quality": "low"
-        }
+  ],
+  "obat": [
+    {
+      "name": "string (nama obat generik)",
+      "dosis": "string atau null (dosis jika ada)",
+      "rute": "string atau null (oral/injeksi/nebulisasi)",
+      "fornas_level": "string atau null (estimasi level fornas)"
+    }
+  ],
+  "confidence": 0.95,
+  "notes": "string (catatan jika ada ambiSguitas)"
+}
 
+CRITICAL: Return ONLY valid JSON, no markdown, no explanation."""
+    
+    
+    def _build_prompt(self, text: str, input_mode: str) -> str:
+        """Build prompt berdasarkan input mode"""
+        
+        if input_mode == "form":
+            # Structured form input
+            return f"""INPUT TYPE: Form terstruktur (field-by-field)
 
-# ============================================================
-# 🔹 ENHANCED FORM PARSER dengan Validasi
-# ============================================================
-class FormInputParser:
-    """Parser untuk 3-field form input dengan validasi ketat"""
+INPUT TEXT:
+{text}
+
+INSTRUKSI:
+- Input sudah terstruktur, extract dengan presisi tinggi
+- Jika ada label "Diagnosis:", "Tindakan:", dll, gunakan sebagai guide
+- Extract kode ICD-10/ICD-9 jika sudah ada di dalam kurung
+- Confidence tinggi (>0.9) karena input structured
+
+Extract dan return JSON sesuai format."""
+
+        elif input_mode == "excel":
+            # Excel batch import
+            return f"""INPUT TYPE: Data dari Excel/spreadsheet
+
+INPUT TEXT:
+{text}
+
+INSTRUKSI:
+- Data mungkin singkat/abbreviated
+- Handle typo common (contoh: "seftriakson" → "ceftriaxone")
+- Jika data minimal, set confidence rendah
+- Focus pada extraction akurat meski data terbatas
+
+Extract dan return JSON sesuai format."""
+
+        else:  # "text" - free text narrative
+            return f"""INPUT TYPE: Free text / catatan dokter
+
+INPUT TEXT:
+{text}
+
+INSTRUKSI:
+- Text mungkin narrative/tidak terstruktur
+- Diagnosis bisa embedded dalam kalimat (extract hanya nama penyakit)
+- **PENTING: Deteksi kode ICD-10 dalam kurung setelah diagnosis** (contoh: "Pneumonia (J18.9)")
+- **PENTING: Deteksi kode ICD-9 dalam kurung setelah tindakan** (contoh: "Rontgen Thorax (87.44)")
+- Tindakan & obat bisa disebutkan dalam paragraf (extract semua)
+- Normalize abbreviations (contoh: "nebul" → "nebulisasi")
+- Handle typo medis common
+
+CONTOH EXTRACTION:
+Input: "Pasien dengan pneumonia berat dirawat 5 hari, diberikan ceftriaxone"
+Output diagnosis: "Pneumonia berat" (BUKAN "Pasien dengan pneumonia berat")
+
+Input: "Diagnosis: Pneumonia (J18.9), dilakukan Rontgen Thorax (87.44)"
+Output: {{
+  "diagnosis": "Pneumonia",
+  "diagnosis_icd10": "J18.9",
+  "tindakan": [{{"name": "Rontgen Thorax", "icd9": "87.44"}}]
+}}
+
+Extract dan return JSON sesuai format."""
     
-    ICD10_PATTERN = re.compile(r'\(([A-Z]\d{2}\.?\d*)\)')
-    ICD9_PATTERN = re.compile(r'\((\d{2}\.?\d*)\)')
     
-    @classmethod
-    def parse(cls, diagnosis: str, tindakan: str, obat: str) -> Dict[str, Any]:
-        """
-        Parse form input dengan validasi
+    def _validate_and_normalize(self, result: Dict) -> Dict:
+        """Validate dan normalize AI result"""
         
-        Returns:
-            {
-                "diagnosis": str,
-                "diagnosis_icd": Optional[str],
-                "tindakan": List[str],
-                "tindakan_codes": Dict[str, str],
-                "obat": List[str],
-                "rekam_medis": List[str],
-                "validation_errors": List[str]
-            }
-        """
-        result = {
-            "diagnosis": "",
-            "diagnosis_icd": None,
-            "tindakan": [],
-            "tindakan_codes": {},
-            "obat": [],
-            "rekam_medis": [],
-            "validation_errors": []
-        }
+        # Ensure all required fields exist
+        result.setdefault("diagnosis", "Tidak terdeteksi")
+        result.setdefault("diagnosis_icd10", None)
+        result.setdefault("tindakan", [])
+        result.setdefault("obat", [])
+        result.setdefault("confidence", 0.8)
+        result.setdefault("notes", "")
         
-        # Validate & parse diagnosis
-        if diagnosis and diagnosis.strip():
-            icd_match = cls.ICD10_PATTERN.search(diagnosis)
-            if icd_match:
-                result["diagnosis_icd"] = icd_match.group(1)
-                result["diagnosis"] = diagnosis.replace(icd_match.group(0), "").strip()
-            else:
-                result["diagnosis"] = diagnosis.strip()
-            
-            result["rekam_medis"].append(result["diagnosis"])
-        else:
-            result["validation_errors"].append("Diagnosis wajib diisi")
+        # Validate diagnosis length
+        if len(result["diagnosis"]) > 50:
+            # Truncate jika terlalu panjang
+            words = result["diagnosis"].split()
+            result["diagnosis"] = " ".join(words[:4])  # Max 4 words
+            result["notes"] += " (Diagnosis disingkat AI)"
         
-        # Validate & parse tindakan
-        if tindakan and tindakan.strip():
-            tindakan_items = [t.strip() for t in re.split(r'[,;\n]', tindakan) if t.strip()]
-            
-            for item in tindakan_items:
-                code_match = cls.ICD9_PATTERN.search(item)
-                if code_match:
-                    code = code_match.group(1)
-                    name = item.replace(code_match.group(0), "").strip()
-                    result["tindakan"].append(name)
-                    result["tindakan_codes"][name] = code
-                    result["rekam_medis"].append(f"{name} (ICD-9: {code})")
-                else:
-                    result["tindakan"].append(item)
-                    result["rekam_medis"].append(f"Tindakan: {item}")
-        else:
-            result["validation_errors"].append("Minimal 1 tindakan harus diisi")
+        # Validate tindakan format
+        validated_tindakan = []
+        for tindakan in result.get("tindakan", []):
+            if isinstance(tindakan, dict):
+                validated_tindakan.append({
+                    "name": tindakan.get("name", "Unknown"),
+                    "icd9": tindakan.get("icd9")
+                })
+            elif isinstance(tindakan, str):
+                # Convert string to dict
+                validated_tindakan.append({
+                    "name": tindakan,
+                    "icd9": None
+                })
+        result["tindakan"] = validated_tindakan
         
-        # Validate & parse obat
-        if obat and obat.strip():
-            obat_items = [o.strip() for o in re.split(r'[,;\n]', obat) if o.strip()]
-            result["obat"] = obat_items
-            
-            for item in obat_items:
-                result["rekam_medis"].append(f"Obat: {item}")
-        else:
-            result["validation_errors"].append("Minimal 1 obat harus diisi")
+        # Validate obat format
+        validated_obat = []
+        for obat in result.get("obat", []):
+            if isinstance(obat, dict):
+                validated_obat.append({
+                    "name": obat.get("name", "Unknown"),
+                    "dosis": obat.get("dosis"),
+                    "rute": obat.get("rute"),
+                    "fornas_level": obat.get("fornas_level")
+                })
+            elif isinstance(obat, str):
+                # Convert string to dict
+                validated_obat.append({
+                    "name": obat,
+                    "dosis": None,
+                    "rute": None,
+                    "fornas_level": None
+                })
+        result["obat"] = validated_obat
+        
+        # Ensure confidence is float between 0-1
+        try:
+            result["confidence"] = float(result.get("confidence", 0.8))
+            result["confidence"] = max(0.0, min(1.0, result["confidence"]))
+        except:
+            result["confidence"] = 0.8
         
         return result
+    
+    
+    def _empty_result(self, error_msg: str) -> Dict[str, Any]:
+        """Return empty result dengan error"""
+        return {
+            "diagnosis": "Parsing gagal",
+            "diagnosis_icd10": None,
+            "tindakan": [],
+            "obat": [],
+            "confidence": 0.0,
+            "notes": error_msg,
+            "parsing_metadata": {
+                "method": "openai",
+                "model": self.model,
+                "tokens_used": 0,
+                "cost_usd": 0.0,
+                "processing_time_ms": 0,
+                "success": False,
+                "error": error_msg
+            }
+        }
+    
+    
+    def _elapsed_ms(self, start_time: datetime) -> int:
+        """Calculate elapsed time in milliseconds"""
+        return int((datetime.now() - start_time).total_seconds() * 1000)
+    
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get parser statistics"""
+        success_rate = (
+            (self._total_requests - self._failed_requests) / self._total_requests * 100
+            if self._total_requests > 0 else 0
+        )
+        
+        avg_tokens = (
+            self._total_tokens / self._total_requests 
+            if self._total_requests > 0 else 0
+        )
+        
+        return {
+            "total_requests": self._total_requests,
+            "successful_requests": self._total_requests - self._failed_requests,
+            "failed_requests": self._failed_requests,
+            "success_rate_pct": round(success_rate, 2),
+            "total_tokens_used": self._total_tokens,
+            "avg_tokens_per_request": round(avg_tokens, 1),
+            "total_cost_usd": round(self._total_cost, 4),
+            "avg_cost_per_request": round(
+                self._total_cost / self._total_requests if self._total_requests > 0 else 0, 
+                6
+            )
+        }
 
 
 # ============================================================
-# 🔹 MAIN ANALYZER FUNCTIONS (dengan validasi input)
+# 🔹 GLOBAL PARSER INSTANCE
+# ============================================================
+# Initialize once at module level
+_global_parser = None
+
+def get_parser() -> OpenAIMedicalParser:
+    """Get or create global parser instance"""
+    global _global_parser
+    if _global_parser is None:
+        _global_parser = OpenAIMedicalParser()
+    return _global_parser
+
+
+# ============================================================
+# 🔹 PUBLIC PARSING FUNCTIONS
 # ============================================================
 def parse_free_text(text: str) -> Dict[str, Any]:
-    """Public wrapper untuk MedicalTextParser"""
-    return MedicalTextParser.parse(text)
+    """Parse free text menggunakan OpenAI"""
+    parser = get_parser()
+    return parser.parse(text, input_mode="text")
 
 
 def parse_form_input(diagnosis: str, tindakan: str, obat: str) -> Dict[str, Any]:
-    """Public wrapper untuk FormInputParser"""
-    return FormInputParser.parse(diagnosis, tindakan, obat)
+    """Parse form input menggunakan OpenAI"""
+    # Combine fields into single text
+    combined_text = f"""Diagnosis: {diagnosis}
+Tindakan: {tindakan}
+Obat: {obat}"""
+    
+    parser = get_parser()
+    return parser.parse(combined_text, input_mode="form")
 
 
+# ============================================================
+# 🔹 MAIN ANALYZER FUNCTION (Simplified)
+# ============================================================
 def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Enhanced single analysis dengan validasi input
+    Single analysis dengan OpenAI parsing
     
-    Improvements:
-    - Input validation sebelum processing
-    - Quality assessment untuk parsing
-    - Better error handling
-    - Metadata yang lebih lengkap
+    Simplified karena tidak ada conditional logic regex vs AI
     """
     mode = payload.get("mode", "text")
+    
+    # 🔹 Log input payload untuk tracking
+    try:
+        logger.info("="*80)
+        logger.info("[ANALYZE REQUEST] New analysis request received")
+        logger.info(f"[ANALYZE REQUEST] Mode: {mode}")
+        logger.info("[ANALYZE REQUEST] Input Payload:")
+        # Mask sensitive data if any
+        safe_payload = {k: v for k, v in payload.items() if k not in ['api_key', 'token']}
+        logger.info(json.dumps(safe_payload, indent=2, ensure_ascii=False))
+        logger.info("="*80)
+    except Exception as log_error:
+        logger.warning(f"Failed to log input payload: {log_error}")
     
     # 🔹 Input Validation
     validation_errors = []
@@ -342,69 +447,116 @@ def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
         tindakan_raw = payload.get("tindakan", "")
         obat_raw = payload.get("obat", "")
         
-        if not diagnosis_raw:
+        if not diagnosis_raw or not diagnosis_raw.strip():
             validation_errors.append("Diagnosis wajib diisi")
-        if not tindakan_raw:
+        if not tindakan_raw or not tindakan_raw.strip():
             validation_errors.append("Tindakan wajib diisi")
-        if not obat_raw:
+        if not obat_raw or not obat_raw.strip():
             validation_errors.append("Obat wajib diisi")
     
-    # Return error jika ada validation error
-    if validation_errors:
-        return {
-            "status": "error",
-            "errors": validation_errors,
-            "message": "Validasi input gagal"
-        }
-    
-    # 🔹 Parse input berdasarkan mode
-    parsing_quality = "medium"  # default
-    
-    if mode == "text":
-        input_text = payload.get("input_text", "")
-        parsed = MedicalTextParser.parse(input_text)
-        
-        diagnosis_name = parsed["diagnosis"]
-        tindakan_list = parsed["tindakan"]
-        obat_list = parsed["obat"]
-        rekam_medis = parsed["rekam_medis"]
-        parsing_quality = parsed["parsing_quality"]
-        
-    elif mode == "form":
+    elif mode == "excel":
+        # Validasi untuk mode excel (batch import)
         diagnosis_raw = payload.get("diagnosis", "")
         tindakan_raw = payload.get("tindakan", "")
         obat_raw = payload.get("obat", "")
         
-        parsed = FormInputParser.parse(diagnosis_raw, tindakan_raw, obat_raw)
-        
-        diagnosis_name = parsed["diagnosis"]
-        tindakan_list = parsed["tindakan"]
-        obat_list = parsed["obat"]
-        rekam_medis = parsed["rekam_medis"]
-        
-        # Form input selalu high quality karena structured
-        parsing_quality = "high" if not parsed["validation_errors"] else "medium"
-        
-        # Store ICD codes untuk skip mapping
-        payload["_parsed_diagnosis_icd"] = parsed["diagnosis_icd"]
-        payload["_parsed_tindakan_codes"] = parsed["tindakan_codes"]
+        if not diagnosis_raw or not diagnosis_raw.strip():
+            validation_errors.append("Diagnosis wajib diisi")
+        if not tindakan_raw or not tindakan_raw.strip():
+            validation_errors.append("Tindakan wajib diisi")
+        if not obat_raw or not obat_raw.strip():
+            validation_errors.append("Obat wajib diisi")
     
-    else:  # excel mode
-        diagnosis_name = payload.get("diagnosis", "")
-        tindakan_input = payload.get("tindakan", "")
-        obat_input = payload.get("obat", "")
+    # Return error jika ada validation error
+    if validation_errors:
+        error_response = {
+            "status": "error",
+            "errors": validation_errors,
+            "message": "Validasi input gagal"
+        }
+        logger.warning(f"[VALIDATION ERROR] {json.dumps(error_response, ensure_ascii=False)}")
+        return error_response
+    
+    # 🔹 Parse dengan OpenAI (always)
+    try:
+        parser = get_parser()
         
-        tindakan_list = [t.strip() for t in tindakan_input.split(',') if t.strip()]
-        obat_list = [o.strip() for o in obat_input.split(',') if o.strip()]
+        if mode == "text":
+            input_text = payload.get("input_text", "")
+            parsed = parser.parse(input_text, input_mode="text")
+        
+        elif mode == "form":
+            diagnosis_raw = payload.get("diagnosis", "")
+            tindakan_raw = payload.get("tindakan", "")
+            obat_raw = payload.get("obat", "")
+            
+            combined_text = f"""Diagnosis: {diagnosis_raw}
+Tindakan: {tindakan_raw}
+Obat: {obat_raw}"""
+            
+            parsed = parser.parse(combined_text, input_mode="form")
+        
+        else:  # excel mode
+            diagnosis_raw = payload.get("diagnosis", "")
+            tindakan_raw = payload.get("tindakan", "")
+            obat_raw = payload.get("obat", "")
+            
+            combined_text = f"""Diagnosis: {diagnosis_raw}
+Tindakan: {tindakan_raw}
+Obat: {obat_raw}"""
+            
+            parsed = parser.parse(combined_text, input_mode="excel")
+        
+        # Check parsing success
+        if not parsed["parsing_metadata"]["success"]:
+            return {
+                "status": "error",
+                "message": "Parsing gagal",
+                "detail": parsed["notes"]
+            }
+        
+        # Extract data dari parsed result
+        diagnosis_name = parsed["diagnosis"]
+        tindakan_list = [t["name"] for t in parsed["tindakan"]]
+        obat_list = [o["name"] for o in parsed["obat"]]
+        
+        # Build rekam_medis untuk full_analysis
         rekam_medis = [diagnosis_name] + tindakan_list + obat_list
+        
+    except Exception as e:
+        error_response = {
+            "status": "error",
+            "message": "OpenAI parsing error",
+            "detail": str(e)
+        }
+        logger.error(f"[PARSING ERROR] {json.dumps(error_response, ensure_ascii=False)}")
+        logger.exception("Full parsing error traceback:")
+        return error_response
     
     # 🔹 Call core analyzer
     try:
         claim_id = payload.get("claim_id", f"LITE-{datetime.now().strftime('%Y%m%d%H%M%S')}")
         
+        # Extract tindakan from input (form/excel) or from parsed AI
+        tindakan_input = None
+        
+        if mode == "form" or mode == "excel":
+            # Priority 1: Get raw tindakan from form input
+            tindakan_input = payload.get("tindakan", "")
+            
+            # Priority 2: If empty, use parsed tindakan from AI
+            if not tindakan_input or not tindakan_input.strip():
+                tindakan_input = parsed.get("tindakan", [])
+        
+        elif mode == "text":
+            # For text mode, ALWAYS use parsed tindakan from AI
+            # This ensures ICD-9 mapping is called for text mode
+            tindakan_input = parsed.get("tindakan", [])
+        
         diagnosis_payload = {
             "disease_name": diagnosis_name,
             "rekam_medis": rekam_medis,
+            "tindakan": tindakan_input,  # Add tindakan field
             "rs_id": payload.get("rs_id"),
             "region_id": payload.get("region_id"),
             "claim_id": claim_id
@@ -412,40 +564,63 @@ def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
         
         full_analysis = process_analyze_diagnosis(diagnosis_payload)
         
+        # 🔹 Match obat dengan Fornas DB
+        fornas_matched = match_multiple_obat(obat_list)
+        logger.info(f"[FORNAS] Matched {len(fornas_matched)} obat")
+        
+        # 🔹 FORNAS LITE VALIDATION (AI-powered)
+        fornas_lite_result = None
+        try:
+            # Get ICD-10 code from full_analysis
+            icd10_code = full_analysis.get("icd10", {}).get("kode_icd", "-")
+            
+            # Validate obat dengan FORNAS Lite (includes AI reasoning)
+            fornas_validator = FornasLiteValidator()
+            fornas_lite_result = fornas_validator.validate_drugs_lite(
+                drug_list=obat_list,
+                diagnosis_icd10=icd10_code,
+                diagnosis_name=diagnosis_name,
+                include_summary=True
+            )
+            logger.info(f"[FORNAS_LITE] Validated {len(obat_list)} drugs with AI reasoning")
+        except Exception as fornas_error:
+            logger.warning(f"[FORNAS_LITE] Validation failed: {fornas_error}")
+            # Continue without FORNAS Lite validation
+        
     except Exception as e:
-        print(f"[AI-CLAIM LITE] ❌ Error analyze diagnosis: {e}")
-        return {
+        error_response = {
             "status": "error",
             "message": "Analisis gagal",
             "detail": str(e)
         }
+        logger.error(f"[ANALYSIS ERROR] {json.dumps(error_response, ensure_ascii=False)}")
+        logger.exception("Full analysis error traceback:")
+        return error_response
     
-    # 🔹 Build 7-Panel Output
+    # 🔹 Build 6-Panel Output
     lite_result = {
         "klasifikasi": {
             "diagnosis": f"{diagnosis_name} ({full_analysis.get('icd10', {}).get('kode_icd', '-')})",
             "tindakan": _format_tindakan_lite(tindakan_list, full_analysis),
-            "obat": _format_obat_lite(obat_list),
-            "confidence": full_analysis.get("klinis", {}).get("confidence_ai", "85%")
+            "obat": _format_obat_lite(obat_list, fornas_matched),
+            "confidence": f"{int(parsed['confidence'] * 100)}%"
         },
         
         "validasi_klinis": {
             "sesuai_cp": _extract_cp_compliance(full_analysis),
-            "sesuai_fornas": _extract_fornas_compliance(full_analysis),
+            "sesuai_fornas": _extract_fornas_compliance(fornas_matched),
             "catatan": full_analysis.get("klinis", {}).get("justifikasi", "-")[:150] + "..."
         },
         
-        "severity": {
-            "tingkat": _estimate_severity(full_analysis),
-            "los_estimasi": full_analysis.get("rawat_inap", {}).get("lama_rawat", "3-5 hari"),
-            "faktor": _extract_severity_factors(full_analysis)
-        },
+        # 🔹 NEW: FORNAS Validation Table (AI-powered)
+        "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
+        "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
         
-        "cp_ringkas": _summarize_cp(full_analysis, diagnosis_name),
+        "cp_ringkas": _summarize_cp(full_analysis, diagnosis_name, parser.client if hasattr(parser, 'client') else None),
         
-        "checklist_dokumen": _generate_checklist(diagnosis_name, tindakan_list, full_analysis),
+        "checklist_dokumen": _generate_dokumen_wajib(diagnosis_name, tindakan_list, full_analysis, parser.client if hasattr(parser, 'client') else None),
         
-        "insight_ai": _generate_ai_insight(full_analysis, diagnosis_name, tindakan_list),
+        "insight_ai": _generate_ai_insight(full_analysis, diagnosis_name, tindakan_list, obat_list, parser.client if hasattr(parser, 'client') else None),
         
         "konsistensi": {
             "tingkat": _assess_consistency(full_analysis),
@@ -455,26 +630,50 @@ def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
         "metadata": {
             "claim_id": claim_id,
             "timestamp": datetime.now().isoformat(),
-            "engine": "AI-CLAIM Lite v1.1 Enhanced",
+            "engine": "AI-CLAIM Lite v2.0 (Full OpenAI)",
             "mode": mode,
-            "parsing_quality": parsing_quality,
+            "parsing_method": "openai",
+            "parsing_confidence": parsed["confidence"],
+            "parsing_cost_usd": parsed["parsing_metadata"]["cost_usd"],
+            "parsing_time_ms": parsed["parsing_metadata"]["processing_time_ms"],
+            "tokens_used": parsed["parsing_metadata"]["tokens_used"],
             "data_completeness": full_analysis.get("data_completeness", "0%")
         }
     }
+    
+    # Add parsed detail untuk reference
+    lite_result["_parsed_detail"] = parsed
+    
+    # 🔹 Log hasil JSON lengkap untuk debugging & analisis
+    try:
+        logger.info("="*80)
+        logger.info(f"[ANALYZE RESULT] Claim ID: {claim_id}")
+        logger.info(f"[ANALYZE RESULT] Mode: {mode}")
+        logger.info(f"[ANALYZE RESULT] Diagnosis: {diagnosis_name}")
+        logger.info("-"*80)
+        logger.info("[ANALYZE RESULT] Full JSON Output:")
+        logger.info(json.dumps(lite_result, indent=2, ensure_ascii=False))
+        logger.info("="*80)
+    except Exception as log_error:
+        logger.warning(f"Failed to log JSON result: {log_error}")
     
     return lite_result
 
 
 # ============================================================
-# 🔹 BATCH ANALYZER (unchanged, sudah bagus)
+# 🔹 BATCH ANALYZER
 # ============================================================
 def analyze_lite_batch(batch_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Analisis batch dari Excel - sama seperti sebelumnya"""
+    """Analisis batch dengan OpenAI parsing"""
     results = []
+    
+    # Track batch statistics
+    total_cost = 0.0
+    total_time_ms = 0
     
     for idx, row in enumerate(batch_data, start=1):
         payload = {
-            "mode": "form",
+            "mode": "excel",
             "diagnosis": row.get("Diagnosis", row.get("diagnosis", "")),
             "tindakan": row.get("Tindakan", row.get("tindakan", "")),
             "obat": row.get("Obat", row.get("obat", "")),
@@ -493,11 +692,15 @@ def analyze_lite_batch(batch_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                     "icd10": "-",
                     "icd9": "-",
                     "fornas": "-",
-                    "severity": "Error",
                     "konsistensi": "-",
-                    "insight": "Gagal dianalisis"
+                    "insight": "Gagal dianalisis",
+                    "cost_usd": 0.0
                 })
                 continue
+            
+            # Track cost & time
+            total_cost += lite_result["metadata"]["parsing_cost_usd"]
+            total_time_ms += lite_result["metadata"]["parsing_time_ms"]
             
             summary_row = {
                 "no": idx,
@@ -505,9 +708,10 @@ def analyze_lite_batch(batch_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "icd10": _extract_icd10_code(lite_result),
                 "icd9": _extract_icd9_code(lite_result),
                 "fornas": _extract_fornas_level(lite_result),
-                "severity": lite_result["severity"]["tingkat"],
                 "konsistensi": lite_result["konsistensi"]["tingkat"],
                 "insight": lite_result["insight_ai"][:50] + "...",
+                "confidence": f"{int(lite_result['metadata']['parsing_confidence'] * 100)}%",
+                "cost_usd": lite_result["metadata"]["parsing_cost_usd"],
                 "detail_link": lite_result["metadata"]["claim_id"]
             }
             
@@ -520,40 +724,76 @@ def analyze_lite_batch(batch_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "nama_pasien": row.get("Nama", f"Pasien {idx}"),
                 "error": str(e),
                 "icd10": "-", "icd9": "-", "fornas": "-",
-                "severity": "Error",
                 "konsistensi": "-",
-                "insight": "Gagal dianalisis"
+                "insight": "Gagal dianalisis",
+                "cost_usd": 0.0
             })
+    
+    success_count = len([r for r in results if "error" not in r])
     
     return {
         "total_klaim": len(results),
-        "success": len([r for r in results if "error" not in r]),
-        "failed": len([r for r in results if "error" in r]),
+        "success": success_count,
+        "failed": len(results) - success_count,
         "results": results,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "batch_statistics": {
+            "total_cost_usd": round(total_cost, 4),
+            "avg_cost_per_claim": round(total_cost / len(results), 6),
+            "total_time_ms": total_time_ms,
+            "avg_time_per_claim_ms": round(total_time_ms / len(results), 1)
+        }
     }
 
-
 # ============================================================
-# 🔹 HELPER FUNCTIONS (tetap sama, sudah bagus)
+# 🔹 HELPER FUNCTIONS 
 # ============================================================
-def _format_tindakan_lite(tindakan_list: List[str], full_analysis: Dict) -> str:
+def _format_tindakan_lite(tindakan_list: List[str], full_analysis: Dict) -> List[Dict]:
+    """
+    Format tindakan dengan ICD-9 mapping dari full_analysis.
+    Returns list of dicts untuk output klasifikasi.
+    """
     if not tindakan_list:
-        return "-"
+        return []
+    
+    # Get tindakan data with ICD-9 mapping from full_analysis
     tindakan_data = full_analysis.get("tindakan", [])
+    
     if tindakan_data and len(tindakan_data) > 0:
-        first = tindakan_data[0]
-        icd9 = first.get("icd9_code", "-")
-        nama = first.get("nama", tindakan_list[0])
-        return f"{nama} ({icd9})"
-    return tindakan_list[0]
+        # Use mapped tindakan from full_analysis (includes ICD-9 codes)
+        result = []
+        for t in tindakan_data:
+            result.append({
+                "nama": t.get("nama", "-"),
+                "icd9": t.get("icd9_code", "-"),
+                "icd9_desc": t.get("icd9_desc", "-"),
+                "confidence": t.get("icd9_confidence", 0),
+                "status": t.get("status", "-")
+            })
+        return result
+    else:
+        # Fallback: use tindakan_list without ICD-9 mapping
+        return [{"nama": t, "icd9": "-", "icd9_desc": "-", "confidence": 0, "status": "-"} for t in tindakan_list]
 
-def _format_obat_lite(obat_list: List[str]) -> str:
+def _format_obat_lite(obat_list: List[str], fornas_matched: List[Dict]) -> str:
+    """
+    Format obat dengan Fornas level dari DB matching
+    """
     if not obat_list:
         return "-"
-    obat = obat_list[0]
-    level = "Level IV" if "injeksi" in obat.lower() else "Level III"
-    return f"{obat} (Fornas {level})"
+    
+    # Ambil obat pertama
+    obat_name = obat_list[0]
+    
+    # Cari matching Fornas info
+    if fornas_matched and len(fornas_matched) > 0:
+        fornas_info = fornas_matched[0]
+        level = fornas_info.get("level", "Level III")
+        nama_generik = fornas_info.get("nama_generik", obat_name)
+        return f"{nama_generik} (Fornas {level})"
+    
+    # Fallback jika tidak ada matching
+    return f"{obat_name} (Fornas Level III)"
 
 def _extract_cp_compliance(full_analysis: Dict) -> str:
     notifications = full_analysis.get("notifications", {})
@@ -564,58 +804,207 @@ def _extract_cp_compliance(full_analysis: Dict) -> str:
         return "⚠️ Perlu review"
     return "❌ Tidak sesuai"
 
-def _extract_fornas_compliance(full_analysis: Dict) -> str:
-    return "✅ Sesuai Fornas"
+def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
+    """
+    Extract Fornas compliance dari hasil matching obat
+    """
+    return get_fornas_compliance_status(fornas_matched)
 
-def _estimate_severity(full_analysis: Dict) -> str:
-    bukti = str(full_analysis.get("klinis", {}).get("bukti_klinis", "")).lower()
-    severe_indicators = ["berat", "kritis", "icu", "ventilator", "sepsis"]
-    moderate_indicators = ["sedang", "rawat inap", "infeksi"]
-    if any(ind in bukti for ind in severe_indicators):
-        return "Severe"
-    elif any(ind in bukti for ind in moderate_indicators):
-        return "Moderate"
-    return "Mild"
+def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None) -> List[str]:
+    """
+    Ambil ringkasan CP dari DB, jika tidak ada fallback ke AI
+    """
+    # Coba ambil dari full_analysis (DB rules)
+    rawat_inap = full_analysis.get("rawat_inap", {})
+    cp_steps = []
+    
+    # Cek apakah ada data CP dari DB
+    if rawat_inap.get("lama_rawat") and rawat_inap.get("lama_rawat") != "-":
+        # Ada data dari DB, format menjadi steps
+        lama_rawat = rawat_inap.get("lama_rawat", "-")
+        indikasi = rawat_inap.get("indikasi", "-")
+        kriteria = rawat_inap.get("kriteria", "-")
+        
+        if indikasi != "-":
+            cp_steps.append(f"Indikasi: {indikasi[:80]}")
+        if kriteria != "-":
+            cp_steps.append(f"Kriteria: {kriteria[:80]}")
+        if lama_rawat != "-":
+            cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
+    
+    # Jika ada data dari DB, return
+    if cp_steps:
+        print(f"[CP_RINGKAS] ✓ Using DB data ({len(cp_steps)} steps)")
+        return cp_steps
+    
+    # Fallback ke AI
+    if client and OPENAI_AVAILABLE:
+        try:
+            print(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
+            
+            prompt = f"""Berikan ringkasan Clinical Pathway untuk diagnosis: {diagnosis_name}
 
-def _extract_severity_factors(full_analysis: Dict) -> str:
-    factors = []
-    kode_ganda = full_analysis.get("icd10", {}).get("kode_ganda", "")
-    if kode_ganda and kode_ganda != "-":
-        factors.append("Komorbid")
-    tindakan = full_analysis.get("tindakan", [])
-    for t in tindakan:
-        nama = t.get("nama", "").lower()
-        if "ventilator" in nama or "icu" in nama:
-            factors.append("Tindakan invasif")
-            break
-    return ", ".join(factors) if factors else "Standar"
+Format output sebagai list langkah-langkah singkat (max 3 poin), contoh:
+- Hari 1-2: Antibiotik injeksi + monitoring vital signs
+- Hari 3: Evaluasi klinis dan radiologi
+- Hari 4-5: Persiapan pulang
 
-def _summarize_cp(full_analysis: Dict, diagnosis_name: str) -> List[str]:
+Berikan dalam format JSON array of strings."""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Kamu adalah clinical pathway expert untuk BPJS Indonesia."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=300
+            )
+            
+            content = response.choices[0].message.content.strip()
+            # Parse JSON array
+            if content.startswith("[") and content.endswith("]"):
+                cp_steps = json.loads(content)
+                print(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
+                return cp_steps[:3]  # Max 3 steps
+            
+        except Exception as e:
+            print(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
+    
+    # Ultimate fallback: hardcoded generic
     return [
-        "Hari 1-2: Antibiotik injeksi + O₂",
-        "Hari 3: Radiologi kontrol",
-        "Hari 4-5: Nebulisasi, mobilisasi pasien"
+        "Hari 1-2: Pemeriksaan awal dan terapi inisial",
+        "Hari 3: Evaluasi respon terapi",
+        "Hari 4-5: Persiapan discharge planning"
     ]
 
-def _generate_checklist(diagnosis: str, tindakan_list: List[str], full_analysis: Dict) -> List[Dict]:
-    checklist = [
-        {"item": "Resume Medis", "required": True, "checked": False},
-        {"item": "Hasil Lab Darah", "required": True, "checked": False},
-        {"item": "Resep Obat", "required": True, "checked": False}
-    ]
+def _generate_dokumen_wajib(diagnosis: str, tindakan_list: List[str], full_analysis: Dict, client: Any = None) -> List[str]:
+    """
+    Ambil daftar dokumen wajib dari DB, jika tidak ada fallback ke AI
+    Returns list of strings (bukan dict dengan checkbox)
+    """
+    dokumen_list = []
+    
+    # Coba ambil dari full_analysis (DB rules)
+    # Biasanya ada di section tertentu, kita cek beberapa kemungkinan
+    rawat_inap = full_analysis.get("rawat_inap", {})
+    klinis = full_analysis.get("klinis", {})
+    
+    # Cek apakah ada informasi dokumen dari DB
+    # (Asumsi: belum ada field khusus dokumen_wajib di DB, jadi kita generate dari context)
+    
+    # Generate dari tindakan yang ada
+    base_docs = ["Resume Medis", "Hasil Lab Darah", "Resep Obat"]
+    
+    # Tambahkan dokumen berdasarkan tindakan
     for tindakan in tindakan_list:
-        if "rontgen" in tindakan.lower():
-            checklist.append({"item": "Hasil Radiologi Thoraks", "required": True, "checked": False})
-    return checklist
+        tindakan_lower = tindakan.lower()
+        if "rontgen" in tindakan_lower or "radiologi" in tindakan_lower or "x-ray" in tindakan_lower:
+            if "Hasil Radiologi" not in dokumen_list:
+                base_docs.append("Hasil Radiologi")
+        if "ct scan" in tindakan_lower or "mri" in tindakan_lower:
+            if "Hasil CT/MRI" not in dokumen_list:
+                base_docs.append("Hasil CT/MRI")
+        if "operasi" in tindakan_lower or "bedah" in tindakan_lower:
+            if "Laporan Operasi" not in dokumen_list:
+                base_docs.append("Laporan Operasi")
+    
+    # Jika ada data dari context, return
+    if base_docs:
+        print(f"[DOKUMEN_WAJIB] ✓ Generated from context ({len(base_docs)} items)")
+        return base_docs
+    
+    # Fallback ke AI
+    if client and OPENAI_AVAILABLE:
+        try:
+            print(f"[DOKUMEN_WAJIB] 🤖 Fallback to AI for {diagnosis}")
+            
+            tindakan_str = ", ".join(tindakan_list[:3]) if tindakan_list else "tidak ada"
+            
+            prompt = f"""Berikan daftar dokumen wajib untuk klaim BPJS dengan:
+- Diagnosis: {diagnosis}
+- Tindakan: {tindakan_str}
 
-def _generate_ai_insight(full_analysis: Dict, diagnosis: str, tindakan_list: List[str]) -> str:
-    insights = []
-    konsistensi = full_analysis.get("konsistensi", {})
-    if konsistensi.get("tingkat") == "Rendah":
-        insights.append("⚠️ Inkonsistensi ditemukan")
-    if not insights:
-        insights.append("✅ Dokumentasi lengkap dan sesuai CP/PNPK")
-    return " | ".join(insights)
+Format output sebagai JSON array of strings (max 5 dokumen), contoh:
+["Resume Medis", "Hasil Lab Darah", "Resep Obat", "Hasil Radiologi"]
+
+Hanya dokumen yang relevan dan wajib."""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Kamu adalah expert verifikasi dokumen klaim BPJS Indonesia."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            
+            content = response.choices[0].message.content.strip()
+            # Parse JSON array
+            if content.startswith("[") and content.endswith("]"):
+                dokumen_list = json.loads(content)
+                print(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
+                return dokumen_list[:5]  # Max 5 items
+            
+        except Exception as e:
+            print(f"[DOKUMEN_WAJIB] ❌ AI fallback error: {e}")
+    
+    # Ultimate fallback
+    return base_docs if base_docs else ["Resume Medis", "Hasil Lab", "Resep Obat"]
+
+def _generate_ai_insight(full_analysis: Dict, diagnosis: str, tindakan_list: List[str], obat_list: List[str], client: Any = None) -> str:
+    """
+    Generate insight menggunakan OpenAI berdasarkan full analysis
+    """
+    if not client or not OPENAI_AVAILABLE:
+        # Fallback ke rule-based
+        insights = []
+        konsistensi = full_analysis.get("konsistensi", {})
+        if konsistensi.get("tingkat") == "Rendah":
+            insights.append("⚠️ Inkonsistensi ditemukan")
+        if not insights:
+            insights.append("✅ Dokumentasi lengkap dan sesuai CP/PNPK")
+        return " | ".join(insights)
+    
+    try:
+        print(f"[INSIGHT_AI] 🤖 Generating insight for {diagnosis}")
+        
+        # Prepare context
+        tindakan_str = ", ".join(tindakan_list[:3]) if tindakan_list else "tidak ada"
+        obat_str = ", ".join(obat_list[:3]) if obat_list else "tidak ada"
+        konsistensi = full_analysis.get("konsistensi", {}).get("tingkat", "Sedang")
+        icd10 = full_analysis.get("icd10", {}).get("kode_icd", "-")
+        
+        prompt = f"""Analisis klaim BPJS berikut dan berikan insight singkat (max 100 karakter):
+
+Diagnosis: {diagnosis} ({icd10})
+Tindakan: {tindakan_str}
+Obat: {obat_str}
+Konsistensi: {konsistensi}
+
+Berikan insight yang actionable dan spesifik. Format: 1 kalimat singkat.
+Contoh: "✅ Sesuai CP pneumonia, dokumentasi lengkap" atau "⚠️ Perlu verifikasi dosis antibiotik"
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Kamu adalah AI expert verifikasi klaim BPJS. Berikan insight singkat dan actionable."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_tokens=100
+        )
+        
+        insight = response.choices[0].message.content.strip()
+        print(f"[INSIGHT_AI] ✓ Generated: {insight}")
+        return insight
+        
+    except Exception as e:
+        print(f"[INSIGHT_AI] ❌ Error: {e}")
+        # Fallback
+        return "✅ Dokumentasi lengkap dan sesuai CP/PNPK"
 
 def _assess_consistency(full_analysis: Dict) -> str:
     klinis_status = full_analysis.get("klinis", {}).get("status", "")
@@ -640,9 +1029,23 @@ def _extract_icd10_code(lite_result: Dict) -> str:
     return match.group(1) if match else "-"
 
 def _extract_icd9_code(lite_result: Dict) -> str:
-    tindakan = lite_result.get("klasifikasi", {}).get("tindakan", "")
-    match = re.search(r'\((\d+\.?\d*)\)', tindakan)
-    return match.group(1) if match else "-"
+    """Extract ICD-9 code dari tindakan list"""
+    tindakan = lite_result.get("klasifikasi", {}).get("tindakan", [])
+    
+    # Tindakan sekarang adalah list of dicts
+    if isinstance(tindakan, list) and len(tindakan) > 0:
+        # Ambil ICD-9 dari tindakan pertama
+        first_tindakan = tindakan[0]
+        if isinstance(first_tindakan, dict):
+            icd9 = first_tindakan.get("icd9", "-")
+            return icd9 if icd9 and icd9 != "-" else "-"
+    
+    # Fallback untuk format lama (string)
+    if isinstance(tindakan, str):
+        match = re.search(r'\((\d+\.?\d*)\)', tindakan)
+        return match.group(1) if match else "-"
+    
+    return "-"
 
 def _extract_fornas_level(lite_result: Dict) -> str:
     obat = lite_result.get("klasifikasi", {}).get("obat", "")
@@ -779,26 +1182,8 @@ def export_to_pdf(lite_result: Dict[str, Any]) -> bytes:
         story.append(klas_table)
         story.append(Spacer(1, 0.5*cm))
         
-        # Severity
-        story.append(Paragraph("2. Severity Estimator", styles['Heading2']))
-        severity = lite_result.get("severity", {})
-        sev_data = [
-            ["Tingkat", severity.get("tingkat", "-")],
-            ["LOS Estimasi", severity.get("los_estimasi", "-")],
-            ["Faktor", severity.get("faktor", "-")]
-        ]
-        sev_table = Table(sev_data, colWidths=[5*cm, 10*cm])
-        sev_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (0, -1), colors.lightyellow),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6)
-        ]))
-        story.append(sev_table)
-        story.append(Spacer(1, 0.5*cm))
-        
         # Konsistensi
-        story.append(Paragraph("3. Konsistensi Klinis", styles['Heading2']))
+        story.append(Paragraph("2. Konsistensi Klinis", styles['Heading2']))
         konsistensi = lite_result.get("konsistensi", {})
         kons_data = [
             ["Tingkat", konsistensi.get("tingkat", "-")],
@@ -845,7 +1230,6 @@ def save_to_history(result: Dict[str, Any]) -> Dict[str, str]:
     - id: UUID primary key
     - claim_id: string
     - diagnosis: string
-    - severity: string
     - konsistensi: string
     - insight: text
     - result_json: jsonb
@@ -860,7 +1244,6 @@ def save_to_history(result: Dict[str, Any]) -> Dict[str, str]:
         # history_entry = AIClaimLiteHistory(
         #     claim_id=history_id,
         #     diagnosis=result["klasifikasi"]["diagnosis"],
-        #     severity=result["severity"]["tingkat"],
         #     konsistensi=result["konsistensi"]["tingkat"],
         #     insight=result["insight_ai"],
         #     result_json=result,
@@ -925,7 +1308,6 @@ def get_history_list(limit: int = 10, user_id: Optional[str] = None) -> List[Dic
             {
                 "claim_id": "...",
                 "diagnosis": "...",
-                "severity": "...",
                 "timestamp": "...",
                 "mode": "..."
             }
@@ -947,7 +1329,6 @@ def get_history_list(limit: int = 10, user_id: Optional[str] = None) -> List[Dic
         #     {
         #         "claim_id": h.claim_id,
         #         "diagnosis": h.diagnosis,
-        #         "severity": h.severity,
         #         "timestamp": h.created_at.isoformat(),
         #         "mode": h.result_json.get("metadata", {}).get("mode", "-")
         #     }
@@ -1036,7 +1417,7 @@ def search_history(
     
     Args:
         query: Search query string
-        search_field: Field yang dicari (diagnosis/severity/claim_id)
+        search_field: Field yang dicari (diagnosis/claim_id)
         limit: Max results
         user_id: Filter user
     
@@ -1055,10 +1436,6 @@ def search_history(
         # if search_field == "diagnosis":
         #     query_builder = query_builder.filter(
         #         AIClaimLiteHistory.diagnosis.ilike(f"%{query}%")
-        #     )
-        # elif search_field == "severity":
-        #     query_builder = query_builder.filter(
-        #         AIClaimLiteHistory.severity == query
         #     )
         # elif search_field == "claim_id":
         #     query_builder = query_builder.filter(
@@ -1088,7 +1465,6 @@ def get_history_statistics(user_id: Optional[str] = None, days: int = 30) -> Dic
     Returns:
         {
             "total_claims": int,
-            "by_severity": {"Severe": int, "Moderate": int, "Mild": int},
             "by_consistency": {"Tinggi": int, "Sedang": int, "Rendah": int},
             "recent_activity": List[date_counts],
             "avg_parsing_quality": float
@@ -1098,7 +1474,6 @@ def get_history_statistics(user_id: Optional[str] = None, days: int = 30) -> Dic
         # TODO: Implementasi aggregation queries
         return {
             "total_claims": 0,
-            "by_severity": {"Severe": 0, "Moderate": 0, "Mild": 0},
             "by_consistency": {"Tinggi": 0, "Sedang": 0, "Rendah": 0},
             "recent_activity": [],
             "avg_parsing_quality": 0.0
@@ -1107,55 +1482,3 @@ def get_history_statistics(user_id: Optional[str] = None, days: int = 30) -> Dic
     except Exception as e:
         print(f"[STATISTICS] ❌ Error getting statistics: {e}")
         return {}
-
-
-# ============================================================
-# 🧪 TESTING & VALIDATION
-# ============================================================
-if __name__ == "__main__":
-    print("🧪 Testing AI-CLAIM Lite Service Enhanced\n")
-    
-    # Test 1: Text Parser
-    print("1️⃣ Testing MedicalTextParser:")
-    test_text = """
-    Diagnosis: Pneumonia berat dengan infiltrat bilateral
-    Pasien mengeluh batuk berdahak, demam 39°C, sesak napas
-    Tindakan: Nebulisasi 3x/hari, Rontgen thorax, Kultur sputum
-    Obat: Ceftriaxone injeksi 1g/12 jam, Paracetamol 500mg/8 jam
-    """
-    
-    parsed = MedicalTextParser.parse(test_text)
-    print(f"  Diagnosis: {parsed['diagnosis']}")
-    print(f"  Confidence: {parsed['diagnosis_confidence']}")
-    print(f"  Tindakan: {parsed['tindakan']}")
-    print(f"  Obat: {parsed['obat']}")
-    print(f"  Quality: {parsed['parsing_quality']}")
-    
-    # Test 2: Form Parser
-    print("\n2️⃣ Testing FormInputParser:")
-    form_result = FormInputParser.parse(
-        diagnosis="Pneumonia berat (J18.9)",
-        tindakan="Nebulisasi (93.96), Rontgen Thorax (87.44)",
-        obat="Ceftriaxone injeksi 1g/12jam, Paracetamol tablet 500mg"
-    )
-    print(f"  Diagnosis: {form_result['diagnosis']}")
-    print(f"  ICD-10: {form_result['diagnosis_icd']}")
-    print(f"  Tindakan codes: {form_result['tindakan_codes']}")
-    print(f"  Validation errors: {form_result['validation_errors']}")
-    
-    # Test 3: Input Validation
-    print("\n3️⃣ Testing Input Validation:")
-    invalid_payload = {
-        "mode": "text",
-        "input_text": "abc"  # Too short
-    }
-    result = analyze_lite_single(invalid_payload)
-    print(f"  Status: {result.get('status')}")
-    print(f"  Errors: {result.get('errors')}")
-    
-    print("\n✅ Enhanced lite_service.py testing completed!")
-    print("\n📋 TODO Items:")
-    print("  - Implementasi database model AIClaimLiteHistory")
-    print("  - Install reportlab untuk PDF export")
-    print("  - Testing dengan real medical data")
-    print("  - Performance optimization untuk batch processing")

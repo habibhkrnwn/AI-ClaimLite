@@ -36,3 +36,34 @@ class RulesMaster(Base):
 
     def __repr__(self):
         return f"<RulesMaster(id={self.id}, diagnosis={self.diagnosis}, layer={self.layer}, status={self.status})>"
+    
+class FornasDrug(Base):
+    """
+    FORNAS Drug Reference (Master Data)
+    """
+    __tablename__ = "fornas_drugs"
+    
+    id = Column(Integer, primary_key=True)
+    tindakan_name = Column(String(200))
+    kelas_terapi = Column(Text())
+    subkelas_terapi = Column(String(200))
+    obat_name = Column(String(200), nullable=False, index=True)
+    sediaan_kekuatan = Column(JSON, nullable=True)
+    restriksi_penggunaan = Column(Text, nullable=True)
+    fasilitas_fpktp = Column(Boolean, default=False)
+    fasilitas_fpktl = Column(Boolean, default=False)
+    fasilitas_tp = Column(Boolean, default=False)
+    oen = Column(Boolean, default=False)
+    persepan_maksimal = Column(String(100))
+    status_excel = Column(String(50))
+    kode_fornas = Column(String(50), nullable=False, index=True)
+    nama_obat_alias = Column(JSON, nullable=True)
+    indikasi_fornas = Column(JSON, nullable=True)
+    sumber_regulasi = Column(Text, nullable=True)
+    status = Column(String(50), default='active')
+    fornas_version = Column(String(20), default='2023')
+    created_at = Column(DateTime, nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime, nullable=False, server_default=text("now()"), onupdate=text("now()"))
+    
+    def __repr__(self):
+        return f"<FornasDrug {self.kode_fornas}: {self.obat_name}>"

@@ -1,0 +1,99 @@
+{
+  "_comment": "Mapping alias bahasa Indonesia ke terminologi WHO ICD-9-CM untuk memudahkan matching",
+  "_format": "key: istilah Indonesia (lowercase), value: WHO standard term",
+  
+  "rontgen thorax": "Routine chest x-ray, so described",
+  "rontgen dada": "Routine chest x-ray, so described",
+  "foto thorax": "Routine chest x-ray, so described",
+  "foto rontgen dada": "Routine chest x-ray, so described",
+  "x-ray thorax": "Routine chest x-ray, so described",
+  "xray thorax": "Routine chest x-ray, so described",
+  "chest x-ray": "Routine chest x-ray, so described",
+  "radiografi thorax": "Routine chest x-ray, so described",
+  "radiografi dada": "Routine chest x-ray, so described",
+  
+  "foto thorax lain": "Other chest x-ray",
+  "rontgen thorax lain": "Other chest x-ray",
+  
+  "ct scan thorax": "Computerized axial tomography of thorax",
+  "ct thorax": "Computerized axial tomography of thorax",
+  "cat scan thorax": "Computerized axial tomography of thorax",
+  
+  "antibiotik iv": "Injection of antibiotic",
+  "antibiotik intravena": "Injection of antibiotic",
+  "injeksi antibiotik": "Injection of antibiotic",
+  "suntik antibiotik": "Injection of antibiotic",
+  "antibiotik injeksi": "Injection of antibiotic",
+  
+  "ventilator mekanik": "Continuous invasive mechanical ventilation for less than 96 consecutive hours",
+  "ventilasi mekanik": "Continuous invasive mechanical ventilation for less than 96 consecutive hours",
+  "mechanical ventilation": "Continuous invasive mechanical ventilation for less than 96 consecutive hours",
+  
+  "ventilator non invasif": "Non-invasive mechanical ventilation",
+  "niv": "Non-invasive mechanical ventilation",
+  "non invasive ventilation": "Non-invasive mechanical ventilation",
+  
+  "kateter vena": "Venous catheterization, not elsewhere classified",
+  "pemasangan kateter vena": "Venous catheterization, not elsewhere classified",
+  "venous catheter": "Venous catheterization, not elsewhere classified",
+  "iv line": "Venous catheterization, not elsewhere classified",
+  "infus": "Venous catheterization, not elsewhere classified",
+  "pemasangan infus": "Venous catheterization, not elsewhere classified",
+  
+  "kultur sputum": "Microscopic examination of specimen from trachea, bronchus, pleura,lung,and other thoracic specimen, and of sputum, Culture and sensitivity",
+  "kultur dahak": "Microscopic examination of specimen from trachea, bronchus, pleura,lung,and other thoracic specimen, and of sputum, Culture and sensitivity",
+  "pemeriksaan kultur sputum": "Microscopic examination of specimen from trachea, bronchus, pleura,lung,and other thoracic specimen, and of sputum, Culture and sensitivity",
+  
+  "agd": "Arterial blood gases",
+  "analisa gas darah": "Arterial blood gases",
+  "pemeriksaan agd": "Arterial blood gases",
+  "arterial blood gas": "Arterial blood gases",
+  
+  "nebulisasi": "Other respiratory therapy",
+  "nebulizer": "Other respiratory therapy",
+  "inhalasi": "Other respiratory therapy",
+  
+  "oksigen": "Other respiratory therapy",
+  "terapi oksigen": "Other respiratory therapy",
+  "oxygen therapy": "Other respiratory therapy",
+  
+  "ekg": "Electrocardiogram",
+  "ecg": "Electrocardiogram",
+  "rekam jantung": "Electrocardiogram",
+  "elektrokardiogram": "Electrocardiogram",
+  
+  "usg": "Diagnostic ultrasound of other sites of thorax",
+  "ultrasonografi": "Diagnostic ultrasound of other sites of thorax",
+  "ultrasound": "Diagnostic ultrasound of other sites of thorax",
+  
+  "transfusi darah": "Transfusion of packed cells",
+  "transfusi prc": "Transfusion of packed cells",
+  "transfusi": "Transfusion of other substance",
+  
+  "infus cairan": "Other irrigation of (naso-)gastric tube",
+  "rehidrasi": "Other irrigation of (naso-)gastric tube",
+  
+  "pemeriksaan darah lengkap": "Hematocrit",
+  "darah lengkap": "Hematocrit",
+  "cbc": "Hematocrit",
+  "complete blood count": "Hematocrit",
+  
+  "pemeriksaan fungsi ginjal": "Microscopic examination of specimen from kidney, ureter, perirenal, and periureteral tissue, bacterial smear",
+  "fungsi ginjal": "Microscopic examination of specimen from kidney, ureter, perirenal, and periureteral tissue, bacterial smear",
+  
+  "pemeriksaan fungsi hati": "Microscopic examination of specimen from liver, biliary tract, and pancreas, bacterial smear",
+  "fungsi hati": "Microscopic examination of specimen from liver, biliary tract, and pancreas, bacterial smear",
+  
+  "rawat inap": "Admission for isolation",
+  "hospitalisasi": "Admission for isolation",
+  
+  "observasi": "Other specified diagnostic procedures",
+  "monitoring": "Other specified diagnostic procedures",
+  
+  "fisioterapi dada": "Other respiratory therapy",
+  "chest physiotherapy": "Other respiratory therapy",
+  
+  "suction": "Other lavage of bronchus and trachea",
+  "pengisapan lendir": "Other lavage of bronchus and trachea",
+  "suction lendir": "Other lavage of bronchus and trachea"
+}

@@ -18,6 +18,7 @@ from services.lite_service import (
     load_from_history,
     get_history_list
 )
+from services.fornas_lite_service import validate_fornas_lite
 
 
 # ============================================================
@@ -201,7 +202,6 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
         "result": {
             "klasifikasi": {...},
             "validasi_klinis": {...},
-            "severity": {...},
             "cp_ringkas": [...],
             "checklist_dokumen": [...],
             "insight_ai": "...",
@@ -303,7 +303,6 @@ def endpoint_analyze_batch(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 "no": 1,
                 "nama_pasien": "Ahmad S.",
                 "icd10": "J18.9",
-                "severity": "Severe",
                 "insight": "Perlu radiologi...",
                 ...
             }
@@ -376,7 +375,6 @@ def endpoint_get_history(request_data: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "claim_id": "LITE-20251108001",
                 "diagnosis": "Pneumonia berat",
-                "severity": "Severe",
                 "timestamp": "2025-11-08T10:15:00",
                 "mode": "text"
             }
@@ -603,6 +601,95 @@ def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any]) -> Dic
 
 
 # ============================================================
+# 📌 ENDPOINT 6: Validate FORNAS (Standalone)
+# ============================================================
+def endpoint_validate_fornas(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/validate/fornas
+    
+    Standalone FORNAS validation dengan AI reasoning.
+    Untuk validasi obat terhadap diagnosis tanpa full analisis.
+    
+    Request:
+    {
+        "diagnosis_icd10": "J18.9",
+        "diagnosis_name": "Pneumonia berat",
+        "obat": ["Ceftriaxone 1g IV", "Paracetamol 500mg", "Levofloxacin 500mg"]
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "fornas_validation": [
+            {
+                "no": 1,
+                "nama_obat": "Ceftriaxone",
+                "kelas_terapi": "Antibiotik – Sefalosporin",
+                "status_fornas": "✅ Sesuai (Fornas)",
+                "catatan_ai": "Lini pertama pneumonia berat rawat inap.",
+                "sumber_regulasi": "FORNAS 2023 • PNPK Pneumonia 2020"
+            },
+            ...
+        ],
+        "summary": {
+            "total_obat": 3,
+            "sesuai": 2,
+            "perlu_justifikasi": 1,
+            "non_fornas": 0,
+            "update_date": "2025-11-11",
+            "status_database": "Official Verified"
+        }
+    }
+    """
+    try:
+        # Extract request data
+        diagnosis_icd10 = request_data.get("diagnosis_icd10", "")
+        diagnosis_name = request_data.get("diagnosis_name", "")
+        obat_input = request_data.get("obat", [])
+        
+        # Validate required fields
+        if not diagnosis_icd10 or not diagnosis_name:
+            return {
+                "status": "error",
+                "message": "diagnosis_icd10 dan diagnosis_name required"
+            }
+        
+        if not obat_input or len(obat_input) == 0:
+            return {
+                "status": "error",
+                "message": "obat list required (minimal 1 obat)"
+            }
+        
+        # Convert obat to list if string
+        if isinstance(obat_input, str):
+            # Parse comma-separated string
+            obat_list = [o.strip() for o in obat_input.split(",") if o.strip()]
+        else:
+            obat_list = obat_input
+        
+        # Call FORNAS Lite validator
+        result = validate_fornas_lite(
+            drug_list=obat_list,
+            diagnosis_icd10=diagnosis_icd10,
+            diagnosis_name=diagnosis_name
+        )
+        
+        return {
+            "status": "success",
+            "fornas_validation": result.get("fornas_validation", []),
+            "summary": result.get("summary", {}),
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
 # 📌 TESTING HELPERS
 # ============================================================
 if __name__ == "__main__":
@@ -634,7 +721,6 @@ if __name__ == "__main__":
     print(f"Status: {analyze_text_result['status']}")
     if analyze_text_result['status'] == 'success':
         print(f"Diagnosis: {analyze_text_result['result']['klasifikasi']['diagnosis']}")
-        print(f"Severity: {analyze_text_result['result']['severity']['tingkat']}")
     
     # Test 2B: Analyze Single (Form Mode) - NEW
     print("\n2️⃣B Testing analyze_single (form mode):")
@@ -652,7 +738,6 @@ if __name__ == "__main__":
         print(f"  - Diagnosis: {result['klasifikasi']['diagnosis']}")
         print(f"  - Tindakan: {result['klasifikasi']['tindakan']}")
         print(f"  - Obat: {result['klasifikasi']['obat']}")
-        print(f"Severity: {result['severity']['tingkat']}")
         print(f"Insight: {result['insight_ai']}")
     
     # Test 3: Batch Analysis

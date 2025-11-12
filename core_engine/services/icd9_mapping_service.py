@@ -6,6 +6,7 @@ from typing import Dict, Optional
 
 # Lazy load untuk performance
 _icd9_mapping_cache = None
+_indonesian_aliases_cache = None
 
 def load_icd9_mapping() -> dict:
     """
@@ -29,6 +30,32 @@ def load_icd9_mapping() -> dict:
             _icd9_mapping_cache = {}
     
     return _icd9_mapping_cache
+
+
+def load_indonesian_aliases() -> dict:
+    """
+    Load Indonesian aliases untuk mapping bahasa Indonesia ke WHO terminology.
+    File hanya di-load sekali saat pertama kali dibutuhkan.
+    """
+    global _indonesian_aliases_cache
+    
+    if _indonesian_aliases_cache is None:
+        aliases_path = Path(__file__).parent.parent / "rules" / "icd9_indonesian_aliases.json"
+        
+        try:
+            with open(aliases_path, encoding="utf-8") as f:
+                data = json.load(f)
+                # Remove comment keys
+                _indonesian_aliases_cache = {k: v for k, v in data.items() if not k.startswith("_")}
+            print(f"[ICD9_MAPPING] ✅ Loaded {len(_indonesian_aliases_cache)} Indonesian aliases")
+        except FileNotFoundError:
+            print(f"[ICD9_MAPPING] ⚠️ Indonesian aliases file not found: {aliases_path}")
+            _indonesian_aliases_cache = {}
+        except Exception as e:
+            print(f"[ICD9_MAPPING] ⚠️ Error loading aliases: {e}")
+            _indonesian_aliases_cache = {}
+    
+    return _indonesian_aliases_cache
 
 
 def normalize_procedure_name(name: str) -> str:
@@ -67,9 +94,10 @@ def map_icd9_by_name(procedure_name: str, use_fuzzy: bool = True, threshold: int
     
     Flow:
     1. Normalize input
-    2. Try exact match
-    3. Try fuzzy match (jika use_fuzzy=True)
-    4. Return fallback jika tidak ada match
+    2. Check Indonesian aliases (translate to WHO term)
+    3. Try exact match
+    4. Try fuzzy match (jika use_fuzzy=True)
+    5. Return fallback jika tidak ada match
     """
     if not procedure_name or procedure_name.strip() in ["", "-"]:
         return {
@@ -95,6 +123,16 @@ def map_icd9_by_name(procedure_name: str, use_fuzzy: bool = True, threshold: int
     # Normalize input
     normalized_input = normalize_procedure_name(procedure_name)
     
+    # 🔹 CHECK INDONESIAN ALIASES FIRST
+    aliases = load_indonesian_aliases()
+    translated_name = None
+    
+    if normalized_input in aliases:
+        translated_name = aliases[normalized_input]
+        print(f"[ICD9_MAPPING] 🇮🇩 Indonesian alias found: '{procedure_name}' → '{translated_name}'")
+        # Use translated name for matching
+        normalized_input = normalize_procedure_name(translated_name)
+    
     # 1️⃣ EXACT MATCH (case-insensitive)
     for official_name, code in mapping_data.items():
         if normalize_procedure_name(official_name) == normalized_input:
@@ -111,7 +149,33 @@ def map_icd9_by_name(procedure_name: str, use_fuzzy: bool = True, threshold: int
         try:
             from rapidfuzz import fuzz, process
             
-            # Cari best match menggunakan token_sort_ratio (lebih toleran terhadap urutan kata)
+            # 2a. Try fuzzy match on Indonesian aliases first (lebih relevan untuk input Indonesia)
+            if aliases and not translated_name:  # Only if no exact alias match
+                alias_result = process.extractOne(
+                    normalize_procedure_name(procedure_name),  # Use original input
+                    list(aliases.keys()),
+                    scorer=fuzz.token_sort_ratio,
+                    score_cutoff=threshold
+                )
+                
+                if alias_result:
+                    matched_alias, alias_score, _ = alias_result
+                    who_term = aliases[matched_alias]
+                    print(f"[ICD9_MAPPING] 🇮🇩 Fuzzy Indonesian alias: '{procedure_name}' → '{matched_alias}' → '{who_term}' (confidence: {alias_score}%)")
+                    
+                    # Now find the ICD-9 code for this WHO term
+                    who_normalized = normalize_procedure_name(who_term)
+                    for official_name, code in mapping_data.items():
+                        if normalize_procedure_name(official_name) == who_normalized:
+                            return {
+                                "kode": code,
+                                "deskripsi": official_name,
+                                "source": "WHO Official (via Indonesian Alias)",
+                                "valid": True,
+                                "confidence": int(alias_score)
+                            }
+            
+            # 2b. Fuzzy match directly on WHO terms (fallback)
             result = process.extractOne(
                 normalized_input,
                 [normalize_procedure_name(name) for name in mapping_data.keys()],

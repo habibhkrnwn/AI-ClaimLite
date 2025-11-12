@@ -12,6 +12,7 @@ import os
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
+import asyncpg
 
 # Load environment variables
 load_dotenv()
@@ -37,6 +38,9 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Global database pool for async operations
+db_pool = None
+
 # CORS Configuration
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
@@ -51,6 +55,7 @@ app.add_middleware(
 # ✅ FIXED IMPORT - Tanpa 'core_engine.' prefix
 # ============================================================
 from lite_endpoints import (
+    endpoint_validate_form,
     endpoint_analyze_single,
     endpoint_analyze_batch,
     endpoint_parse_text,
@@ -81,6 +86,41 @@ async def root():
         "docs": "/docs",
         "health": "/health"
     }
+
+# ============================================================
+# 📋 VALIDATION & PARSING ENDPOINTS
+# ============================================================
+@app.post("/api/lite/validate/form")
+async def validate_form(request: Request):
+    """
+    Validasi input form 3 field sebelum analisis
+    """
+    try:
+        data = await request.json()
+        result = endpoint_validate_form(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in validate_form: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.post("/api/lite/parse")
+async def parse_text_short(request: Request):
+    """
+    Parse free text menjadi struktur terpisah (short URL)
+    """
+    try:
+        data = await request.json()
+        result = endpoint_parse_text(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in parse_text: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
 
 # ============================================================
 # 📋 ANALYZE ENDPOINTS
@@ -192,7 +232,305 @@ async def get_config():
         )
 
 # ============================================================
-# 🚨 ERROR HANDLERS
+# � PNPK SUMMARY ENDPOINTS
+# ============================================================
+@app.get("/api/pnpk/diagnoses")
+async def list_pnpk_diagnoses():
+    """
+    Get list of all available diagnoses in PNPK database
+    
+    Response:
+    {
+        "status": "success",
+        "count": 25,
+        "diagnoses": [
+            {
+                "diagnosis_name": "Pneumonia",
+                "stage_count": 5
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        diagnoses = await service.get_all_diagnoses()
+        
+        return JSONResponse(content={
+            "status": "success",
+            "count": len(diagnoses),
+            "diagnoses": diagnoses
+        })
+    except Exception as e:
+        logger.error(f"Error in list_pnpk_diagnoses: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.get("/api/pnpk/search")
+async def search_pnpk_diagnoses(q: str, limit: int = 10):
+    """
+    Search diagnoses with intelligent matching
+    
+    Query params:
+    - q: Search keyword (diagnosis name or abbreviation)
+    - limit: Maximum number of results (default: 10)
+    
+    Response:
+    {
+        "status": "success",
+        "query": "pneumonia",
+        "count": 3,
+        "results": [
+            {
+                "diagnosis_name": "Pneumonia",
+                "stage_count": 5,
+                "match_score": 1.0,
+                "matched_by": "exact"
+            },
+            {
+                "diagnosis_name": "Hospital-Acquired Pneumonia (HAP)",
+                "stage_count": 4,
+                "match_score": 0.85,
+                "matched_by": "partial"
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        if not q or len(q.strip()) < 2:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Query parameter 'q' must be at least 2 characters"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        results = await service.search_diagnoses(q, limit)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "query": q,
+            "count": len(results),
+            "results": results
+        })
+    except Exception as e:
+        logger.error(f"Error in search_pnpk_diagnoses: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.post("/api/pnpk/summary")
+async def get_pnpk_summary(request: Request):
+    """
+    Get PNPK clinical pathway summary for a diagnosis
+    
+    Request body:
+    {
+        "diagnosis": "Pneumonia",  // Can be partial name or with variations
+        "auto_match": true         // Enable intelligent matching (default: true)
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "diagnosis": "Pneumonia",
+        "total_stages": 5,
+        "match_info": {
+            "original_input": "pneumonia berat",
+            "matched_name": "Pneumonia",
+            "confidence": 0.95,
+            "matched_by": "partial"
+        },
+        "stages": [
+            {
+                "id": 1,
+                "order": 1,
+                "stage_name": "Tahap Awal (Diagnosis & Stratifikasi)",
+                "description": "Diagnosis (Radiologi + klinis)..."
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        data = await request.json()
+        diagnosis = data.get("diagnosis", "").strip()
+        auto_match = data.get("auto_match", True)
+        
+        if not diagnosis:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Field 'diagnosis' is required"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        summary = await service.get_pnpk_summary(diagnosis, auto_match)
+        
+        if not summary:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": f"No PNPK summary found for diagnosis: {diagnosis}",
+                    "suggestion": "Try using the search endpoint to find available diagnoses"
+                }
+            )
+        
+        return JSONResponse(content={
+            "status": "success",
+            **summary
+        })
+    except Exception as e:
+        logger.error(f"Error in get_pnpk_summary: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.get("/api/pnpk/summary/{diagnosis_name}")
+async def get_pnpk_summary_get(diagnosis_name: str):
+    """
+    Get PNPK summary via GET request (alternative to POST)
+    
+    Path parameter:
+    - diagnosis_name: Diagnosis name (URL encoded)
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        summary = await service.get_pnpk_summary(diagnosis_name, auto_match=True)
+        
+        if not summary:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "status": "error",
+                    "message": f"No PNPK summary found for diagnosis: {diagnosis_name}"
+                }
+            )
+        
+        return JSONResponse(content={
+            "status": "success",
+            **summary
+        })
+    except Exception as e:
+        logger.error(f"Error in get_pnpk_summary_get: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.get("/api/pnpk/validate")
+async def validate_diagnosis(diagnosis: str):
+    """
+    Validate if a diagnosis exists in PNPK database
+    
+    Query params:
+    - diagnosis: Diagnosis name to validate
+    
+    Response:
+    {
+        "status": "success",
+        "diagnosis": "pneumonia",
+        "exists": true,
+        "match": {
+            "diagnosis_name": "Pneumonia",
+            "confidence": 0.95
+        }
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        if not diagnosis or len(diagnosis.strip()) < 2:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Query parameter 'diagnosis' must be at least 2 characters"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        exists = await service.validate_diagnosis_exists(diagnosis)
+        match_info = await service.find_best_match(diagnosis) if exists else None
+        
+        return JSONResponse(content={
+            "status": "success",
+            "diagnosis": diagnosis,
+            "exists": exists,
+            "match": match_info
+        })
+    except Exception as e:
+        logger.error(f"Error in validate_diagnosis: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# ============================================================
+# �🚨 ERROR HANDLERS
 # ============================================================
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
@@ -223,6 +561,8 @@ async def internal_error_handler(request: Request, exc):
 @app.on_event("startup")
 async def startup_event():
     """Run on application startup"""
+    global db_pool
+    
     logger.info("🚀 AI-CLAIM Lite starting up...")
     logger.info(f"Environment: {os.getenv('APP_ENV', 'development')}")
     logger.info(f"Debug mode: {os.getenv('DEBUG', 'false')}")
@@ -231,21 +571,48 @@ async def startup_event():
     os.makedirs("logs", exist_ok=True)
     os.makedirs("temp", exist_ok=True)
     
-    # Test database connection
+    # Test database connection (SQLAlchemy)
     try:
         from database_connection import engine
         with engine.connect() as conn:
-            logger.info("✅ Database connection successful")
+            logger.info("✅ Database connection successful (SQLAlchemy)")
     except Exception as e:
         logger.warning(f"⚠️ Database connection failed: {e}")
         logger.warning("App will continue without database features")
+    
+    # Initialize asyncpg pool for PNPK service
+    try:
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            # Convert SQLAlchemy URL to asyncpg format
+            # postgresql://user:pass@host:port/db -> postgresql://user:pass@host:port/db
+            asyncpg_url = database_url.replace("postgresql://", "postgresql://")
+            
+            db_pool = await asyncpg.create_pool(
+                asyncpg_url,
+                min_size=2,
+                max_size=10,
+                command_timeout=60
+            )
+            logger.info("✅ AsyncPG connection pool created for PNPK service")
+    except Exception as e:
+        logger.warning(f"⚠️ AsyncPG pool creation failed: {e}")
+        logger.warning("PNPK features will be unavailable")
     
     logger.info("✅ AI-CLAIM Lite started successfully")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
+    global db_pool
+    
     logger.info("🛑 AI-CLAIM Lite shutting down...")
+    
+    # Close asyncpg pool
+    if db_pool:
+        await db_pool.close()
+        logger.info("✅ Database pool closed")
+    
     logger.info("✅ Shutdown complete")
 
 # ============================================================

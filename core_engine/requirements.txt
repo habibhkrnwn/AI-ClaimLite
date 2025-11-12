@@ -48,3 +48,6 @@ bcrypt
 
 # Logging
 python-json-logger
+
+fuzzywuzzy
+python-Levenshtein

@@ -26,7 +26,6 @@ FEATURE_FLAGS = {
     
     # AI Features
     "ai_insights": True,           # Enable AI-generated insights
-    "ai_severity": True,           # Enable AI severity estimation
     "ai_consistency": True,        # Enable AI consistency check
     
     # Integration Features
@@ -55,14 +54,6 @@ PANEL_CONFIG = {
         "icon": "🩺",
         "fields": ["sesuai_cp", "sesuai_fornas", "catatan"],
         "color": "#10b981"
-    },
-    
-    "severity": {
-        "enabled": True,
-        "title": "Severity Estimator",
-        "icon": "📊",
-        "fields": ["tingkat", "los_estimasi", "faktor"],
-        "color": "#f59e0b"
     },
     
     "cp_ringkas": {
@@ -139,14 +130,7 @@ PARSER_CONFIG = {
         r'(kultur|culture)\s*(darah|sputum|urine|feses)?',
         r'(ventilator|ventilasi)\s*(mekanik)?',
         r'(pemeriksaan|cek)\s*(lab|darah|urine|feses)'
-    ],
-    
-    # Severity indicators
-    "severity_indicators": {
-        "severe": ["berat", "kritis", "icu", "critical", "sepsis", "syok", "koma"],
-        "moderate": ["sedang", "moderate", "rawat inap", "hospitalisasi"],
-        "mild": ["ringan", "mild", "rawat jalan", "stabil"]
-    }
+    ]
 }
 
 
@@ -198,16 +182,7 @@ UI_CONFIG = {
         "success": "#10b981",
         "warning": "#f59e0b",
         "error": "#ef4444",
-        "info": "#06b6d4",
-        "severe": "#dc2626",
-        "moderate": "#f59e0b",
-        "mild": "#10b981"
-    },
-    
-    "severity_colors": {
-        "Severe": "#dc2626",
-        "Moderate": "#f59e0b",
-        "Mild": "#10b981"
+        "info": "#06b6d4"
     },
     
     "consistency_colors": {
@@ -239,20 +214,6 @@ ANALYSIS_CONFIG = {
         "high": 0.85,      # ≥85% = Tinggi
         "medium": 0.70,    # 70-84% = Sedang
         "low": 0.50        # <70% = Rendah
-    },
-    
-    # Severity Mapping
-    "severity_mapping": {
-        "severe_score": 3,
-        "moderate_score": 2,
-        "mild_score": 1
-    },
-    
-    # LOS (Length of Stay) Estimation
-    "los_estimation": {
-        "severe": "7-10 hari",
-        "moderate": "5-7 hari",
-        "mild": "3-5 hari"
     },
     
     # Multilayer Rules Priority
@@ -291,7 +252,7 @@ EXPORT_CONFIG = {
         "format": "xlsx",
         "columns": [
             "No", "Nama Pasien", "ICD-10", "ICD-9", "Fornas",
-            "Severity", "Konsistensi", "Insight Singkat"
+            "Konsistensi", "Insight Singkat"
         ]
     },
     
@@ -358,11 +319,6 @@ def get_checklist_template(diagnosis: str) -> List[Dict[str, Any]]:
     
     # Default template
     return CHECKLIST_TEMPLATES["default"]
-
-
-def get_severity_color(severity: str) -> str:
-    """Get color code untuk severity level"""
-    return UI_CONFIG["severity_colors"].get(severity, "#6b7280")
 
 
 def get_consistency_color(consistency: str) -> str:
