@@ -529,8 +529,89 @@ async def validate_diagnosis(diagnosis: str):
             content={"status": "error", "message": str(e)}
         )
 
+@app.post("/api/pnpk/cache/clear")
+async def clear_pnpk_cache():
+    """
+    Clear PNPK cache
+    
+    Response:
+    {
+        "status": "success",
+        "message": "Cache cleared successfully",
+        "entries_cleared": 15
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        entries_cleared = service.clear_cache()
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": "Cache cleared successfully",
+            "entries_cleared": entries_cleared
+        })
+    except Exception as e:
+        logger.error(f"Error clearing PNPK cache: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+@app.get("/api/pnpk/cache/stats")
+async def get_pnpk_cache_stats():
+    """
+    Get PNPK cache statistics
+    
+    Response:
+    {
+        "status": "success",
+        "cache_stats": {
+            "total_entries": 20,
+            "active_entries": 15,
+            "expired_entries": 5,
+            "cache_ttl": 3600
+        }
+    }
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Database connection not available"
+                }
+            )
+        
+        from services.pnpk_summary_service import PNPKSummaryService
+        service = PNPKSummaryService(db_pool)
+        
+        cache_stats = service.get_cache_stats()
+        
+        return JSONResponse(content={
+            "status": "success",
+            "cache_stats": cache_stats
+        })
+    except Exception as e:
+        logger.error(f"Error getting PNPK cache stats: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
 # ============================================================
-# �🚨 ERROR HANDLERS
+# � ERROR HANDLERS
 # ============================================================
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):

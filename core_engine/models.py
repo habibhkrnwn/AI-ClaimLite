@@ -67,3 +67,44 @@ class FornasDrug(Base):
     
     def __repr__(self):
         return f"<FornasDrug {self.kode_fornas}: {self.obat_name}>"
+
+
+class ICD10Master(Base):
+    """
+    ICD-10 Master Reference (Master Data Diagnosis)
+    """
+    __tablename__ = "icd10_master"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(10), nullable=False, unique=True, index=True)  # Kode ICD-10: "J18.9", "I10", dll
+    name = Column(Text, nullable=False, index=True)  # Nama diagnosis: "Pneumonia, unspecified", dll
+    source = Column(String(100), nullable=True)  # Sumber: "ICD10_2010", "WHO_2023", dll
+    validation_status = Column(String(50), nullable=True)  # Status: "official", "draft", dll
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    
+    def __repr__(self):
+        return f"<ICD10Master {self.code}: {self.name}>"
+
+
+class PNPKSummary(Base):
+    """
+    PNPK Summary (Panduan Nasional Pelayanan Kedokteran)
+    Berisi summary/tahapan dari PNPK untuk setiap diagnosis
+    """
+    __tablename__ = "pnpk_summary"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    diagnosis_name = Column(Text, nullable=False, index=True)  # Nama diagnosis: "Pneumonia", "Hospital-Acquired Pneumonia", dll
+    urutan = Column(Integer, nullable=False)  # Urutan tahapan: 1, 2, 3, 4, 5
+    tahap = Column(Text, nullable=False)  # Nama tahap: "Tahap Diagnosis (Bundel)", "Tahap Terapi Empiris", dll
+    deskripsi = Column(Text, nullable=True)  # Deskripsi detail tahapan
+    
+    # Metadata columns (optional, for future improvements)
+    source = Column(String(200), nullable=True, default='Unknown')  # Sumber: "PNPK Pneumonia Kemenkes 2024"
+    version = Column(String(20), nullable=True, default='1.0')  # Versi: "2024.1", "2023.2"
+    status = Column(String(20), nullable=True, default='active')  # Status: "active", "inactive", "draft"
+    created_at = Column(DateTime, nullable=True, server_default=text("now()"))  # Kapan data di-input
+    updated_at = Column(DateTime, nullable=True, server_default=text("now()"), onupdate=text("now()"))  # Kapan terakhir update
+    
+    def __repr__(self):
+        return f"<PNPKSummary {self.diagnosis_name} - Tahap {self.urutan}: {self.tahap}>"
