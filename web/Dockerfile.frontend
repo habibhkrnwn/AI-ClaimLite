@@ -1,0 +1,26 @@
+# Use Node.js 20 LTS
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy frontend source code
+COPY src ./src
+COPY index.html ./
+COPY vite.config.ts ./
+COPY tsconfig*.json ./
+COPY postcss.config.js ./
+COPY tailwind.config.js ./
+COPY eslint.config.js ./
+
+# Expose port 5173
+EXPOSE 5173
+
+# Run Vite dev server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

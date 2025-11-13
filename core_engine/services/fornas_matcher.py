@@ -51,17 +51,17 @@ class FornasDrugMatcher:
         if hasattr(self, 'db'):
             self.db.close()
     
-    def normalize_drug_name(self, name: str, use_ai: bool = True) -> str:
+    def normalize_drug_name(self, name: str, use_ai: bool = False) -> str:
         """
         Normalisasi nama obat untuk matching
         - Lowercase
         - Remove extra whitespace
         - Remove common suffixes/prefixes
-        - AI-powered English → Indonesian transliteration
+        - AI-powered English → Indonesian transliteration (DISABLED by default for speed)
         
         Args:
             name: Drug name to normalize
-            use_ai: Use AI for transliteration (default: True)
+            use_ai: Use AI for transliteration (default: False for performance)
         
         Returns:
             Normalized drug name (Indonesian version if possible)
@@ -271,7 +271,7 @@ Indonesian name:"""
         
         return sorted_matches
     
-    def match(self, drug_name: str, threshold: int = 85, return_all: bool = False) -> Dict:
+    def match(self, drug_name: str, threshold: int = 85, return_all: bool = False, use_ai_transliteration: bool = False) -> Dict:
         """
         Main matching function - cascading strategy
         
@@ -279,6 +279,7 @@ Indonesian name:"""
             drug_name: Nama obat yang dicari
             threshold: Minimum fuzzy match threshold
             return_all: If True, return all fuzzy matches; if False, return best match only
+            use_ai_transliteration: If True, use AI for name transliteration (slower but more accurate)
         
         Returns:
             {
@@ -293,7 +294,7 @@ Indonesian name:"""
             return {"found": False, "strategy": None, "drug": None, "confidence": 0, "alternatives": []}
         
         # Check cache
-        cache_key = f"{drug_name}_{threshold}"
+        cache_key = f"{drug_name}_{threshold}_{use_ai_transliteration}"
         if cache_key in self._cache:
             return self._cache[cache_key]
         

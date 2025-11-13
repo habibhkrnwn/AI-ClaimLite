@@ -78,8 +78,10 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
           rs_id: userId,
         };
 
-    // Call core_engine endpoint 1A
-    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload);
+    // Call core_engine endpoint 1A with 3 minute timeout (for heavy OpenAI processing)
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload, {
+      timeout: 180000, // 3 minutes
+    });
 
     if (response.data.status === 'success') {
       // Increment usage count AFTER successful analysis
@@ -99,11 +101,22 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       });
     }
   } catch (error: any) {
-    console.error('AI Analysis error:', error);
+    // Improved error logging for easier debugging
+    console.error('AI Analysis error - message:', error.message);
+    if (error.response) {
+      console.error('AI Analysis error - response status:', error.response.status);
+      console.error('AI Analysis error - response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    if (error.request) {
+      console.error('AI Analysis error - no response received. Request details:', error.request);
+    }
+
     res.status(500).json({
       success: false,
       message: error.response?.data?.message || 'Failed to analyze claim',
       detail: error.message,
+      // include response data when available to help frontend debug
+      error_data: error.response?.data || null,
     });
   }
 });

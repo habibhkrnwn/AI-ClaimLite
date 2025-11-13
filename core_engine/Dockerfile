@@ -30,7 +30,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Expose port
-EXPOSE 8003
+EXPOSE 8000
 
 # Run application
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8003", "--reload"]
+CMD ["python", "main.py"]

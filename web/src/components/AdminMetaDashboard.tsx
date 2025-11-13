@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Users, UserCheck, FileText, Calendar, TrendingUp, Plus, Ban, Clock, Trash2 } from 'lucide-react';
+import { Users, UserCheck, FileText, Calendar, TrendingUp, Plus, Ban, Clock, Trash2, Edit2, Save, X } from 'lucide-react';
 import { apiService, User } from '../lib/api';
-import UserManagement from './UserManagement';
 
 interface UserStats {
   user_id: number;
@@ -35,7 +34,8 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'statistics' | 'management'>('users');
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [editLimit, setEditLimit] = useState<number>(100);
 
   // Create form state
   const [formData, setFormData] = useState({
@@ -160,10 +160,55 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
     try {
       await apiService.deleteAdminRS(userId);
       await loadAdminRSUsers();
+      await loadStatistics();
       alert('Admin RS account deleted successfully');
     } catch (err: any) {
       alert(err.message || 'Failed to delete account');
     }
+  };
+
+  // Handle edit AI limit
+  const handleEditLimit = (userId: number, currentLimit: number) => {
+    setEditingUserId(userId);
+    setEditLimit(currentLimit);
+  };
+
+  // Handle save AI limit
+  const handleSaveLimit = async (userId: number) => {
+    try {
+      const response = await apiService.request(`/api/admin/users/${userId}/ai-limit`, {
+        method: 'PATCH',
+        body: JSON.stringify({ daily_ai_limit: editLimit }),
+      });
+
+      if (response.success) {
+        setEditingUserId(null);
+        await loadAdminRSUsers();
+        await loadStatistics();
+        alert('AI limit updated successfully');
+      }
+    } catch (error: any) {
+      console.error('Error updating limit:', error);
+      alert(`Failed to update limit: ${error.message || 'Unknown error'}`);
+    }
+  };
+
+  // Handle cancel edit
+  const handleCancelEdit = () => {
+    setEditingUserId(null);
+    setEditLimit(100);
+  };
+
+  // Get usage percentage and color
+  const getUsagePercentage = (used: number, limit: number) => {
+    return Math.min((used / limit) * 100, 100);
+  };
+
+  const getUsageColor = (used: number, limit: number) => {
+    const percentage = getUsagePercentage(used, limit);
+    if (percentage >= 90) return 'text-red-500';
+    if (percentage >= 70) return 'text-yellow-500';
+    return 'text-green-500';
   };
 
   // Format date
@@ -174,6 +219,18 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
       year: 'numeric',
       month: 'long',
       day: 'numeric',
+    });
+  };
+
+  const formatDateTime = (dateString: string | null | undefined) => {
+    if (!dateString) return 'Never';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('id-ID', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   };
 
@@ -278,7 +335,9 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
 
         {/* Create Button Section */}
         <div className="flex justify-between items-center mb-6">
-          <div></div>
+          <h3 className={`text-xl font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-900'}`}>
+            Comprehensive User Management
+          </h3>
           <button
             onClick={() => setShowCreateForm(!showCreateForm)}
             className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
@@ -289,52 +348,6 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
           >
             <Plus className="h-4 w-4" />
             Create Admin RS
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'users'
-                ? isDark
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-blue-600 text-white'
-                : isDark
-                  ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            User Management
-          </button>
-          <button
-            onClick={() => setActiveTab('management')}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'management'
-                ? isDark
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-blue-600 text-white'
-                : isDark
-                  ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            AI Limit Management
-          </button>
-          <button
-            onClick={() => setActiveTab('statistics')}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'statistics'
-                ? isDark
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-blue-600 text-white'
-                : isDark
-                  ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            Usage Statistics
           </button>
         </div>
 
@@ -498,105 +511,121 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
           </div>
         )}
 
-        {/* Admin RS Users List */}
-        {activeTab === 'users' && (
-          <div className={`shadow-lg rounded-xl border-0 ${
-            isDark ? 'bg-slate-800/40 border border-cyan-500/20' : 'bg-white'
+        {/* Comprehensive Admin RS Management Table */}
+        <div className={`shadow-lg rounded-xl border-0 ${
+          isDark ? 'bg-slate-800/40 border border-cyan-500/20' : 'bg-white'
+        }`}>
+          <div className={`p-6 rounded-t-xl border-b ${
+            isDark
+              ? 'bg-slate-700/50 border-slate-600'
+              : 'bg-gradient-to-r from-blue-50 to-blue-100 border-gray-200'
           }`}>
-            <div className={`p-6 rounded-t-xl border-b ${
-              isDark
-                ? 'bg-slate-700/50 border-slate-600'
-                : 'bg-gradient-to-r from-blue-50 to-blue-100 border-gray-200'
+            <h2 className={`text-xl font-semibold ${
+              isDark ? 'text-cyan-300' : 'text-blue-900'
             }`}>
-              <h2 className={`text-xl font-semibold ${
-                isDark ? 'text-cyan-300' : 'text-blue-900'
+              Admin RS Accounts - Complete Overview
+            </h2>
+            <p className={`text-sm mt-1 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+              Manage users, AI limits, and view usage statistics all in one place
+            </p>
+          </div>
+          <div className="p-6">
+            {isLoading ? (
+              <div className="text-center py-8">
+                <div className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${
+                  isDark ? 'border-cyan-500' : 'border-blue-500'
+                }`}></div>
+                <p className={`mt-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>Loading...</p>
+              </div>
+            ) : error ? (
+              <div className={`p-4 rounded-lg ${
+                isDark
+                  ? 'bg-red-900/30 border border-red-500/50 text-red-300'
+                  : 'bg-red-50 border border-red-300 text-red-700'
               }`}>
-                Admin RS Accounts
-              </h2>
-            </div>
-            <div className="p-6">
-              {isLoading ? (
-                <div className="text-center py-8">
-                  <div className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${
-                    isDark ? 'border-cyan-500' : 'border-blue-500'
-                  }`}></div>
-                  <p className={`mt-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>Loading...</p>
-                </div>
-              ) : error ? (
-                <div className={`p-4 rounded-lg ${
-                  isDark
-                    ? 'bg-red-900/30 border border-red-500/50 text-red-300'
-                    : 'bg-red-50 border border-red-300 text-red-700'
+                {error}
+              </div>
+            ) : adminRSUsers.length === 0 ? (
+              <div className={`text-center py-8 ${
+                isDark ? 'text-slate-400' : 'text-gray-600'
+              }`}>
+                No Admin RS accounts found. Create one to get started.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className={`min-w-full ${
+                  isDark ? 'divide-y divide-slate-700' : 'divide-y divide-gray-200'
                 }`}>
-                  {error}
-                </div>
-              ) : adminRSUsers.length === 0 ? (
-                <div className={`text-center py-8 ${
-                  isDark ? 'text-slate-400' : 'text-gray-600'
-                }`}>
-                  No Admin RS accounts found. Create one to get started.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className={`min-w-full ${
-                    isDark ? 'divide-y divide-slate-700' : 'divide-y divide-gray-200'
-                  }`}>
-                    <thead>
-                      <tr className={`border-b-2 ${
-                        isDark ? 'border-slate-600' : 'border-gray-200'
-                      }`}>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Email
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Full Name
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Status
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Active Until
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Created At
-                        </th>
-                        <th className={`px-6 py-3 text-right text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className={`${
-                      isDark
-                        ? 'bg-slate-800/20 divide-y divide-slate-700'
-                        : 'bg-white divide-y divide-gray-100'
+                  <thead>
+                    <tr className={`border-b-2 ${
+                      isDark ? 'border-slate-600' : 'border-gray-200'
                     }`}>
-                      {adminRSUsers.map((user) => (
+                      <th className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        User Info
+                      </th>
+                      <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Status
+                      </th>
+                      <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Daily Limit
+                      </th>
+                      <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Today Usage
+                      </th>
+                      <th className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Total Analyses
+                      </th>
+                      <th className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Active Until
+                      </th>
+                      <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className={`${
+                    isDark
+                      ? 'bg-slate-800/20 divide-y divide-slate-700'
+                      : 'bg-white divide-y divide-gray-100'
+                  }`}>
+                    {adminRSUsers.map((user) => {
+                      const userStat = userStats.find(s => s.user_id === user.id);
+                      return (
                         <tr key={user.id} className={`transition-colors ${
                           isDark ? 'hover:bg-slate-700/30' : 'hover:bg-blue-50/50'
                         }`}>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            isDark ? 'text-slate-200' : 'text-gray-700'
-                          }`}>
-                            {user.email}
+                          {/* User Info */}
+                          <td className="px-4 py-4">
+                            <div>
+                              <div className={`font-medium text-sm ${
+                                isDark ? 'text-white' : 'text-gray-900'
+                              }`}>
+                                {user.full_name}
+                              </div>
+                              <div className={`text-xs ${
+                                isDark ? 'text-slate-400' : 'text-gray-500'
+                              }`}>
+                                {user.email}
+                              </div>
+                            </div>
                           </td>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${
-                            isDark ? 'text-slate-200' : 'text-gray-900'
-                          }`}>
-                            {user.full_name}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+
+                          {/* Status */}
+                          <td className="px-4 py-4 text-center">
                             <span
                               className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                                 user.is_active && !isExpired(user.active_until)
@@ -611,7 +640,63 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                               {user.is_active && !isExpired(user.active_until) ? 'Active' : 'Inactive'}
                             </span>
                           </td>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm ${
+
+                          {/* Daily AI Limit - with inline edit */}
+                          <td className="px-4 py-4 text-center">
+                            {editingUserId === user.id ? (
+                              <input
+                                type="number"
+                                value={editLimit}
+                                onChange={(e) => setEditLimit(parseInt(e.target.value) || 0)}
+                                className={`w-20 px-2 py-1 rounded border text-center ${
+                                  isDark
+                                    ? 'bg-slate-700 border-cyan-500/30 text-white'
+                                    : 'bg-white border-blue-300 text-gray-900'
+                                }`}
+                                min="0"
+                              />
+                            ) : (
+                              <span className={`font-bold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
+                                {(user as any).daily_ai_limit || 100}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Today Usage */}
+                          <td className="px-4 py-4">
+                            <div className="flex flex-col items-center gap-1">
+                              <span className={`font-bold text-sm ${getUsageColor((user as any).ai_usage_count || 0, (user as any).daily_ai_limit || 100)}`}>
+                                {(user as any).ai_usage_count || 0} / {(user as any).daily_ai_limit || 100}
+                              </span>
+                              <div className={`w-full h-1.5 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-200'}`}>
+                                <div
+                                  className={`h-full rounded-full transition-all ${
+                                    getUsagePercentage((user as any).ai_usage_count || 0, (user as any).daily_ai_limit || 100) >= 90
+                                      ? 'bg-red-500'
+                                      : getUsagePercentage((user as any).ai_usage_count || 0, (user as any).daily_ai_limit || 100) >= 70
+                                      ? 'bg-yellow-500'
+                                      : 'bg-green-500'
+                                  }`}
+                                  style={{ width: `${getUsagePercentage((user as any).ai_usage_count || 0, (user as any).daily_ai_limit || 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Total Analyses */}
+                          <td className="px-4 py-4">
+                            <div>
+                              <div className={`font-bold text-sm ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
+                                {userStat?.total_analyses || 0} analyses
+                              </div>
+                              <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                                Last: {formatDateTime(userStat?.last_analysis)}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Active Until */}
+                          <td className={`px-4 py-4 text-sm ${
                             isDark ? 'text-slate-200' : 'text-gray-700'
                           }`}>
                             <div>
@@ -623,177 +708,93 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                               )}
                             </div>
                           </td>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            isDark ? 'text-slate-200' : 'text-gray-700'
-                          }`}>
-                            {formatDate(user.created_at)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleToggleStatus(user.id, user.is_active)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all shadow-sm flex items-center gap-1.5 ${
-                                  isDark
-                                    ? 'bg-slate-800 text-red-400 border-red-500/50 hover:bg-red-600 hover:text-white hover:border-red-600'
-                                    : 'bg-white text-red-600 border-red-300 hover:bg-red-600 hover:text-white hover:border-red-600'
-                                }`}
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                                {user.is_active ? 'Deactivate' : 'Activate'}
-                              </button>
-                              <button
-                                onClick={() => handleExtendExpiration(user.id)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all shadow-sm flex items-center gap-1.5 ${
-                                  isDark
-                                    ? 'bg-slate-800 text-teal-400 border-teal-500/50 hover:bg-teal-600 hover:text-white hover:border-teal-600'
-                                    : 'bg-white text-teal-600 border-teal-300 hover:bg-teal-600 hover:text-white hover:border-teal-600'
-                                }`}
-                              >
-                                <Clock className="h-3.5 w-3.5" />
-                                Extend
-                              </button>
-                              <button
-                                onClick={() => handleDelete(user.id, user.email)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-all shadow-sm flex items-center gap-1.5 ${
-                                  isDark
-                                    ? 'bg-slate-800 text-red-500 border-red-600/50 hover:bg-red-700 hover:text-white hover:border-red-700'
-                                    : 'bg-white text-red-700 border-red-400 hover:bg-red-700 hover:text-white hover:border-red-700'
-                                }`}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                              </button>
+
+                          {/* Actions */}
+                          <td className="px-4 py-4">
+                            <div className="flex flex-col gap-1">
+                              {/* AI Limit Edit Buttons */}
+                              {editingUserId === user.id ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => handleSaveLimit(user.id)}
+                                    className={`p-1 rounded hover:bg-green-500/20 ${
+                                      isDark ? 'text-green-400' : 'text-green-600'
+                                    }`}
+                                    title="Save Limit"
+                                  >
+                                    <Save className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEdit}
+                                    className={`p-1 rounded hover:bg-red-500/20 ${
+                                      isDark ? 'text-red-400' : 'text-red-600'
+                                    }`}
+                                    title="Cancel"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleEditLimit(user.id, (user as any).daily_ai_limit || 100)}
+                                  className={`px-2 py-1 text-xs font-medium rounded border transition-all shadow-sm flex items-center justify-center gap-1 ${
+                                    isDark
+                                      ? 'bg-slate-800 text-cyan-400 border-cyan-500/50 hover:bg-cyan-600 hover:text-white'
+                                      : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-600 hover:text-white'
+                                  }`}
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                  Edit Limit
+                                </button>
+                              )}
+                              
+                              {/* Account Management Buttons */}
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => handleToggleStatus(user.id, user.is_active)}
+                                  className={`px-2 py-1 text-xs font-medium rounded border transition-all shadow-sm flex items-center gap-1 ${
+                                    isDark
+                                      ? 'bg-slate-800 text-red-400 border-red-500/50 hover:bg-red-600 hover:text-white'
+                                      : 'bg-white text-red-600 border-red-300 hover:bg-red-600 hover:text-white'
+                                  }`}
+                                  title={user.is_active ? 'Deactivate' : 'Activate'}
+                                >
+                                  <Ban className="h-3 w-3" />
+                                </button>
+                                <button
+                                  onClick={() => handleExtendExpiration(user.id)}
+                                  className={`px-2 py-1 text-xs font-medium rounded border transition-all shadow-sm flex items-center gap-1 ${
+                                    isDark
+                                      ? 'bg-slate-800 text-teal-400 border-teal-500/50 hover:bg-teal-600 hover:text-white'
+                                      : 'bg-white text-teal-600 border-teal-300 hover:bg-teal-600 hover:text-white'
+                                  }`}
+                                  title="Extend Expiration"
+                                >
+                                  <Clock className="h-3 w-3" />
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(user.id, user.email)}
+                                  className={`px-2 py-1 text-xs font-medium rounded border transition-all shadow-sm flex items-center gap-1 ${
+                                    isDark
+                                      ? 'bg-slate-800 text-red-500 border-red-600/50 hover:bg-red-700 hover:text-white'
+                                      : 'bg-white text-red-700 border-red-400 hover:bg-red-700 hover:text-white'
+                                  }`}
+                                  title="Delete Account"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-
-        {/* AI Limit Management */}
-        {activeTab === 'management' && (
-          <UserManagement isDark={isDark} />
-        )}
-
-        {/* Usage Statistics */}
-        {activeTab === 'statistics' && (
-          <div className={`shadow-lg rounded-xl border-0 ${
-            isDark ? 'bg-slate-800/40 border border-cyan-500/20' : 'bg-white'
-          }`}>
-            <div className={`p-6 rounded-t-xl border-b ${
-              isDark
-                ? 'bg-slate-700/50 border-slate-600'
-                : 'bg-gradient-to-r from-blue-50 to-blue-100 border-gray-200'
-            }`}>
-              <h2 className={`text-xl font-semibold ${
-                isDark ? 'text-cyan-300' : 'text-blue-900'
-              }`}>
-                Usage Statistics per Admin RS
-              </h2>
-            </div>
-            <div className="p-6">
-              {userStats.length === 0 ? (
-                <div className={`text-center py-8 ${
-                  isDark ? 'text-slate-400' : 'text-gray-500'
-                }`}>
-                  No statistics available yet.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className={`min-w-full divide-y ${
-                    isDark ? 'divide-slate-700' : 'divide-gray-200'
-                  }`}>
-                    <thead>
-                      <tr className={`border-b-2 ${
-                        isDark ? 'border-slate-600' : 'border-gray-200'
-                      }`}>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Full Name
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Email
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Status
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Total Analyses
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-                          isDark ? 'text-slate-300' : 'text-gray-700'
-                        }`}>
-                          Last Analysis
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className={`${
-                      isDark
-                        ? 'bg-slate-800/20 divide-y divide-slate-700'
-                        : 'bg-white divide-y divide-gray-100'
-                    }`}>
-                      {userStats.map((stat) => (
-                        <tr key={stat.user_id} className={`transition-colors ${
-                          isDark ? 'hover:bg-slate-700/30' : 'hover:bg-blue-50/50'
-                        }`}>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${
-                            isDark ? 'text-slate-200' : 'text-gray-900'
-                          }`}>
-                            {stat.full_name}
-                          </td>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            isDark ? 'text-slate-200' : 'text-gray-700'
-                          }`}>
-                            {stat.email}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span
-                              className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                stat.is_active && !isExpired(stat.active_until)
-                                  ? isDark
-                                    ? 'bg-green-900/30 text-green-300 border border-green-500/50'
-                                    : 'bg-green-100 text-green-800 border border-green-200'
-                                  : isDark
-                                    ? 'bg-red-900/30 text-red-300 border border-red-500/50'
-                                    : 'bg-gray-100 text-gray-600 border border-gray-200'
-                              }`}
-                            >
-                              {stat.is_active && !isExpired(stat.active_until) ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <span className={`${
-                              isDark ? 'text-cyan-400' : 'text-blue-600'
-                            }`}>
-                              {stat.total_analyses}
-                            </span>
-                          </td>
-                          <td className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            isDark ? 'text-slate-200' : 'text-gray-700'
-                          }`}>
-                            {stat.last_analysis ? formatDate(stat.last_analysis) : 'Never'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

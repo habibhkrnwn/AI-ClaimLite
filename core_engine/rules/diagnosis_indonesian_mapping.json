@@ -1,0 +1,139 @@
+{
+  "paru-paru basah": "pneumonia",
+  "paru paru basah": "pneumonia",
+  "radang paru-paru": "pneumonia",
+  "radang paru paru": "pneumonia",
+  "paru basah": "pneumonia",
+  
+  "kencing manis": "diabetes mellitus",
+  "gula darah tinggi": "diabetes mellitus",
+  "sakit gula": "diabetes mellitus",
+  
+  "darah tinggi": "hipertensi",
+  "tekanan darah tinggi": "hipertensi",
+  
+  "stroke": "stroke",
+  "lumpuh sebelah": "stroke",
+  "serangan otak": "stroke",
+  
+  "jantung": "penyakit jantung",
+  "sakit jantung": "penyakit jantung",
+  "serangan jantung": "infark miokard",
+  "jantung koroner": "penyakit jantung koroner",
+  
+  "tipus": "demam tifoid",
+  "tipes": "demam tifoid",
+  "tifus": "demam tifoid",
+  
+  "dbd": "demam berdarah dengue",
+  "demam berdarah": "demam berdarah dengue",
+  
+  "tbc": "tuberkulosis",
+  "tb": "tuberkulosis",
+  "tbc paru": "tuberkulosis paru",
+  "flek paru": "tuberkulosis paru",
+  
+  "demam": "febris",
+  "panas": "febris",
+  
+  "diare": "diare",
+  "mencret": "diare",
+  "muru-muru": "diare",
+  
+  "batuk": "batuk",
+  "batuk pilek": "infeksi saluran pernapasan atas",
+  "flu": "influenza",
+  "pilek": "rhinitis",
+  
+  "asma": "asma",
+  "sesak napas": "dispnea",
+  "sesak nafas": "dispnea",
+  
+  "maag": "gastritis",
+  "sakit maag": "gastritis",
+  "lambung": "gastritis",
+  
+  "ambeien": "hemoroid",
+  "wasir": "hemoroid",
+  
+  "batu ginjal": "nefrolitiasis",
+  "kencing batu": "nefrolitiasis",
+  
+  "usus buntu": "apendisitis",
+  "radang usus buntu": "apendisitis",
+  
+  "kolesterol tinggi": "hiperkolesterolemia",
+  "kolesterol": "hiperkolesterolemia",
+  
+  "asam urat": "hiperurisemia",
+  "asam urat tinggi": "hiperurisemia",
+  
+  "kanker": "neoplasma ganas",
+  "tumor ganas": "neoplasma ganas",
+  
+  "patah tulang": "fraktur",
+  "tulang patah": "fraktur",
+  
+  "luka bakar": "combustio",
+  
+  "kehamilan": "graviditas",
+  "hamil": "graviditas",
+  
+  "caesar": "sectio caesarea",
+  "operasi caesar": "sectio caesarea",
+  
+  "kuning": "ikterus",
+  "penyakit kuning": "ikterus",
+  
+  "kejang": "konvulsi",
+  "step": "konvulsi",
+  
+  "vertigo": "vertigo",
+  "pusing berputar": "vertigo",
+  
+  "migrain": "migren",
+  "sakit kepala sebelah": "migren",
+  
+  "katarak": "katarak",
+  
+  "glaukoma": "glaukoma",
+  
+  "gagal ginjal": "gagal ginjal",
+  "cuci darah": "gagal ginjal kronik",
+  
+  "hepatitis": "hepatitis",
+  "liver": "hepatitis",
+  
+  "sirosis": "sirosis hepatis",
+  "pengerasan hati": "sirosis hepatis",
+  
+  "anemia": "anemia",
+  "kurang darah": "anemia",
+  
+  "leukemia": "leukemia",
+  "kanker darah": "leukemia",
+  
+  "malaria": "malaria",
+  
+  "campak": "morbili",
+  
+  "cacar air": "varisela",
+  
+  "gondongan": "parotitis",
+  
+  "herpes": "herpes",
+  
+  "alergi": "alergi",
+  
+  "eksim": "dermatitis",
+  "eksema": "dermatitis",
+  
+  "jerawat": "akne",
+  
+  "bisul": "furunkel",
+  
+  "kusta": "lepra",
+  
+  "epilepsi": "epilepsi",
+  "ayan": "epilepsi"
+}
