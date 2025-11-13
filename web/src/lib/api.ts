@@ -70,11 +70,20 @@ class ApiService {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
+    // Set default timeout to 5 minutes for AI operations
+    const timeout = 300000; // 5 minutes
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
       const response = await fetch(url, {
         ...options,
         headers,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       const data = await response.json();
 
@@ -83,7 +92,11 @@ class ApiService {
       }
 
       return data;
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('API request timeout after 5 minutes');
+        throw new Error('Request timeout. Analisis memakan waktu terlalu lama.');
+      }
       console.error('API request error:', error);
       throw error;
     }

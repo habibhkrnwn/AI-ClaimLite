@@ -56,8 +56,8 @@ def match_multiple_obat(obat_list: List[str], threshold: int = 85) -> List[Dict]
         if not obat_name or obat_name.strip() == "":
             continue
         
-        # Match dengan FORNAS DB
-        match_result = matcher.match(obat_name.strip(), threshold=threshold)
+        # Match dengan FORNAS DB (disable AI transliteration for speed)
+        match_result = matcher.match(obat_name.strip(), threshold=threshold, use_ai_transliteration=False)
         
         if match_result["found"]:
             drug = match_result["drug"]

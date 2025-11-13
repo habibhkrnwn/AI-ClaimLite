@@ -78,8 +78,10 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
           rs_id: userId,
         };
 
-    // Call core_engine endpoint 1A
-    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload);
+    // Call core_engine endpoint 1A with 3 minute timeout (for heavy OpenAI processing)
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload, {
+      timeout: 180000, // 3 minutes
+    });
 
     if (response.data.status === 'success') {
       // Increment usage count AFTER successful analysis

@@ -67,10 +67,17 @@ export const startServer = async () => {
     await pool.query('SELECT NOW()');
     console.log('✅ Database connection successful');
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`🚀 API Server is running on port ${PORT}`);
       console.log(`📍 API URL: http://localhost:${PORT}`);
     });
+
+    // Set timeout to 5 minutes for long-running AI analysis requests
+    server.timeout = 300000; // 5 minutes (default is 120000 = 2 minutes)
+    server.keepAliveTimeout = 310000; // Slightly higher than timeout
+    server.headersTimeout = 320000; // Slightly higher than keepAliveTimeout
+    
+    console.log('⏱️  Server timeout configured: 5 minutes');
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
