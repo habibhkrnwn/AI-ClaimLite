@@ -142,7 +142,7 @@ async def analyze_single(request: Request):
     """
     try:
         data = await request.json()
-        result = endpoint_analyze_single(data)
+        result = endpoint_analyze_single(data, db_pool=db_pool)
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error in analyze_single: {e}")

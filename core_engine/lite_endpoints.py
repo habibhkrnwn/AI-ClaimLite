@@ -174,7 +174,7 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 # 📌 ENDPOINT 2: Analyze Single Claim (ENHANCED untuk Form Mode)
 # ============================================================
-def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
+def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     POST /api/lite/analyze/single
     
@@ -183,6 +183,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
     OPTIMIZED VERSION: Uses combined AI prompts for faster processing
     - Original: 5 OpenAI calls, ~15-18 seconds
     - Optimized: 3 OpenAI calls, ~8-12 seconds (40-50% faster)
+    
+    Args:
+        request_data: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     
     Request:
     {
@@ -262,10 +266,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
         # Call analyzer (optimized or original)
         if use_optimized:
             print(f"[ENDPOINT] Using OPTIMIZED analyzer (3 AI calls)")
-            result = analyze_lite_single_optimized(request_data)
+            result = analyze_lite_single_optimized(request_data, db_pool=db_pool)
         else:
             print(f"[ENDPOINT] Using ORIGINAL analyzer (5 AI calls)")
-            result = analyze_lite_single(request_data)
+            result = analyze_lite_single(request_data, db_pool=db_pool)
         
         # Save to history (optional, based on config)
         if request_data.get("save_history", False):

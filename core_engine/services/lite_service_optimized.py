@@ -18,13 +18,15 @@ from services.lite_service import (
     _extract_cp_compliance,
     _extract_fornas_compliance,
     _assess_consistency,
-    _consistency_detail
+    _consistency_detail,
+    _summarize_cp
 )
 from services.analyze_diagnosis_service import process_analyze_diagnosis
 from services.fornas_service import match_multiple_obat
 from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
 from services.fast_diagnosis_translator import fast_translate_with_fallback
 from services.lite_diagnosis_service import analyze_diagnosis_lite
+from services.pnpk_summary_service import PNPKSummaryService
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +155,7 @@ Berikan HANYA JSON tanpa penjelasan tambahan."""
         }
 
 
-def analyze_lite_single_optimized(payload: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     OPTIMIZED VERSION of analyze_lite_single
     
@@ -161,6 +163,10 @@ def analyze_lite_single_optimized(payload: Dict[str, Any]) -> Dict[str, Any]:
     1. Combine 3 AI calls (CP + Dokumen + Insight) into 1 call
     2. Total AI calls: 3 instead of 5 (40% reduction)
     3. Expected time: 8-12s instead of 15-18s (33-44% faster)
+    
+    Args:
+        payload: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     """
     
     try:
@@ -193,6 +199,28 @@ def analyze_lite_single_optimized(payload: Dict[str, Any]) -> Dict[str, Any]:
         diagnosis_name = parsed.get("diagnosis", "Unknown")
         tindakan_list = [t.get("name", t) if isinstance(t, dict) else str(t) for t in parsed.get("tindakan", [])]
         obat_list = [o.get("name", o) if isinstance(o, dict) else str(o) for o in parsed.get("obat", [])]
+        
+        # Step 1.5: Fetch PNPK Summary from DB (if available)
+        pnpk_data = None
+        if db_pool:
+            try:
+                import asyncio
+                pnpk_service = PNPKSummaryService(db_pool)
+                if diagnosis_name:
+                    # Run async function in sync context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        pnpk_data = loop.run_until_complete(
+                            pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                        )
+                        if pnpk_data:
+                            logger.info(f"[OPTIMIZED] ✓ PNPK data fetched from DB for: {diagnosis_name}")
+                    finally:
+                        loop.close()
+            except Exception as e:
+                logger.warning(f"[OPTIMIZED] Could not fetch PNPK data: {e}")
+                pnpk_data = None
         
         # Step 2: LITE DIAGNOSIS ANALYSIS (2nd API call - FAST, single call)
         lite_diagnosis = analyze_diagnosis_lite(
@@ -252,7 +280,7 @@ def analyze_lite_single_optimized(payload: Dict[str, Any]) -> Dict[str, Any]:
             "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
             "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
             
-            "cp_ringkas": combined_ai["cp_ringkas"],
+            "cp_ringkas": _summarize_cp(lite_diagnosis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
