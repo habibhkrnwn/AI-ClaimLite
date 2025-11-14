@@ -69,7 +69,10 @@ from lite_endpoints import (
     endpoint_parse_text,
     endpoint_get_history,
     endpoint_load_history_detail,
-    endpoint_translate_medical
+    endpoint_translate_medical,
+    endpoint_translate_procedure,
+    endpoint_icd10_hierarchy,
+    endpoint_icd9_hierarchy
 )
 
 # ============================================================
@@ -247,6 +250,132 @@ async def translate_medical_term(request: Request):
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error in translate_medical_term: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+# ============================================================
+# � TRANSLATE PROCEDURE ENDPOINT
+# ============================================================
+@app.post("/api/lite/translate-procedure")
+async def translate_procedure_term(request: Request):
+    """
+    Translate colloquial/Indonesian procedure term to standard medical terminology using OpenAI
+    
+    Request body:
+    {
+        "term": "ultrason"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "ultrasonography",
+            "confidence": "high"
+        }
+    }
+    """
+    try:
+        data = await request.json()
+        result = endpoint_translate_procedure(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in translate_procedure_term: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+# ============================================================
+# �🔍 ICD-10 HIERARCHY ENDPOINT (for Diagnosis)
+# ============================================================
+@app.post("/api/lite/icd10-hierarchy")
+async def get_icd10_hierarchy(request: Request):
+    """
+    Get ICD-10 codes hierarchy based on search term (diagnosis)
+    
+    Request body:
+    {
+        "search_term": "coronary artery disease"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "categories": [
+                {
+                    "headCode": "I25",
+                    "headName": "Chronic ischemic heart disease",
+                    "count": 9,
+                    "details": [...]
+                }
+            ]
+        }
+    }
+    """
+    try:
+        from database_connection import SessionLocal
+        
+        db = SessionLocal()
+        try:
+            data = await request.json()
+            result = endpoint_icd10_hierarchy(data, db)
+            return JSONResponse(content=result)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in get_icd10_hierarchy: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+# ============================================================
+# 🔍 ICD-9 HIERARCHY ENDPOINT (for Procedures/Tindakan)
+# ============================================================
+@app.post("/api/lite/icd9-hierarchy")
+async def get_icd9_hierarchy(request: Request):
+    """
+    Get ICD-9 codes hierarchy based on search term (procedure)
+    
+    Request body:
+    {
+        "search_term": "ultrasound"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "categories": [
+                {
+                    "headCode": "88.7",
+                    "headName": "Diagnostic ultrasound",
+                    "count": 9,
+                    "details": [...]
+                }
+            ]
+        }
+    }
+    """
+    try:
+        from database_connection import SessionLocal
+        
+        db = SessionLocal()
+        try:
+            data = await request.json()
+            result = endpoint_icd9_hierarchy(data, db)
+            return JSONResponse(content=result)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in get_icd9_hierarchy: {e}")
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": str(e)}

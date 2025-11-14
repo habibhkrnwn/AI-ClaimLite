@@ -345,6 +345,46 @@ class ApiService {
       body: JSON.stringify({ term }),
     });
   }
+
+  // Translate procedure term (e.g., "ultrason" → "ultrasonography")
+  async translateProcedureTerm(term: string): Promise<{
+    success: boolean;
+    data: {
+      original: string;
+      translated: string;
+      synonyms?: string[];
+      confidence: string;
+    };
+  }> {
+    return this.request('/api/ai/translate-procedure-term', {
+      method: 'POST',
+      body: JSON.stringify({ term }),
+    });
+  }
+
+  // Get ICD-9 hierarchy for procedures (Tindakan)
+  async getICD9Hierarchy(searchTerm: string, synonyms?: string[]): Promise<{
+    success: boolean;
+    data: {
+      categories: Array<{
+        headCode: string;
+        headName: string;
+        count: number;
+        details: Array<{
+          code: string;
+          name: string;
+        }>;
+      }>;
+    };
+  }> {
+    return this.request('/api/ai/icd9-hierarchy', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        search_term: searchTerm,
+        synonyms: synonyms || []
+      }),
+    });
+  }
 }
 
 export const apiService = new ApiService();

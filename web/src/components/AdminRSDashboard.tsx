@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
+import ICD9Explorer from './ICD9Explorer';
+import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
 import AnalysisHistory from './AnalysisHistory';
 import { AnalysisResult } from '../lib/supabase';
@@ -25,11 +27,18 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
   
-  // ICD-10 Explorer state
+  // ICD-10 Explorer state (Diagnosis)
   const [showICD10Explorer, setShowICD10Explorer] = useState(false);
   const [correctedTerm, setCorrectedTerm] = useState('');
   const [originalSearchTerm, setOriginalSearchTerm] = useState('');
   const [selectedICD10Code, setSelectedICD10Code] = useState<{code: string; name: string} | null>(null);
+
+  // ICD-9 Explorer state (Procedure/Tindakan)
+  const [showICD9Explorer, setShowICD9Explorer] = useState(false);
+  const [correctedProcedureTerm, setCorrectedProcedureTerm] = useState('');
+  const [procedureSynonyms, setProcedureSynonyms] = useState<string[]>([]);
+  const [originalProcedureTerm, setOriginalProcedureTerm] = useState('');
+  const [selectedICD9Code, setSelectedICD9Code] = useState<{code: string; name: string} | null>(null);
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -57,35 +66,89 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     
     // Reset previous state when generating new search
     setShowICD10Explorer(false);
+    setShowICD9Explorer(false);
     setResult(null);
     setSelectedICD10Code(null);
+    setSelectedICD9Code(null);
     
-    // Prepare AI correction
+    // Prepare AI correction for diagnosis
     const inputTerm = inputMode === 'text' ? freeText : diagnosis;
     setOriginalSearchTerm(inputTerm);
     
+    console.log('[DEBUG] Input term:', inputTerm);
+    console.log('[DEBUG] Input mode:', inputMode);
+    
     try {
-      // Step 1: Translate to medical term using OpenAI
-      console.log('[ICD-10] Translating term:', inputTerm);
-      const translationResponse = await apiService.translateMedicalTerm(inputTerm);
+      // Step 1: Translate diagnosis to medical term using OpenAI
+      if (inputTerm) {
+        console.log('[ICD-10] Translating term:', inputTerm);
+        const translationResponse = await apiService.translateMedicalTerm(inputTerm);
+        
+        console.log('[DEBUG] Translation response:', translationResponse);
+        
+        if (translationResponse.success) {
+          const medicalTerm = translationResponse.data.translated;
+          console.log('[ICD-10] Translated to:', medicalTerm);
+          setCorrectedTerm(medicalTerm);
+          setShowICD10Explorer(true);
+          console.log('[DEBUG] Setting showICD10Explorer to TRUE');
+          console.log('[DEBUG] Setting correctedTerm to:', medicalTerm);
+        } else {
+          console.error('[ICD-10] Translation failed');
+          // Fallback to original term
+          setCorrectedTerm(inputTerm);
+          setShowICD10Explorer(true);
+          console.log('[DEBUG] Fallback - Setting showICD10Explorer to TRUE');
+        }
+      }
       
-      if (translationResponse.success) {
-        const medicalTerm = translationResponse.data.translated;
-        console.log('[ICD-10] Translated to:', medicalTerm);
-        setCorrectedTerm(medicalTerm);
-        setShowICD10Explorer(true);
-      } else {
-        console.error('[ICD-10] Translation failed');
-        // Fallback to original term
+      // Step 2: Translate procedure if provided
+      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      if (procedureTerm) {
+        setOriginalProcedureTerm(procedureTerm);
+        console.log('[ICD-9] Translating procedure term:', procedureTerm);
+        
+        const procedureTranslation = await apiService.translateProcedureTerm(procedureTerm);
+        
+        console.log('[DEBUG] Procedure translation response:', procedureTranslation);
+        
+        if (procedureTranslation.success) {
+          const medicalProcedureTerm = procedureTranslation.data.translated;
+          const synonyms = procedureTranslation.data.synonyms || [medicalProcedureTerm];
+          console.log('[ICD-9] Translated to:', medicalProcedureTerm);
+          console.log('[ICD-9] Synonyms:', synonyms);
+          setCorrectedProcedureTerm(medicalProcedureTerm);
+          setProcedureSynonyms(synonyms);
+          setShowICD9Explorer(true);
+        } else {
+          console.error('[ICD-9] Translation failed');
+          setCorrectedProcedureTerm(procedureTerm);
+          setProcedureSynonyms([procedureTerm]);
+          setShowICD9Explorer(true);
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('[Translation] Error:', error);
+      
+      // Show user-friendly error message
+      const errorMessage = error?.response?.data?.message 
+        || error?.message 
+        || 'Terjadi kesalahan saat melakukan analisis. Silakan coba lagi.';
+      
+      alert(`Error: ${errorMessage}`);
+      
+      // Fallback to original terms if translation fails
+      if (inputTerm) {
         setCorrectedTerm(inputTerm);
         setShowICD10Explorer(true);
       }
-      
-    } catch (error) {
-      console.error('[ICD-10] Translation error:', error);
-      // Fallback to original term if translation fails
-      setCorrectedTerm(inputTerm);
-      setShowICD10Explorer(true);
+      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      if (procedureTerm) {
+        setCorrectedProcedureTerm(procedureTerm);
+        setShowICD9Explorer(true);
+      }
+      console.log('[DEBUG] Error fallback - Setting explorers to TRUE');
     } finally {
       setIsLoading(false);
     }
@@ -247,6 +310,11 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     console.log(`[ICD-10] Selected: ${code} - ${name}`);
   };
 
+  const handleProcedureCodeSelection = (code: string, name: string) => {
+    setSelectedICD9Code({ code, name });
+    console.log(`[ICD-9] Selected: ${code} - ${name}`);
+  };
+
   return (
     <div className="h-full flex gap-4">
       {/* Left Panel - Input (Fixed Width) */}
@@ -381,24 +449,106 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           
           {/* Scrollable Content */}
           <div className="flex-1 overflow-y-auto space-y-6">
-            {/* ICD-10 Explorer Section */}
-            {showICD10Explorer && correctedTerm ? (
+            {/* Debug Info */}
+            <div className="text-xs text-yellow-500 mb-2">
+              DEBUG: showICD10Explorer={String(showICD10Explorer)}, correctedTerm={correctedTerm || 'null'}, showICD9Explorer={String(showICD9Explorer)}, correctedProcedureTerm={correctedProcedureTerm || 'null'}
+            </div>
+            
+            {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
+            {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
               <div className="flex-shrink-0">
-                <ICD10Explorer
-                  searchTerm={originalSearchTerm}
-                  correctedTerm={correctedTerm}
-                  originalInput={{
-                    diagnosis,
-                    procedure,
-                    medication,
-                    freeText,
-                    mode: inputMode,
-                  }}
-                  isDark={isDark}
-                  isAnalyzing={isLoading}
-                  onCodeSelected={handleCodeSelection}
-                  onGenerateAnalysis={handleGenerateAnalysis}
-                />
+                <div className={`mb-4 px-4 py-3 rounded-lg ${
+                  isDark ? 'bg-gradient-to-r from-cyan-500/10 to-green-500/10 border border-cyan-500/30' : 'bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200'
+                }`}>
+                  <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+                    🏥 Mapping Kode ICD
+                  </h3>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                    {showICD10Explorer && showICD9Explorer 
+                      ? 'Pilih kode diagnosis (ICD-10) dan tindakan (ICD-9) yang sesuai'
+                      : showICD10Explorer 
+                        ? 'Pilih kode diagnosis (ICD-10) yang sesuai'
+                        : 'Pilih kode tindakan (ICD-9) yang sesuai'
+                    }
+                  </p>
+                </div>
+
+                {/* 2-Column Layout: Explorers (Left 65%) | Shared Mapping Preview (Right 35%) */}
+                <div className="grid grid-cols-12 gap-4">
+                  {/* Left Column: ICD-10 & ICD-9 Explorers (8 columns = ~66%) */}
+                  <div className="col-span-8 space-y-6">
+                    {/* ICD-10 Diagnosis Section */}
+                    {showICD10Explorer && correctedTerm && (
+                      <div>
+                        <div className={`mb-3 px-3 py-2 rounded-md ${
+                          isDark ? 'bg-cyan-500/5 border-l-2 border-cyan-500' : 'bg-blue-50 border-l-2 border-blue-500'
+                        }`}>
+                          <h4 className={`text-xs font-semibold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
+                            🩺 Diagnosis ICD-10
+                          </h4>
+                        </div>
+                        <ICD10Explorer
+                          searchTerm={originalSearchTerm}
+                          correctedTerm={correctedTerm}
+                          originalInput={{
+                            diagnosis,
+                            procedure,
+                            medication,
+                            freeText,
+                            mode: inputMode,
+                          }}
+                          isDark={isDark}
+                          isAnalyzing={isLoading}
+                          onCodeSelected={handleCodeSelection}
+                          hidePreview={true}
+                        />
+                      </div>
+                    )}
+
+                    {/* ICD-9 Tindakan Section */}
+                    {showICD9Explorer && correctedProcedureTerm && (
+                      <div>
+                        <div className={`mb-3 px-3 py-2 rounded-md ${
+                          isDark ? 'bg-green-500/5 border-l-2 border-green-500' : 'bg-green-50 border-l-2 border-green-500'
+                        }`}>
+                          <h4 className={`text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                            ⚕️ Tindakan ICD-9
+                          </h4>
+                        </div>
+                        <ICD9Explorer
+                          searchTerm={originalProcedureTerm}
+                          correctedTerm={correctedProcedureTerm}
+                          synonyms={procedureSynonyms}
+                          originalInput={{
+                            diagnosis,
+                            procedure,
+                            medication,
+                            freeText,
+                            mode: inputMode,
+                          }}
+                          isDark={isDark}
+                          isAnalyzing={isLoading}
+                          onCodeSelected={handleProcedureCodeSelection}
+                          hidePreview={true}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Shared Mapping Preview (4 columns = ~33%, Sticky) */}
+                  <div className="col-span-4 sticky top-4">
+                    <SharedMappingPreview
+                      isDark={isDark}
+                      isAnalyzing={isLoading}
+                      icd10Code={selectedICD10Code}
+                      icd9Code={selectedICD9Code}
+                      originalDiagnosis={originalSearchTerm}
+                      originalProcedure={originalProcedureTerm}
+                      originalMedication={medication}
+                      onGenerateAnalysis={handleGenerateAnalysis}
+                    />
+                  </div>
+                </div>
               </div>
             ) : (
               <div className={`flex flex-col items-center justify-center py-20 ${
@@ -408,7 +558,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <p className="text-sm text-center px-4">
-                  Klik "Generate AI Insight" untuk melihat kategori ICD-10 yang sesuai dengan diagnosis
+                  Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
                 </p>
               </div>
             )}

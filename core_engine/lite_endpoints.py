@@ -8,6 +8,28 @@ Simplified REST API untuk demo/trial version
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import os
+from sqlalchemy import text
+
+# Load ICD-10 common terms mapping
+ICD10_COMMON_TERMS = {}
+try:
+    common_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd10_common_terms.json')
+    with open(common_terms_path, 'r', encoding='utf-8') as f:
+        ICD10_COMMON_TERMS = json.load(f)
+    print(f"[ICD10] Loaded {len(ICD10_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD10] Warning: Could not load common terms: {e}")
+
+# Load ICD-9 common terms mapping
+ICD9_COMMON_TERMS = {}
+try:
+    icd9_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd9_common_terms.json')
+    with open(icd9_terms_path, 'r', encoding='utf-8') as f:
+        ICD9_COMMON_TERMS = json.load(f)
+    print(f"[ICD9] Loaded {len(ICD9_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD9] Warning: Could not load common terms: {e}")
 
 # Import AI-CLAIM Lite service
 from services.lite_service import (
@@ -936,3 +958,628 @@ Respond with ONLY the translated medical term in English, nothing else."""
                 "message": f"Translation failed: {error_msg}",
                 "result": None
             }
+
+
+# ============================================================
+# 🔹 ENDPOINT: Translate Medical Procedure
+# ============================================================
+def endpoint_translate_procedure(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-procedure
+    
+    Translate colloquial/Indonesian procedure term to standard medical terminology.
+    Uses OpenAI for intelligent translation.
+    
+    Request:
+    {
+        "term": "ultrason"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "ultrasonography",
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        from openai import OpenAI
+        import os
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Procedure term is required",
+                "result": None
+            }
+        
+        # Medical procedure synonym mapping
+        # Maps variations/synonyms to standardized database terms
+        # Format: {synonym: [preferred_term, alternative1, alternative2]}
+        procedure_synonyms = {
+            # Ultrasound family
+            'usg': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+            'ultrasound': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+            'ultrasonography': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+            'ultrasonic': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+            'echo': ['ultrasound', 'ultrasonography', 'echocardiography'],
+            
+            # X-ray family
+            'rontgen': ['x-ray', 'radiography', 'radiograph'],
+            'x-ray': ['x-ray', 'radiography', 'radiograph'],
+            'xray': ['x-ray', 'radiography', 'radiograph'],
+            'radiography': ['x-ray', 'radiography', 'radiograph'],
+            'radiograph': ['x-ray', 'radiography', 'radiograph'],
+            
+            # CT Scan family
+            'ct scan': ['ct scan', 'computed tomography', 'cat scan'],
+            'ct': ['ct scan', 'computed tomography', 'cat scan'],
+            'cat scan': ['ct scan', 'computed tomography', 'cat scan'],
+            
+            # MRI family
+            'mri': ['mri', 'magnetic resonance imaging'],
+            
+            # Endoscopy family
+            'endoscopy': ['endoscopy', 'endoscopic examination'],
+            'scope': ['endoscopy', 'endoscopic examination'],
+            
+            # Surgery family
+            'operasi': ['surgery', 'operation', 'surgical procedure'],
+            'surgery': ['surgery', 'operation', 'surgical procedure'],
+            'operation': ['surgery', 'operation', 'surgical procedure'],
+            
+            # Biopsy family
+            'biopsy': ['biopsy', 'tissue sampling', 'histopathology'],
+            'biopsi': ['biopsy', 'tissue sampling', 'histopathology']
+        }
+        
+        term_lower = term.lower().strip()
+        
+        # Check if term matches a synonym group
+        if term_lower in procedure_synonyms:
+            # Return the synonym group for broader search
+            synonyms = procedure_synonyms[term_lower]
+            return {
+                "status": "success",
+                "result": {
+                    "medical_term": synonyms[0],  # Primary term
+                    "synonyms": synonyms,  # All related terms
+                    "confidence": "high"
+                }
+            }
+        
+        # Get OpenAI API key from environment
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured in environment",
+                "result": None
+            }
+        
+        # Initialize OpenAI client (v1.x syntax)
+        client = OpenAI(api_key=api_key)
+        
+        # Create prompt for medical procedure translation
+        prompt = f"""Translate the following Indonesian/colloquial medical procedure term to standard English medical terminology.
+
+Input: "{term}"
+
+Instructions:
+- Translate to accurate medical procedure terminology in English
+- Use standard medical vocabulary for procedures/operations
+- If already medical terminology, return as is
+- Be concise and precise
+
+Examples:
+- "ultrason" → "ultrasonography"
+- "operasi usus buntu" → "appendectomy"
+- "rontgen dada" → "chest x-ray"
+- "cabut gigi" → "tooth extraction"
+- "jahit luka" → "wound suturing"
+- "pasang infus" → "intravenous infusion"
+
+Respond with ONLY the translated medical procedure term in English, nothing else."""
+        
+        # Call OpenAI API (v1.x syntax)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical procedure terminology translator. Respond with ONLY the medical procedure term."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        # Extract medical term from response
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Handle different error types
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Invalid OpenAI API key",
+                "result": None
+            }
+        elif "rate limit" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API rate limit exceeded",
+                "result": None
+            }
+        elif "timeout" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API request timeout",
+                "result": None
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Translation failed: {error_msg}",
+                "result": None
+            }
+
+
+# ============================================================
+# 🔹 ENDPOINT: ICD-9 Hierarchy (for Tindakan)
+# ============================================================
+def endpoint_icd9_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd9-hierarchy
+    
+    Get ICD-9 codes hierarchy based on search term (procedure).
+    Similar to ICD-10 but for procedures.
+    
+    Request:
+    {
+        "search_term": "ultrasound"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "categories": [
+                {
+                    "headCode": "88.7",
+                    "headName": "Diagnostic ultrasound",
+                    "count": 9,
+                    "details": [
+                        {
+                            "code": "88.71",
+                            "name": "Diagnostic ultrasound of head and neck"
+                        },
+                        {
+                            "code": "88.73",
+                            "name": "Other diagnostic ultrasound of thorax"
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    """
+    
+    try:
+        from sqlalchemy import text
+        
+        search_term = request_data.get("search_term", "").strip().lower()
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "Search term is required",
+                "data": None
+            }
+        
+        # Smart filtering: single word vs multi-word
+        words = search_term.split()
+        
+        if len(words) == 1:
+            # Single word: Broad search (OR logic)
+            sql_query = text("""
+                SELECT code, name
+                FROM icd9cm_master
+                WHERE LOWER(name) LIKE :search_pattern
+                ORDER BY code
+                LIMIT 100
+            """)
+            params = {"search_pattern": f"%{search_term}%"}
+        else:
+            # Multi-word: Specific search (AND logic)
+            conditions = " AND ".join([f"LOWER(name) LIKE :word{i}" for i in range(len(words))])
+            sql_query = text(f"""
+                SELECT code, name
+                FROM icd9cm_master
+                WHERE {conditions}
+                ORDER BY code
+                LIMIT 100
+            """)
+            params = {f"word{i}": f"%{word}%" for i, word in enumerate(words)}
+        
+        # Execute query
+        result = db.execute(sql_query, params)
+        rows = result.fetchall()
+        
+        if not rows:
+            return {
+                "status": "success",
+                "data": {
+                    "categories": []
+                }
+            }
+        
+        # Group by HEAD code (first 2-3 digits)
+        categories_dict = {}
+        
+        for row in rows:
+            code = row[0]
+            name = row[1]
+            
+            # Determine HEAD code (e.g., "88.7" from "88.71")
+            if '.' in code:
+                parts = code.split('.')
+                if len(parts[1]) >= 1:
+                    head_code = f"{parts[0]}.{parts[1][0]}"  # e.g., "88.7"
+                else:
+                    head_code = parts[0]  # e.g., "88"
+            else:
+                head_code = code[:2] if len(code) >= 2 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd9cm_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else name.split(',')[0]
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": name
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD9_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 🔍 ICD-10 HIERARCHY ENDPOINT
+# ============================================================
+def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]:
+    """
+    Get ICD-10 hierarchy for diagnosis with smart filtering
+    
+    - Single word: broad match (OR logic)
+    - Multiple words: specific match (AND logic)
+    
+    Groups results by HEAD code (e.g., I25 for I25.0, I25.1, etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD10_HIERARCHY] Searching for: '{search_term}'")
+        
+        # Split into words for smart filtering
+        words = [w.strip().lower() for w in search_term.split() if len(w.strip()) > 2]
+        
+        if len(words) == 0:
+            return {
+                "status": "error",
+                "message": "Search term too short (minimum 3 characters)",
+                "data": None
+            }
+        
+        # Build query based on word count
+        if len(words) == 1:
+            # Single word: OR logic (broad search)
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE LOWER(name) LIKE :pattern
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """)
+            params = {"pattern": f"%{words[0]}%"}
+            print(f"[ICD10_HIERARCHY] Single word search: {words[0]}")
+        elif len(words) == 2:
+            # Two words: OR logic on each word for broader results
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE (LOWER(name) LIKE :word0 OR LOWER(name) LIKE :word1)
+                  AND validation_status = 'official'
+                ORDER BY 
+                  CASE 
+                    WHEN LOWER(name) LIKE :word0 AND LOWER(name) LIKE :word1 THEN 1
+                    ELSE 2
+                  END,
+                  code
+                LIMIT 100
+            """)
+            params = {
+                "word0": f"%{words[0]}%",
+                "word1": f"%{words[1]}%"
+            }
+            print(f"[ICD10_HIERARCHY] Two-word search (OR): {words[0]} OR {words[1]}")
+        else:
+            # Multiple words (3+): Try OR first, then fallback to less restrictive
+            # Use OR logic but prefer results that match more words
+            word_conditions = " OR ".join([f"LOWER(name) LIKE :word{i}" for i in range(len(words))])
+            query_str = f"""
+                SELECT code, name
+                FROM icd10_master
+                WHERE ({word_conditions})
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """
+            query = text(query_str)
+            params = {f"word{i}": f"%{word}%" for i, word in enumerate(words)}
+            print(f"[ICD10_HIERARCHY] Multi-word search (OR): {' OR '.join(words)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD10_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (e.g., "I25" from "I25.1")
+        categories_dict = {}
+        
+        for code, name in rows:
+            # Extract HEAD code (first 3 characters: e.g., "I25" from "I25.1")
+            # ICD-10 format: A00-Z99 (3 chars) or A00.0-Z99.9 (5+ chars)
+            if len(code) > 3 and '.' in code:
+                # It's a detailed code like "I25.1" -> extract "I25"
+                head_code = code.split('.')[0]  # e.g., "I25"
+            else:
+                # Already a HEAD code (e.g., "I25") or short code
+                head_code = code[:3] if len(code) >= 3 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd10_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else name.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD10_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping (try both full code and HEAD code)
+                detail_common_term = ICD10_COMMON_TERMS.get(code) or ICD10_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": name,
+                    "commonTerm": detail_common_term
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD10_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD10_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-10 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 🔹 ICD-9 HIERARCHY ENDPOINT (untuk Tindakan/Prosedur)
+# ============================================================
+def endpoint_icd9_hierarchy(request_data: dict, db):
+    """
+    Get ICD-9 CM procedure codes grouped by HEAD category (2-digit).
+    
+    Returns hierarchical structure:
+    - Categories: List of HEAD codes (e.g., "47" for Appendectomy)
+    - Details: List of specific procedure codes under each category
+    
+    Search logic:
+    - Single word: broad match
+    - Multiple words/synonyms: OR logic for broader results
+    
+    Groups results by HEAD code (e.g., "47" for "47.0", "47.09", etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        synonyms = request_data.get("synonyms", [])
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD9_HIERARCHY] Searching for: '{search_term}'")
+        if synonyms:
+            print(f"[ICD9_HIERARCHY] With synonyms: {synonyms}")
+        
+        # Combine search_term with synonyms for comprehensive search
+        search_terms = [search_term.lower()]
+        if synonyms and isinstance(synonyms, list):
+            search_terms.extend([s.lower() for s in synonyms if s.lower() not in search_terms])
+        
+        # Build OR query for all search terms
+        word_conditions = " OR ".join([f"LOWER(name) LIKE :term{i}" for i in range(len(search_terms))])
+        query_str = f"""
+            SELECT code, name
+            FROM icd9cm_master
+            WHERE ({word_conditions})
+            ORDER BY code
+            LIMIT 100
+        """
+        query = text(query_str)
+        params = {f"term{i}": f"%{term}%" for i, term in enumerate(search_terms)}
+        
+        print(f"[ICD9_HIERARCHY] Multi-term search (OR): {' OR '.join(search_terms)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD9_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (2-digit: e.g., "47" from "47.09")
+        categories_dict = {}
+        
+        for code, description in rows:
+            # Extract HEAD code (first 2 digits: e.g., "47" from "47.09")
+            # ICD-9 format: 00-99 (2 chars) or 00.0-99.99 (4-5 chars)
+            if '.' in code:
+                head_code = code.split('.')[0]  # e.g., "47"
+            else:
+                head_code = code[:2] if len(code) >= 2 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd9cm_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else description.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD9_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping
+                detail_common_term = ICD9_COMMON_TERMS.get(code) or ICD9_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": description,
+                    "commonTerm": detail_common_term
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD9_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD9_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
+            "data": None
+        }

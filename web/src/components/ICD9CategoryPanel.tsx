@@ -1,41 +1,37 @@
 import { ChevronRight, Hash } from 'lucide-react';
 
-export interface ICD10Category {
+export interface ICD9Category {
   headCode: string;
   headName: string;
   commonTerm?: string | null;
   count: number;
-  details?: ICD10Detail[];
+  details?: ICD9Detail[];
 }
 
-export interface ICD10Detail {
+export interface ICD9Detail {
   code: string;
   name: string;
   commonTerm?: string | null;
 }
 
-// Alias untuk ICD-9 (struktur sama)
-export type ICD9Category = ICD10Category;
-export type ICD9Detail = ICD10Detail;
-
-interface ICD10CategoryPanelProps {
-  categories: ICD10Category[];
+interface ICD9CategoryPanelProps {
+  categories: ICD9Category[];
   selectedHeadCode: string | null;
   onSelectCategory: (headCode: string) => void;
   isDark: boolean;
   isLoading?: boolean;
 }
 
-export default function ICD10CategoryPanel({
+export default function ICD9CategoryPanel({
   categories,
   selectedHeadCode,
   onSelectCategory,
   isDark,
   isLoading = false,
-}: ICD10CategoryPanelProps) {
+}: ICD9CategoryPanelProps) {
   if (isLoading) {
     return (
-      <div className={`flex flex-col items-center justify-center h-full ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+      <div className={`flex flex-col items-center justify-center py-12 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
         <div className={`w-8 h-8 border-3 ${isDark ? 'border-cyan-500/30 border-t-cyan-500' : 'border-blue-500/30 border-t-blue-500'} rounded-full animate-spin mb-3`} />
         <p className="text-sm">Memuat kategori...</p>
       </div>
@@ -44,34 +40,27 @@ export default function ICD10CategoryPanel({
 
   if (categories.length === 0) {
     return (
-      <div className={`flex flex-col items-center justify-center h-full ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+      <div className={`flex flex-col items-center justify-center py-12 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
         <Hash className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm text-center px-4">
-          Masukkan diagnosis dan klik "Generate AI Insight" untuk melihat kategori ICD-10
+          Masukkan tindakan dan klik "Generate AI Insight" untuk melihat kategori ICD-9
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col">
-      <div className={`flex-shrink-0 pb-3 mb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
+    <div className="flex flex-col space-y-4">
+      <div className={`pb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
         <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-          Kategori Diagnosis
+          Kategori ICD-9 (Tindakan)
         </h3>
         <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
           {categories.length} kategori ditemukan
         </p>
       </div>
 
-      {/* Scrollable category list with max height for 6 items */}
-      <div className={`space-y-1.5 pr-2 ${
-        categories.length > 6 ? 'max-h-[400px] overflow-y-auto' : ''
-      } ${
-        isDark 
-          ? 'scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-slate-800/20' 
-          : 'scrollbar-thin scrollbar-thumb-blue-400/40 scrollbar-track-gray-200/40'
-      } hover:scrollbar-thumb-cyan-500/50`}>
+      <div className="space-y-1.5 max-h-96 overflow-y-auto">
         {categories.map((category) => (
           <button
             key={category.headCode}
