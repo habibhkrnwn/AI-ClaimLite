@@ -163,7 +163,13 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           fornasList: aiResult.fornas_validation || [],
           fornasSummary: aiResult.fornas_summary || {},
           aiInsight: aiResult.insight_ai || 'Analisis berhasil dilakukan.',
-          consistency: Number(aiResult.konsistensi?.tingkat) || 85,
+          consistency: {
+            dx_tx: aiResult.konsistensi?.dx_tx || {},
+            dx_drug: aiResult.konsistensi?.dx_drug || {},
+            tx_drug: aiResult.konsistensi?.tx_drug || {},
+            tingkat: aiResult.konsistensi?.tingkat_konsistensi || "-",
+            score: Number(aiResult.konsistensi2?.score_konsistensi) || 0
+          },
         };
 
         setResult(analysisResult);

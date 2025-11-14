@@ -100,7 +100,7 @@ export default function ResultsPanel({ result, isDark, section = 'all' }: Result
           {/* Header */}
           <div className="flex items-center gap-2 mb-4">
             <Pill className={`${isDark ? "text-cyan-300" : "text-blue-600"}`} />
-            <h3 className={headerClass}>Fornas</h3>
+            <h3 className={headerClass}>Validasi Fornas</h3>
           </div>
 
           {/* Status Badge */}
@@ -201,35 +201,64 @@ export default function ResultsPanel({ result, isDark, section = 'all' }: Result
           </p>
         </div>
 
-        {/* Konsistensi Klinis */}
+        {/* ============================ 🔵 KONSISTENSI KLINIS =============================== */}
         <div className={cardClass}>
           <div className="flex items-center gap-2 mb-3">
-            <BarChart3 className={`w-5 h-5 ${isDark ? 'text-cyan-400' : 'text-blue-600'}`} />
-            <h3 className={`font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-              Konsistensi Klinis
-            </h3>
+            <Pill className={isDark ? "bg-blue-500/20 text-blue-300" : "bg-blue-100 text-blue-600"} />
+            <h3 className={isDark ? "text-blue-300" : "text-blue-600"}>Konsistensi Klinis</h3>
           </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                Tingkat Konsistensi
-              </span>
-              <span className={`text-2xl font-bold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
-                {result.consistency}%
-              </span>
+
+          {/* === BLOK VALIDASI === */}
+          <div className={`space-y-4 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+
+            {/* DX – TX */}
+            <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+              <p className="font-semibold">Validasi Diagnosis – Tindakan</p>
+              <p>Status: {result.consistency.dx_tx?.status || "-"}</p>
+              <p>Catatan: {result.consistency.dx_tx?.catatan || "-"}</p>
             </div>
-            <div className="w-full h-3 bg-slate-700/30 rounded-full overflow-hidden">
-              <div
-                className={`h-full ${
-                  result.consistency >= 80
-                    ? 'bg-gradient-to-r from-green-500 to-emerald-400'
-                    : result.consistency >= 60
-                    ? 'bg-gradient-to-r from-yellow-500 to-orange-400'
-                    : 'bg-gradient-to-r from-red-500 to-pink-400'
-                } transition-all duration-1000 ease-out`}
-                style={{ width: `${result.consistency}%` }}
-              />
+
+            {/* DX – DRUG */}
+            <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+              <p className="font-semibold">Validasi Diagnosis – Obat</p>
+              <p>Status: {result.consistency.dx_drug?.status || "-"}</p>
+              <p>Catatan: {result.consistency.dx_drug?.catatan || "-"}</p>
             </div>
+
+            {/* TX – DRUG */}
+            <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+              <p className="font-semibold">Validasi Tindakan – Obat</p>
+              <p>Status: {result.consistency.tx_drug?.status || "-"}</p>
+              <p>Catatan: {result.consistency.tx_drug?.catatan || "-"}</p>
+            </div>
+          </div>
+
+          {/* === TINGKAT KONSISTENSI === */}
+          <div className="mt-4">
+            <p className={isDark ? "text-slate-300 mb-1" : "text-gray-700 mb-1"}>
+              <strong>Tingkat Konsistensi:</strong> {result.consistency.tingkat || "-"}
+            </p>
+
+            {/* PROGRESS BAR MENGIKUTI LEVEL */}
+            {(() => {
+              const tingkat = (result.consistency.tingkat || "").toLowerCase();
+
+              const barColor =
+                tingkat === "tinggi"
+                  ? "bg-green-500"
+                  : tingkat === "sedang"
+                  ? "bg-yellow-500"
+                  : "bg-red-500";
+
+              const barWidth =
+                tingkat === "tinggi" ? "100%" : tingkat === "sedang" ? "60%" : "25%";
+
+              return (
+                <div className="w-full h-3 rounded-full bg-slate-700/30 overflow-hidden">
+                  <div className={`h-full ${barColor}`} style={{ width: barWidth }}></div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -371,7 +400,7 @@ export default function ResultsPanel({ result, isDark, section = 'all' }: Result
         {/* Header */}
         <div className="flex items-center gap-2 mb-4">
           <Pill className={`${isDark ? "text-cyan-300" : "text-blue-600"}`} />
-          <h3 className={headerClass}>Fornas</h3>
+          <h3 className={headerClass}>Validasi Fornas</h3>
         </div>
 
         {/* Status Badge */}
@@ -473,36 +502,67 @@ export default function ResultsPanel({ result, isDark, section = 'all' }: Result
         </p>
       </div>
 
+      {/* ============================ 🔵 KONSISTENSI KLINIS =============================== */}
       <div className={cardClass}>
         <div className="flex items-center gap-2 mb-3">
-          <BarChart3 className={`w-5 h-5 ${isDark ? 'text-cyan-400' : 'text-blue-600'}`} />
-          <h3 className={`font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-            Konsistensi Klinis
-          </h3>
+          <Pill className={`${isDark ? "text-cyan-300" : "text-blue-600"}`} />
+          <h3 className={headerClass}>Konsistensi Klinis</h3>
         </div>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-              Tingkat Konsistensi
-            </span>
-            <span className={`text-2xl font-bold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
-              {result.consistency}%
-            </span>
+
+        {/* === BLOK VALIDASI === */}
+        <div className={`space-y-4 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+
+          {/* DX – TX */}
+          <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+            <p className="font-semibold">Validasi Diagnosis – Tindakan</p>
+            <p>Status: {result.consistency.dx_tx?.status || "-"}</p>
+            <p>Catatan: {result.consistency.dx_tx?.catatan || "-"}</p>
           </div>
-          <div className="w-full h-3 bg-slate-700/30 rounded-full overflow-hidden">
-            <div
-              className={`h-full ${
-                result.consistency >= 80
-                  ? 'bg-gradient-to-r from-green-500 to-emerald-400'
-                  : result.consistency >= 60
-                  ? 'bg-gradient-to-r from-yellow-500 to-orange-400'
-                  : 'bg-gradient-to-r from-red-500 to-pink-400'
-              } transition-all duration-1000 ease-out`}
-              style={{ width: `${result.consistency}%` }}
-            />
+
+          {/* DX – DRUG */}
+          <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+            <p className="font-semibold">Validasi Diagnosis – Obat</p>
+            <p>Status: {result.consistency.dx_drug?.status || "-"}</p>
+            <p>Catatan: {result.consistency.dx_drug?.catatan || "-"}</p>
           </div>
+
+          {/* TX – DRUG */}
+          <div className={isDark ? "border-b border-slate-700 pb-3" : "border-b border-gray-300 pb-3"}>
+            <p className="font-semibold">Validasi Tindakan – Obat</p>
+            <p>Status: {result.consistency.tx_drug?.status || "-"}</p>
+            <p>Catatan: {result.consistency.tx_drug?.catatan || "-"}</p>
+          </div>
+        </div>
+
+        {/* === TINGKAT KONSISTENSI === */}
+        <div className="mt-4">
+          <p className={isDark ? "text-slate-300 mb-1" : "text-gray-700 mb-1"}>
+            <strong>Tingkat Konsistensi:</strong> {result.consistency.tingkat || "-"}
+          </p>
+
+          {/* PROGRESS BAR MENGIKUTI LEVEL */}
+          {(() => {
+            const tingkat = (result.consistency.tingkat || "").toLowerCase();
+
+            const barColor =
+              tingkat === "tinggi"
+                ? "bg-green-500"
+                : tingkat === "sedang"
+                ? "bg-yellow-500"
+                : "bg-red-500";
+
+            const barWidth =
+              tingkat === "tinggi" ? "100%" : tingkat === "sedang" ? "60%" : "25%";
+
+            return (
+              <div className="w-full h-3 rounded-full bg-slate-700/30 overflow-hidden">
+                <div className={`h-full ${barColor}`} style={{ width: barWidth }}></div>
+              </div>
+            );
+          })()}
         </div>
       </div>
+
     </div>
   );
 }
