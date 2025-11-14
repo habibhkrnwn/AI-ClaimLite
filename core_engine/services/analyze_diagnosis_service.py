@@ -198,59 +198,6 @@ def ensure_default_gpt_structure(gpt_result, disease_name):
 
     return gpt_result
 
-def map_icd10_who_to_bpjs(kode_who: str) -> dict:
-    """
-    Mapping kode ICD-10 WHO (internasional) ke kode BPJS Indonesia.
-    
-    Flow:
-    1. GPT menghasilkan kode WHO (standar internasional)
-    2. Cari di icd10_mapping.json untuk mendapatkan kode BPJS
-    3. Return kode BPJS + catatan jika ada
-    
-    Args:
-        kode_who: Kode ICD-10 dari WHO/GPT (contoh: "J18.9")
-    
-    Returns:
-        dict: {"kode": "J18.9", "catatan": "...", "who_original": "J18.9", "deskripsi": "..."}
-    """
-    if not kode_who or kode_who == "-":
-        return {"kode": "-", "catatan": "", "who_original": "-", "deskripsi": ""}
-    
-    # Load mapping file
-    mapping_path = Path(__file__).parent.parent / "rules" / "icd10_mapping.json"
-    
-    try:
-        with open(mapping_path, encoding="utf-8") as f:
-            mapping_data = json.load(f)
-        
-        # Cari kode WHO di mapping
-        # Format mapping dari file: {"J18.9": {"who": "Pneumonia, unspecified", "bpjs": "J18.9", "catatan_bpjs": "..."}}
-        if kode_who in mapping_data:
-            mapped = mapping_data[kode_who]
-            return {
-                "kode": mapped.get("bpjs", kode_who),  # Kode BPJS
-                "catatan": mapped.get("catatan_bpjs", ""),
-                "who_original": kode_who,  # Simpan kode WHO asli
-                "deskripsi": mapped.get("who", "")  # Deskripsi dari WHO
-            }
-        else:
-            # Jika tidak ada mapping, anggap WHO = BPJS (sama)
-            print(f"[ICD10_MAPPING] ⚠️ Kode {kode_who} tidak ditemukan di mapping, menggunakan kode asli")
-            return {
-                "kode": kode_who,
-                "catatan": "Kode WHO standar (belum ada mapping BPJS spesifik)",
-                "who_original": kode_who,
-                "deskripsi": ""
-            }
-    
-    except FileNotFoundError:
-        print(f"[ICD10_MAPPING] ❌ File {mapping_path} tidak ditemukan")
-        return {"kode": kode_who, "catatan": "File mapping tidak tersedia", "who_original": kode_who, "deskripsi": ""}
-    except Exception as e:
-        print(f"[ICD10_MAPPING] ❌ Error mapping ICD-10: {e}")
-        return {"kode": kode_who, "catatan": f"Error: {str(e)}", "who_original": kode_who, "deskripsi": ""}
-
-
 def summarize_multilayer_text(text: str) -> str:
     """
     Ringkas isi regulasi menjadi kalimat medis pendek (maks 180 karakter).
@@ -513,27 +460,13 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
     rujukan = smart_merge("rujukan", rule_data, gpt_result, rule_data_db)
     ina_cbg_info = rule_data.get("ina_cbg", {})
 
-    # Penyesuaian khusus untuk ICD-10 dengan mapping WHO → BPJS
+    # Penyesuaian khusus untuk ICD-10 dari GPT jika kosong
     if gpt_result and gpt_result.get("icd10", {}).get("utama"):
         # Jika ICD-10 masih kosong, gunakan dari GPT
         if not icd10_data.get("kode_icd") or icd10_data.get("kode_icd") == "-":
-            kode_who = gpt_result["icd10"]["utama"]
-            
-            # Mapping WHO → BPJS menggunakan icd10_mapping.json
-            kode_bpjs = map_icd10_who_to_bpjs(kode_who)
-            
-            # Simpan kode BPJS (yang akan ditampilkan di frontend)
-            icd10_data["kode_icd"] = kode_bpjs["kode"]
-            
-            # Jika ada deskripsi dari mapping, gunakan untuk struktur_icd10
-            if kode_bpjs.get("deskripsi") and (not icd10_data.get("struktur_icd10") or icd10_data.get("struktur_icd10") == "-"):
-                icd10_data["struktur_icd10"] = kode_bpjs["deskripsi"]
-            
-            print(f"[ANALYZE_DIAGNOSIS] 🔄 ICD-10 WHO: {kode_who} → BPJS: {kode_bpjs['kode']}")
-            
-            # Optional: simpan catatan mapping jika ada
-            if kode_bpjs.get("catatan"):
-                print(f"[ANALYZE_DIAGNOSIS] 📝 Catatan mapping: {kode_bpjs['catatan']}")
+            icd10_data["kode_icd"] = gpt_result["icd10"]["utama"]
+            # Tidak perlu mapping WHO→BPJS, langsung pakai kode dari GPT
+            print(f"[ANALYZE_DIAGNOSIS] 🔄 Using ICD-10 from GPT: {icd10_data['kode_icd']}")
 
     # Penyesuaian khusus untuk Rujukan
     if gpt_result and gpt_result.get("rujukan"):

@@ -21,6 +21,10 @@ from services.lite_service import (
 from services.lite_service_optimized import analyze_lite_single_optimized
 from services.fornas_lite_service import validate_fornas_lite
 
+# Import ICD-10 Smart Service (NEW)
+from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
+from services.icd10_service import select_icd10_code, get_icd10_statistics
+
 
 # ============================================================
 # 📌 ENDPOINT 1A: Validate Form Input
@@ -572,6 +576,186 @@ def endpoint_export_results(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# 📌 ENDPOINT 7: ICD-10 Smart Lookup (NEW)
+# ============================================================
+def endpoint_icd10_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/lookup
+    
+    Smart ICD-10 lookup dengan AI (RAG approach).
+    Guarantee 100% match dengan database.
+    
+    Request:
+    {
+        "diagnosis_input": "paru2 basah"
+    }
+    
+    Response (Direct Flow):
+    {
+        "status": "success",
+        "flow": "direct",
+        "requires_modal": false,
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                {"code": "J18.1", "name": "Lobar pneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        },
+        "ai_used": true,
+        "ai_confidence": 95,
+        "ai_reasoning": "..."
+    }
+    
+    Response (Suggestion Flow):
+    {
+        "status": "success",
+        "flow": "suggestion",
+        "requires_modal": true,
+        "suggestions": [
+            {"code": "J18.9", "name": "Pneumonia, unspecified", "relevance": 1},
+            {"code": "J18.0", "name": "Bronchopneumonia, unspecified", "relevance": 2},
+            ...
+        ],
+        "total_suggestions": 5,
+        "message": "Silakan pilih diagnosis yang sesuai:"
+    }
+    """
+    try:
+        diagnosis_input = request_data.get("diagnosis_input", "")
+        
+        if not diagnosis_input or diagnosis_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "diagnosis_input required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Lookup: {diagnosis_input}")
+        
+        # Call smart lookup dengan RAG
+        result = lookup_icd10_smart_with_rag(diagnosis_input)
+        
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 8: ICD-10 Select Code (NEW)
+# ============================================================
+def endpoint_icd10_select(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/select
+    
+    Select ICD-10 code setelah user pilih dari modal suggestion.
+    Return subcategories dari code yang dipilih.
+    
+    Request:
+    {
+        "selected_code": "J18.9"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        }
+    }
+    """
+    try:
+        selected_code = request_data.get("selected_code", "")
+        
+        if not selected_code:
+            return {
+                "status": "error",
+                "message": "selected_code required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Select: {selected_code}")
+        
+        # Call select function
+        result = select_icd10_code(selected_code)
+        
+        return {
+            **result,  # Already has "status" field
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 9: ICD-10 Statistics (NEW)
+# ============================================================
+def endpoint_icd10_statistics(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/icd10/statistics
+    
+    Get statistik database ICD-10.
+    
+    Response:
+    {
+        "status": "success",
+        "statistics": {
+            "total_codes": 18543,
+            "total_categories": 2048,
+            "total_subcategories": 16495,
+            "database_source": "ICD10_2010",
+            "last_updated": "2025-11-14T..."
+        }
+    }
+    """
+    try:
+        print("[ENDPOINT_ICD10] Getting statistics...")
+        
+        stats = get_icd10_statistics()
+        
+        return {
+            "status": "success",
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
 # 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
 # ============================================================
 LITE_ENDPOINTS = {
@@ -582,7 +766,11 @@ LITE_ENDPOINTS = {
     "get_history": endpoint_get_history,
     "load_history_detail": endpoint_load_history_detail,
     "delete_history": endpoint_delete_history,
-    "export_results": endpoint_export_results
+    "export_results": endpoint_export_results,
+    # ICD-10 endpoints (NEW)
+    "icd10_lookup": endpoint_icd10_lookup,
+    "icd10_select": endpoint_icd10_select,
+    "icd10_statistics": endpoint_icd10_statistics
 }
 
 
