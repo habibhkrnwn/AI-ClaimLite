@@ -65,6 +65,68 @@ def exact_search_icd9(procedure_input: str) -> Optional[Dict]:
         session.close()
 
 
+def partial_search_icd9(procedure_input: str, limit: int = 10) -> List[Dict]:
+    """
+    Partial/fuzzy search di database icd9cm_master.
+    Tries multiple search strategies to find best matches.
+    
+    Args:
+        procedure_input: Input dari user
+        limit: Max results to return
+    
+    Returns:
+        List of {code, name, source, confidence} sorted by relevance
+    """
+    if not procedure_input or procedure_input.strip() == "":
+        return []
+    
+    session = get_db_session()
+    try:
+        search_term = procedure_input.strip().lower()
+        
+        # Strategy 1: Name starts with input (highest relevance)
+        query = text("""
+            SELECT code, name,
+                   CASE 
+                       WHEN LOWER(name) LIKE :starts_with THEN 90
+                       WHEN LOWER(name) LIKE :contains THEN 70
+                       ELSE 50
+                   END as confidence
+            FROM icd9cm_master 
+            WHERE LOWER(name) LIKE :contains
+            ORDER BY confidence DESC, LENGTH(name) ASC
+            LIMIT :limit
+        """)
+        
+        results = session.execute(query, {
+            "starts_with": f"{search_term}%",
+            "contains": f"%{search_term}%",
+            "limit": limit
+        }).fetchall()
+        
+        if results:
+            matches = [
+                {
+                    "code": row[0],
+                    "name": row[1],
+                    "source": "database_partial",
+                    "valid": True,
+                    "confidence": row[2]
+                }
+                for row in results
+            ]
+            print(f"[ICD9] 🔍 Found {len(matches)} partial matches for '{procedure_input}'")
+            return matches
+        
+        return []
+        
+    except Exception as e:
+        print(f"[ICD9] ❌ Partial search error: {e}")
+        return []
+    finally:
+        session.close()
+
+
 def get_similar_procedures_from_db(procedure_input: str, limit: int = 20) -> List[Dict]:
     """
     Get similar procedures dari database untuk RAG context.
@@ -380,13 +442,14 @@ def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
 
 def lookup_icd9_procedure(procedure_input: str) -> Dict:
     """
-    Main orchestrator - Simple 2-step flow.
+    Main orchestrator - Enhanced 3-step flow.
     
     Flow:
         1. Exact search di database
-        2. Jika tidak ada → AI normalization
-        3. Validate AI suggestions
-        4. Return results
+        2. Partial/fuzzy search di database
+        3. Jika tidak ada → AI normalization
+        4. Validate AI suggestions
+        5. Return results
     
     Args:
         procedure_input: Input dari user
@@ -420,8 +483,33 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
             "needs_selection": False
         }
     
-    # STEP 2: AI normalization
-    print(f"[ICD9] 🤖 No exact match, using AI normalization...")
+    # STEP 2: Partial/fuzzy search (NEW!)
+    print(f"[ICD9] 🔍 No exact match, trying partial search...")
+    partial_matches = partial_search_icd9(procedure_input, limit=10)
+    
+    if partial_matches:
+        if len(partial_matches) == 1:
+            # Auto-select if only 1 match
+            print(f"[ICD9] ✅ Single partial match (auto-selected): {partial_matches[0]['name']}")
+            return {
+                "status": "success",
+                "result": partial_matches[0],
+                "suggestions": [],
+                "needs_selection": False
+            }
+        else:
+            # Multiple matches → show to user
+            print(f"[ICD9] 🔍 Found {len(partial_matches)} partial matches, needs selection")
+            return {
+                "status": "suggestions",
+                "result": None,
+                "suggestions": partial_matches,
+                "needs_selection": True,
+                "message": f"Found {len(partial_matches)} possible matches. Please select:"
+            }
+    
+    # STEP 3: AI normalization (fallback)
+    print(f"[ICD9] 🤖 No partial matches, using AI normalization...")
     ai_suggestions = normalize_procedure_with_ai(procedure_input)
     
     if not ai_suggestions:
@@ -434,7 +522,7 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
             "message": "AI could not normalize input. Please rephrase."
         }
     
-    # STEP 3: Validate AI suggestions
+    # STEP 4: Validate AI suggestions
     valid_matches = validate_ai_suggestions(ai_suggestions)
     
     if len(valid_matches) == 0:
