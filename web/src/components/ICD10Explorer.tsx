@@ -37,25 +37,18 @@ export default function ICD10Explorer({
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    console.log('[ICD10Explorer] useEffect triggered, correctedTerm:', correctedTerm);
     if (correctedTerm) {
       loadICD10Hierarchy();
     }
   }, [correctedTerm]);
 
   const loadICD10Hierarchy = async () => {
-    console.log('[ICD10Explorer] Loading hierarchy for:', correctedTerm);
     setIsLoading(true);
     try {
       const { apiService } = await import('../lib/api');
-      console.log('[ICD10Explorer] Calling getICD10Hierarchy...');
       const response = await apiService.getICD10Hierarchy(correctedTerm);
-      console.log('[ICD10Explorer] Response:', response);
-      console.log('[ICD10Explorer] Response.data:', response.data);
-      console.log('[ICD10Explorer] Response.data.categories:', response.data?.categories);
       
       if (response.success && response.data.categories && response.data.categories.length > 0) {
-        console.log('[ICD10Explorer] Got', response.data.categories.length, 'categories');
         setIcd10Categories(response.data.categories);
         
         // Auto-select first category
@@ -68,11 +61,9 @@ export default function ICD10Explorer({
           setSelectedSubCode(firstCategory.headCode);
           onCodeSelected?.(firstCategory.headCode, firstCategory.headName);
         }
-      } else {
-        console.error('[ICD10Explorer] No categories returned or not successful');
       }
     } catch (error) {
-      console.error('[ICD10Explorer] Failed to load ICD-10 hierarchy:', error);
+      // Silent error handling
     } finally {
       setIsLoading(false);
     }
@@ -103,8 +94,6 @@ export default function ICD10Explorer({
     // Notify parent component
     onCodeSelected?.(code, name);
   };
-
-  console.log('[ICD10Explorer] RENDERING - Categories:', icd10Categories.length, 'Selected:', selectedSubCode);
 
   return (
     <div className="h-full flex flex-col gap-4">

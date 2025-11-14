@@ -65,7 +65,7 @@ export default function ICD9Explorer({
         }
       }
     } catch (error) {
-      console.error('Failed to load ICD-9 hierarchy:', error);
+      // Silent error handling
     } finally {
       setIsLoading(false);
     }

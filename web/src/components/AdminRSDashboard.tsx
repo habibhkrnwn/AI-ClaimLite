@@ -47,17 +47,12 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
 
   const loadAIUsage = async () => {
     try {
-      console.log('[AdminRS] Loading AI usage...');
       const response = await apiService.getAIUsageStatus();
-      console.log('[AdminRS] getAIUsageStatus response:', response);
       if (response.success) {
-        console.log('[AdminRS] Setting aiUsage to:', response.data);
         setAiUsage(response.data);
-      } else {
-        console.error('[AdminRS] Failed to load usage - response not successful');
       }
     } catch (error) {
-      console.error('[AdminRS] Failed to load AI usage:', error);
+      // Silent error handling
     }
   };
 
@@ -75,30 +70,19 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     const inputTerm = inputMode === 'text' ? freeText : diagnosis;
     setOriginalSearchTerm(inputTerm);
     
-    console.log('[DEBUG] Input term:', inputTerm);
-    console.log('[DEBUG] Input mode:', inputMode);
-    
     try {
       // Step 1: Translate diagnosis to medical term using OpenAI
       if (inputTerm) {
-        console.log('[ICD-10] Translating term:', inputTerm);
         const translationResponse = await apiService.translateMedicalTerm(inputTerm);
-        
-        console.log('[DEBUG] Translation response:', translationResponse);
         
         if (translationResponse.success) {
           const medicalTerm = translationResponse.data.translated;
-          console.log('[ICD-10] Translated to:', medicalTerm);
           setCorrectedTerm(medicalTerm);
           setShowICD10Explorer(true);
-          console.log('[DEBUG] Setting showICD10Explorer to TRUE');
-          console.log('[DEBUG] Setting correctedTerm to:', medicalTerm);
         } else {
-          console.error('[ICD-10] Translation failed');
           // Fallback to original term
           setCorrectedTerm(inputTerm);
           setShowICD10Explorer(true);
-          console.log('[DEBUG] Fallback - Setting showICD10Explorer to TRUE');
         }
       }
       
@@ -106,22 +90,16 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
       const procedureTerm = inputMode === 'text' ? '' : procedure;
       if (procedureTerm) {
         setOriginalProcedureTerm(procedureTerm);
-        console.log('[ICD-9] Translating procedure term:', procedureTerm);
         
         const procedureTranslation = await apiService.translateProcedureTerm(procedureTerm);
-        
-        console.log('[DEBUG] Procedure translation response:', procedureTranslation);
         
         if (procedureTranslation.success) {
           const medicalProcedureTerm = procedureTranslation.data.translated;
           const synonyms = procedureTranslation.data.synonyms || [medicalProcedureTerm];
-          console.log('[ICD-9] Translated to:', medicalProcedureTerm);
-          console.log('[ICD-9] Synonyms:', synonyms);
           setCorrectedProcedureTerm(medicalProcedureTerm);
           setProcedureSynonyms(synonyms);
           setShowICD9Explorer(true);
         } else {
-          console.error('[ICD-9] Translation failed');
           setCorrectedProcedureTerm(procedureTerm);
           setProcedureSynonyms([procedureTerm]);
           setShowICD9Explorer(true);
@@ -180,31 +158,21 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             icd9_code: selectedICD9Code?.code || null
           };
 
-      console.log('[AdminRS] Sending analysis request with codes:', {
-        icd10: selectedICD10Code.code,
-        icd9: selectedICD9Code?.code || 'none'
-      });
-
       // Call AI Analysis API
       const response = await apiService.analyzeClaimAI(requestData);
 
       if (response.success) {
         // Update AI usage from response
         if (response.usage) {
-          console.log('[AdminRS] Received usage from API:', response.usage);
           setAiUsage({
             used: response.usage.used,
             remaining: response.usage.remaining,
             limit: response.usage.limit,
           });
-          console.log('[AdminRS] Updated aiUsage state');
-        } else {
-          console.warn('[AdminRS] No usage data in response');
         }
 
         // Transform API response to match AnalysisResult interface
         const aiResult = response.data;
-        console.log('[AdminRS] Full AI Result:', JSON.stringify(aiResult, null, 2));
         
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
@@ -225,8 +193,6 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             return null;
           })
           .filter((code: any) => code !== null);
-
-        console.log('[AdminRS] Extracted ICD-9 codes:', icd9Codes);
 
         // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';

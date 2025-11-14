@@ -12,6 +12,7 @@ export interface ICD9Detail {
   code: string;
   name: string;
   commonTerm?: string | null;
+  explanation?: string | null;
 }
 
 interface ICD9CategoryPanelProps {
@@ -75,10 +76,10 @@ export default function ICD9CategoryPanel({
                 : 'bg-white/50 border border-gray-200 hover:bg-white hover:border-blue-300'
             }`}
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-shrink-0">
                 <span
-                  className={`text-sm font-bold flex-shrink-0 ${
+                  className={`text-lg font-bold ${
                     selectedHeadCode === category.headCode
                       ? isDark ? 'text-cyan-300' : 'text-blue-700'
                       : isDark ? 'text-cyan-400' : 'text-blue-600'
@@ -87,7 +88,7 @@ export default function ICD9CategoryPanel({
                   {category.headCode}
                 </span>
                 <span
-                  className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
+                  className={`text-xs px-1.5 py-0.5 rounded ${
                     selectedHeadCode === category.headCode
                       ? isDark ? 'bg-cyan-500/30 text-cyan-200' : 'bg-blue-100 text-blue-700'
                       : isDark ? 'bg-slate-700/50 text-slate-400' : 'bg-gray-100 text-gray-600'
@@ -96,6 +97,15 @@ export default function ICD9CategoryPanel({
                   {category.count}
                 </span>
               </div>
+              <p
+                className={`text-sm font-medium flex-1 min-w-0 ${
+                  selectedHeadCode === category.headCode
+                    ? isDark ? 'text-slate-200' : 'text-gray-800'
+                    : isDark ? 'text-slate-300' : 'text-gray-700'
+                }`}
+              >
+                {category.headName}
+              </p>
               <ChevronRight
                 className={`flex-shrink-0 w-4 h-4 transition-transform duration-200 ${
                   selectedHeadCode === category.headCode
@@ -104,15 +114,6 @@ export default function ICD9CategoryPanel({
                 }`}
               />
             </div>
-            <p
-              className={`text-sm mt-1.5 line-clamp-1 font-medium ${
-                selectedHeadCode === category.headCode
-                  ? isDark ? 'text-slate-200' : 'text-gray-800'
-                  : isDark ? 'text-slate-300' : 'text-gray-700'
-              }`}
-            >
-              {category.headName}
-            </p>
             {/* Common term (Istilah Umum) */}
             {category.commonTerm && (
               <div className={`mt-2 px-2 py-1 rounded ${

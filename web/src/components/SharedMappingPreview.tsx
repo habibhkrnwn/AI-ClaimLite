@@ -35,38 +35,56 @@ export default function SharedMappingPreview({
         <div className="space-y-4">
           {/* ICD-10 Diagnosis Mapping */}
           {icd10Code && (
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-blue-50'}`}>
+            <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-blue-50'}`}>
               <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
                 🩺 Diagnosis (Original)
               </label>
-              <p className={`text-sm mb-2 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
+              <p className={`text-sm mb-3 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
                 {originalDiagnosis || '-'}
               </p>
               <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                ICD-10 Code
+                ICD-10 Code ✓
               </label>
-              <div className={`p-2 rounded border ${isDark ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300' : 'bg-blue-100 border-blue-300 text-blue-700'}`}>
-                <div className="font-bold text-sm">{icd10Code.code}</div>
-                <div className="text-xs mt-1">{icd10Code.name}</div>
+              {/* Highlight dengan ukuran lebih besar */}
+              <div className={`p-4 rounded-lg border-2 ${
+                isDark 
+                  ? 'bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border-cyan-400 shadow-lg shadow-cyan-500/20' 
+                  : 'bg-gradient-to-br from-blue-100 to-cyan-100 border-blue-400 shadow-lg shadow-blue-500/20'
+              }`}>
+                <div className={`font-bold text-2xl mb-2 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+                  {icd10Code.code}
+                </div>
+                <div className={`text-sm leading-relaxed ${isDark ? 'text-cyan-100' : 'text-blue-900'}`}>
+                  {icd10Code.name}
+                </div>
               </div>
             </div>
           )}
 
           {/* ICD-9 Procedure Mapping */}
           {icd9Code && (
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-green-50'}`}>
+            <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-green-50'}`}>
               <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
                 ⚕️ Tindakan (Original)
               </label>
-              <p className={`text-sm mb-2 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
+              <p className={`text-sm mb-3 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
                 {originalProcedure || '-'}
               </p>
               <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-green-300' : 'text-green-700'}`}>
-                ICD-9 Code
+                ICD-9 Code ✓
               </label>
-              <div className={`p-2 rounded border ${isDark ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-green-100 border-green-300 text-green-700'}`}>
-                <div className="font-bold text-sm">{icd9Code.code}</div>
-                <div className="text-xs mt-1">{icd9Code.name}</div>
+              {/* Highlight dengan ukuran lebih besar */}
+              <div className={`p-4 rounded-lg border-2 ${
+                isDark 
+                  ? 'bg-gradient-to-br from-green-500/20 to-emerald-500/20 border-green-400 shadow-lg shadow-green-500/20' 
+                  : 'bg-gradient-to-br from-green-100 to-emerald-100 border-green-400 shadow-lg shadow-green-500/20'
+              }`}>
+                <div className={`font-bold text-2xl mb-2 ${isDark ? 'text-green-300' : 'text-green-700'}`}>
+                  {icd9Code.code}
+                </div>
+                <div className={`text-sm leading-relaxed ${isDark ? 'text-green-100' : 'text-green-900'}`}>
+                  {icd9Code.name}
+                </div>
               </div>
             </div>
           )}
