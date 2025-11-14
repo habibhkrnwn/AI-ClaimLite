@@ -16,8 +16,8 @@ from services.rules_loader import (
     inacbg_rules, cp_pnpk_rules, load_diagnosis_rule, load_rules_for_diagnosis
 )
 
-# Import ICD-9 mapping service
-from services.icd9_mapping_service import map_icd9_smart
+# Import ICD-9 smart service (NEW - replaced old icd9_mapping_service)
+from services.icd9_smart_service import lookup_icd9_procedure
 
 # ===========================================================
 # HELPER TAMBAHAN (baru)
@@ -717,13 +717,37 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             if not nama_tindakan:
                 continue
             
-            # 🔥 APPLY ICD-9 MAPPING for input tindakan
-            icd9_mapped = map_icd9_smart(
-                procedure_name=nama_tindakan,
-                ai_code=None,
-                use_fuzzy=True,
-                threshold=85
-            )
+            # 🔥 APPLY ICD-9 SMART LOOKUP (NEW SERVICE)
+            icd9_result = lookup_icd9_procedure(nama_tindakan)
+            
+            # Extract ICD-9 data based on result status
+            if icd9_result["status"] == "success" and icd9_result["result"]:
+                icd9_data = icd9_result["result"]
+                icd9_code = icd9_data["code"]
+                icd9_desc = icd9_data["name"]
+                icd9_valid = icd9_data["valid"]
+                icd9_confidence = icd9_data["confidence"]
+                icd9_source = icd9_data["source"]
+                needs_selection = False
+                icd9_suggestions = []
+            elif icd9_result["status"] == "suggestions":
+                # Multiple matches - frontend will handle modal
+                icd9_code = "-"
+                icd9_desc = nama_tindakan
+                icd9_valid = False
+                icd9_confidence = 0
+                icd9_source = "needs_selection"
+                needs_selection = True
+                icd9_suggestions = icd9_result["suggestions"]
+            else:
+                # Not found
+                icd9_code = "-"
+                icd9_desc = nama_tindakan
+                icd9_valid = False
+                icd9_confidence = 0
+                icd9_source = "not_found"
+                needs_selection = False
+                icd9_suggestions = []
             
             # Cari enrichment dari JSON rules
             matching_rule = None
@@ -740,12 +764,14 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             tindakan_item = {
                 "nama": nama_tindakan,
                 "tindakan": nama_tindakan,
-                "deskripsi": f"ICD-9: {icd9_mapped['kode']}, Source: Direct Input",
-                "icd9_code": icd9_mapped["kode"],
-                "icd9_desc": icd9_mapped["deskripsi"],
-                "icd9_valid": icd9_mapped["valid"],
-                "icd9_confidence": icd9_mapped["confidence"],
-                "icd9_source": icd9_mapped["source"],
+                "deskripsi": f"ICD-9: {icd9_code}, Source: Direct Input",
+                "icd9_code": icd9_code,
+                "icd9_desc": icd9_desc,
+                "icd9_valid": icd9_valid,
+                "icd9_confidence": icd9_confidence,
+                "icd9_source": icd9_source,
+                "needs_icd9_selection": needs_selection,
+                "icd9_suggestions": icd9_suggestions,
                 "status": matching_rule.get("status", "-") if matching_rule else "-",
                 "kategori": matching_rule.get("kategori", "-") if matching_rule else "-",
                 "regulasi": matching_rule.get("regulasi", "-") if matching_rule else "-",
@@ -756,7 +782,7 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             }
             
             result["tindakan"].append(tindakan_item)
-            print(f"[TINDAKAN] ✅ INPUT Mapped: {nama_tindakan} → ICD-9: {icd9_mapped['kode']} (confidence: {icd9_mapped['confidence']}%)")
+            print(f"[TINDAKAN] ✅ INPUT Mapped: {nama_tindakan} → ICD-9: {icd9_code} (confidence: {icd9_confidence}%)")
     
     # 2️⃣ FALLBACK: Use AI tindakan if no input provided
     if not result["tindakan"] and tindakan_ai:
@@ -769,13 +795,35 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             nama_standar = ai_t.get("nama", "")
             nama_indonesia = ai_t.get("nama_indonesia", nama_standar)
             
-            # 🔥 APPLY ICD-9 MAPPING
-            icd9_mapped = map_icd9_smart(
-                procedure_name=nama_standar,
-                ai_code=ai_t.get("icd9"),
-                use_fuzzy=True,
-                threshold=85
-            )
+            # 🔥 APPLY ICD-9 SMART LOOKUP (NEW SERVICE)
+            icd9_result = lookup_icd9_procedure(nama_standar)
+            
+            # Extract ICD-9 data based on result status
+            if icd9_result["status"] == "success" and icd9_result["result"]:
+                icd9_data = icd9_result["result"]
+                icd9_code = icd9_data["code"]
+                icd9_desc = icd9_data["name"]
+                icd9_valid = icd9_data["valid"]
+                icd9_confidence = icd9_data["confidence"]
+                icd9_source = icd9_data["source"]
+                needs_selection = False
+                icd9_suggestions = []
+            elif icd9_result["status"] == "suggestions":
+                icd9_code = "-"
+                icd9_desc = nama_standar
+                icd9_valid = False
+                icd9_confidence = 0
+                icd9_source = "needs_selection"
+                needs_selection = True
+                icd9_suggestions = icd9_result["suggestions"]
+            else:
+                icd9_code = "-"
+                icd9_desc = nama_standar
+                icd9_valid = False
+                icd9_confidence = 0
+                icd9_source = "not_found"
+                needs_selection = False
+                icd9_suggestions = []
             
             # Cari enrichment dari JSON rules
             matching_rule = None
@@ -792,12 +840,14 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             tindakan_item = {
                 "nama": nama_indonesia,
                 "tindakan": nama_indonesia,
-                "deskripsi": f"ICD-9: {icd9_mapped['kode']}, Status: {ai_t.get('status', '-')}",
-                "icd9_code": icd9_mapped["kode"],
-                "icd9_desc": icd9_mapped["deskripsi"],
-                "icd9_valid": icd9_mapped["valid"],
-                "icd9_confidence": icd9_mapped["confidence"],
-                "icd9_source": icd9_mapped["source"],
+                "deskripsi": f"ICD-9: {icd9_code}, Status: {ai_t.get('status', '-')}",
+                "icd9_code": icd9_code,
+                "icd9_desc": icd9_desc,
+                "icd9_valid": icd9_valid,
+                "icd9_confidence": icd9_confidence,
+                "icd9_source": icd9_source,
+                "needs_icd9_selection": needs_selection,
+                "icd9_suggestions": icd9_suggestions,
                 "status": ai_t.get("status", "-"),
                 "kategori": ai_t.get("kategori", "-"),
                 "regulasi": matching_rule.get("regulasi", "-") if matching_rule else ai_t.get("regulasi", "-"),
@@ -808,7 +858,7 @@ def process_analyze_diagnosis(input_data: dict) -> dict:
             }
             
             result["tindakan"].append(tindakan_item)
-            print(f"[TINDAKAN] ✅ AI Mapped: {nama_indonesia} → ICD-9: {icd9_mapped['kode']} (confidence: {icd9_mapped['confidence']}%)")
+            print(f"[TINDAKAN] ✅ AI Mapped: {nama_indonesia} → ICD-9: {icd9_code} (confidence: {icd9_confidence}%)")
     
     # 3️⃣ LAST RESORT: Use JSON rules if no input and no AI
     if not result["tindakan"] and tindakan_rules:

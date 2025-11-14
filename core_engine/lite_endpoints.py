@@ -19,11 +19,15 @@ from services.lite_service import (
     get_history_list
 )
 from services.lite_service_optimized import analyze_lite_single_optimized
-from services.fornas_lite_service import validate_fornas_lite
+# UPDATED: Use smart service with English→Indonesian support
+from services.fornas_smart_service import validate_fornas
 
 # Import ICD-10 Smart Service (NEW)
 from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
 from services.icd10_service import select_icd10_code, get_icd10_statistics
+
+# Import Dokumen Wajib Service
+from services.dokumen_wajib_service import get_dokumen_wajib_service
 
 
 # ============================================================
@@ -756,6 +760,66 @@ def endpoint_icd10_statistics(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# 📌 ENDPOINT 5: ICD-9 Smart Lookup (NEW - STANDALONE)
+# ============================================================
+def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd9/lookup
+    
+    Get ICD-9 procedure code dengan AI normalization fallback.
+    
+    Request:
+    {
+        "procedure_input": "x-ray thorax" atau "rontgen dada"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "status": "success" | "suggestions" | "not_found",
+            "result": {...} atau null,
+            "suggestions": [...],
+            "needs_selection": true/false
+        },
+        "timestamp": "2025-11-14T..."
+    }
+    """
+    from services.icd9_smart_service import lookup_icd9_procedure
+    
+    try:
+        procedure_input = request_data.get("procedure_input", "")
+        
+        if not procedure_input or procedure_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "procedure_input is required",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        print(f"[ENDPOINT_ICD9] Looking up: '{procedure_input}'")
+        
+        # Call ICD-9 smart service
+        result = lookup_icd9_procedure(procedure_input)
+        
+        return {
+            "status": "success",
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ENDPOINT_ICD9] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
 # 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
 # ============================================================
 LITE_ENDPOINTS = {
@@ -770,7 +834,9 @@ LITE_ENDPOINTS = {
     # ICD-10 endpoints (NEW)
     "icd10_lookup": endpoint_icd10_lookup,
     "icd10_select": endpoint_icd10_select,
-    "icd10_statistics": endpoint_icd10_statistics
+    "icd10_statistics": endpoint_icd10_statistics,
+    # ICD-9 endpoints (NEW)
+    "icd9_lookup": endpoint_icd9_lookup
 }
 
 
@@ -872,8 +938,8 @@ def endpoint_validate_fornas(request_data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             obat_list = obat_input
         
-        # Call FORNAS Lite validator
-        result = validate_fornas_lite(
+        # Call FORNAS Smart validator (with English→Indonesian support)
+        result = validate_fornas(
             drug_list=obat_list,
             diagnosis_icd10=diagnosis_icd10,
             diagnosis_name=diagnosis_name
@@ -957,3 +1023,164 @@ if __name__ == "__main__":
     print(f"Success: {batch_result.get('summary', {}).get('success', 0)}")
     
     print("\n✅ Testing completed!")
+
+
+# ============================================================
+# 📌 ENDPOINT: Dokumen Wajib
+# ============================================================
+
+def endpoint_get_dokumen_wajib(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET/POST /api/dokumen-wajib
+    
+    Mengambil list dokumen wajib berdasarkan diagnosis
+    
+    Request:
+    {
+        "diagnosis": "Pneumonia"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "diagnosis": "Pneumonia",
+        "total_dokumen": 7,
+        "dokumen_list": [
+            {
+                "id": 1,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Rekam Medis",
+                "status": "wajib",
+                "keterangan": "Dokumen utama klinis dan administratif."
+            },
+            {
+                "id": 6,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Prokalsitonin (PCT)",
+                "status": "opsional",
+                "keterangan": "Tidak rutin untuk memulai antibiotik..."
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Validasi input
+        diagnosis = request_data.get("diagnosis")
+        if not diagnosis:
+            return {
+                "status": "error",
+                "message": "Parameter 'diagnosis' wajib diisi",
+                "error_code": "MISSING_DIAGNOSIS"
+            }
+        
+        # Get service
+        service = get_dokumen_wajib_service()
+        
+        # Get dokumen wajib
+        result = service.get_dokumen_wajib_by_diagnosis(diagnosis)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            **result
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "DOKUMEN_WAJIB_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_get_all_diagnosis() -> Dict[str, Any]:
+    """
+    GET /api/dokumen-wajib/diagnosis-list
+    
+    Mengambil semua diagnosis yang tersedia di database
+    
+    Response:
+    {
+        "status": "success",
+        "total": 15,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)",
+            ...
+        ]
+    }
+    """
+    try:
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.get_all_diagnosis_list()
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "GET_DIAGNOSIS_LIST_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_search_diagnosis(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/dokumen-wajib/search-diagnosis
+    
+    Search diagnosis berdasarkan keyword
+    
+    Request:
+    {
+        "keyword": "pneumo"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "keyword": "pneumo",
+        "total": 3,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)"
+        ]
+    }
+    """
+    try:
+        keyword = request_data.get("keyword", "")
+        
+        if not keyword:
+            return {
+                "status": "error",
+                "message": "Parameter 'keyword' wajib diisi",
+                "error_code": "MISSING_KEYWORD"
+            }
+        
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.search_diagnosis(keyword)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "keyword": keyword,
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "SEARCH_DIAGNOSIS_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
