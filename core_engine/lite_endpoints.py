@@ -769,3 +769,125 @@ if __name__ == "__main__":
     print(f"Success: {batch_result.get('summary', {}).get('success', 0)}")
     
     print("\n✅ Testing completed!")
+
+
+# ============================================================
+# 📌 ENDPOINT 10: Translate Medical Term (OpenAI)
+# ============================================================
+def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medical
+    
+    Translate colloquial/Indonesian medical term to standard medical terminology.
+    Uses OpenAI for intelligent translation.
+    
+    Request:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        from openai import OpenAI
+        import os
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medical term is required",
+                "result": None
+            }
+        
+        # Get OpenAI API key from environment
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured in environment",
+                "result": None
+            }
+        
+        # Initialize OpenAI client (v1.x syntax)
+        client = OpenAI(api_key=api_key)
+        
+        # Create prompt for medical term translation
+        prompt = f"""Translate the following Indonesian/colloquial medical term to standard English medical terminology.
+
+Input: "{term}"
+
+Instructions:
+- Translate to accurate medical terminology in English
+- Use standard medical vocabulary
+- If already medical terminology, return as is
+- Be concise and precise
+
+Examples:
+- "paru2 basah" → "pneumonia"
+- "radang paru paru bakteri" → "bacterial pneumonia"
+- "pneumonia cacar air" → "varicella pneumonia"
+- "demam berdarah" → "dengue hemorrhagic fever"
+
+Respond with ONLY the translated medical term in English, nothing else."""
+        
+        # Call OpenAI API (v1.x syntax)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical terminology translator. Respond with ONLY the medical term."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        # Extract medical term from response
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Handle different error types
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Invalid OpenAI API key",
+                "result": None
+            }
+        elif "rate limit" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API rate limit exceeded",
+                "result": None
+            }
+        elif "timeout" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API request timeout",
+                "result": None
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Translation failed: {error_msg}",
+                "result": None
+            }

@@ -244,4 +244,113 @@ router.patch('/users/:id/ai-limit', async (req: Request, res: Response): Promise
   }
 });
 
+// Get analysis history logs with search/filter
+router.get('/analysis-logs', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { 
+      user_id, 
+      search, 
+      start_date, 
+      end_date, 
+      limit = '50', 
+      offset = '0' 
+    } = req.query;
+
+    const filters = {
+      user_id: user_id ? parseInt(user_id as string) : undefined,
+      search_text: search as string,
+      start_date: start_date ? new Date(start_date as string) : undefined,
+      end_date: end_date ? new Date(end_date as string) : undefined,
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string),
+    };
+
+    const logs = await analysisService.searchAnalysisLogs(filters);
+
+    res.status(200).json({
+      success: true,
+      data: logs,
+      pagination: {
+        limit: filters.limit,
+        offset: filters.offset,
+        total: logs.length,
+      },
+    });
+  } catch (error: any) {
+    console.error('Get analysis logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get analysis logs',
+    });
+  }
+});
+
+// Get analysis log detail by ID
+router.get('/analysis-logs/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+
+    if (isNaN(id)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid analysis log ID',
+      });
+      return;
+    }
+
+    const log = await analysisService.getAnalysisById(id);
+
+    if (!log) {
+      res.status(404).json({
+        success: false,
+        message: 'Analysis log not found',
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: log,
+    });
+  } catch (error: any) {
+    console.error('Get analysis log detail error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get analysis log detail',
+    });
+  }
+});
+
+// Get analysis logs for specific user (can be used by Admin RS to see their own history)
+router.get('/users/:id/analysis-logs', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user_id = parseInt(req.params.id);
+    const { limit } = req.query;
+
+    if (isNaN(user_id)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid user ID',
+      });
+      return;
+    }
+
+    const logs = await analysisService.getUserAnalysisLogs(
+      user_id, 
+      limit ? parseInt(limit as string) : undefined
+    );
+
+    res.status(200).json({
+      success: true,
+      data: logs,
+    });
+  } catch (error: any) {
+    console.error('Get user analysis logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get user analysis logs',
+    });
+  }
+});
+
 export default router;

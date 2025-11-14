@@ -267,6 +267,84 @@ class ApiService {
       method: 'GET',
     });
   }
+
+  // ICD-10 hierarchy endpoints
+  async getICD10Hierarchy(searchTerm: string): Promise<{ 
+    success: boolean; 
+    data: { 
+      search_term: string; 
+      categories: Array<{
+        headCode: string;
+        headName: string;
+        count: number;
+        details: Array<{
+          code: string;
+          name: string;
+        }>;
+      }>; 
+      total_categories: number;
+    } 
+  }> {
+    const encodedSearch = encodeURIComponent(searchTerm);
+    return this.request(`/api/ai/icd10-hierarchy?search=${encodedSearch}`, {
+      method: 'GET',
+    });
+  }
+
+  async getICD10Details(headCode: string): Promise<{ 
+    success: boolean; 
+    data: { 
+      head_code: string;
+      details: Array<{
+        code: string;
+        name: string;
+      }>;
+      total: number;
+    } 
+  }> {
+    return this.request(`/api/ai/icd10-details/${headCode}`, {
+      method: 'GET',
+    });
+  }
+
+  async searchICD10Codes(query: string, limit?: number): Promise<{ 
+    success: boolean; 
+    data: { 
+      query: string;
+      results: Array<{
+        id: number;
+        code: string;
+        name: string;
+        source: string;
+        validation_status: string;
+        created_at: Date;
+      }>;
+      total: number;
+    } 
+  }> {
+    const encodedQuery = encodeURIComponent(query);
+    const url = limit 
+      ? `/api/ai/icd10-search?q=${encodedQuery}&limit=${limit}`
+      : `/api/ai/icd10-search?q=${encodedQuery}`;
+    return this.request(url, {
+      method: 'GET',
+    });
+  }
+
+  // Translate colloquial medical term to standard medical terminology using OpenAI
+  async translateMedicalTerm(term: string): Promise<{
+    success: boolean;
+    data: {
+      original: string;
+      translated: string;
+      confidence: string;
+    };
+  }> {
+    return this.request('/api/ai/translate-medical-term', {
+      method: 'POST',
+      body: JSON.stringify({ term }),
+    });
+  }
 }
 
 export const apiService = new ApiService();

@@ -67,7 +67,8 @@ from lite_endpoints import (
     endpoint_analyze_batch,
     endpoint_parse_text,
     endpoint_get_history,
-    endpoint_load_history_detail
+    endpoint_load_history_detail,
+    endpoint_translate_medical
 )
 
 # ============================================================
@@ -211,6 +212,40 @@ async def get_history_detail(history_id: str):
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error in get_history_detail: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# ============================================================
+# 🌐 MEDICAL TRANSLATION ENDPOINT
+# ============================================================
+@app.post("/api/lite/translate-medical")
+async def translate_medical_term(request: Request):
+    """
+    Translate colloquial/Indonesian medical term to standard medical terminology using OpenAI
+    
+    Request body:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high",
+            "alternatives": []
+        }
+    }
+    """
+    try:
+        data = await request.json()
+        result = endpoint_translate_medical(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in translate_medical_term: {e}")
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": str(e)}

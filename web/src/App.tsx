@@ -31,10 +31,10 @@ function App() {
     if (user?.role === 'Admin Meta') {
       return <AdminMetaDashboard isDark={isDark} />;
     } else if (user?.role === 'Admin RS') {
-      return <AdminRSDashboard isDark={isDark} />;
+      return <AdminRSDashboard isDark={isDark} user={user} />;
     } else {
       // Default dashboard for regular users (if any)
-      return <AdminRSDashboard isDark={isDark} />;
+      return <AdminRSDashboard isDark={isDark} user={user} />;
     }
   };
 
