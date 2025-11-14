@@ -23,6 +23,7 @@ from services.icd9_smart_service import lookup_icd9_procedure
 # UPDATED: Use new smart service instead of old fornas_service
 from services.fornas_smart_service import validate_fornas
 from services.pnpk_summary_service import PNPKSummaryService
+from services.consistency_service import analyze_clinical_consistency
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -657,10 +658,12 @@ Obat: {obat_raw}"""
         
         "insight_ai": _generate_ai_insight(lite_analysis, diagnosis_name, [t['name'] for t in tindakan_with_icd9], obat_list, parser.client if hasattr(parser, 'client') else None),
         
-        "konsistensi": {
-            "tingkat": _assess_consistency(lite_analysis),
-            "detail": _consistency_detail(lite_analysis)
-        },
+        # 🔹 Clinical Consistency Validation
+        **analyze_clinical_consistency(
+            dx=full_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
+            tx_list=[t.get("icd9_code") for t in full_analysis.get("tindakan", []) if t.get("icd9_code")],
+            drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
+        ),
         
         "metadata": {
             "claim_id": claim_id,
