@@ -20,6 +20,47 @@ from services.lite_service import (
 )
 from services.lite_service_optimized import analyze_lite_single_optimized
 from services.fornas_lite_service import validate_fornas_lite
+from services.pnpk_summary_service import PNPKSummaryService
+
+
+# ============================================================
+# 🔹 ASYNC WRAPPER for analyze_lite_single (with PNPK fetch)
+# ============================================================
+async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+    """
+    Async wrapper untuk analyze_lite_single yang melakukan PNPK fetch terlebih dahulu
+    """
+    pnpk_data = None
+    
+    # Pre-fetch PNPK data jika db_pool tersedia
+    if db_pool:
+        try:
+            # Extract diagnosis untuk pre-fetch
+            diagnosis_name = None
+            mode = request_data.get("mode", "text")
+            
+            if mode == "form" or mode == "excel":
+                diagnosis_name = request_data.get("diagnosis", "")
+            elif mode == "text":
+                # Untuk text mode, kita belum punya diagnosis, skip pre-fetch
+                pass
+            
+            if diagnosis_name:
+                pnpk_service = PNPKSummaryService(db_pool)
+                pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
+        except Exception as e:
+            print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+    
+    # Inject pnpk_data ke request
+    request_data["_pnpk_data"] = pnpk_data
+    
+    # Call synchronous analyzer
+    use_optimized = request_data.get("use_optimized", True)
+    if use_optimized:
+        return analyze_lite_single_optimized(request_data, db_pool=db_pool)
+    else:
+        return analyze_lite_single(request_data, db_pool=db_pool)
 
 
 # ============================================================
@@ -174,7 +215,7 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 # 📌 ENDPOINT 2: Analyze Single Claim (ENHANCED untuk Form Mode)
 # ============================================================
-def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
+def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     POST /api/lite/analyze/single
     
@@ -183,6 +224,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
     OPTIMIZED VERSION: Uses combined AI prompts for faster processing
     - Original: 5 OpenAI calls, ~15-18 seconds
     - Optimized: 3 OpenAI calls, ~8-12 seconds (40-50% faster)
+    
+    Args:
+        request_data: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     
     Request:
     {
@@ -262,10 +307,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
         # Call analyzer (optimized or original)
         if use_optimized:
             print(f"[ENDPOINT] Using OPTIMIZED analyzer (3 AI calls)")
-            result = analyze_lite_single_optimized(request_data)
+            result = analyze_lite_single_optimized(request_data, db_pool=db_pool)
         else:
             print(f"[ENDPOINT] Using ORIGINAL analyzer (5 AI calls)")
-            result = analyze_lite_single(request_data)
+            result = analyze_lite_single(request_data, db_pool=db_pool)
         
         # Save to history (optional, based on config)
         if request_data.get("save_history", False):

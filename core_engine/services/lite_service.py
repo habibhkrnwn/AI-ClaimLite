@@ -20,6 +20,7 @@ from services.rules_loader import load_rules_for_diagnosis
 from services.analyze_diagnosis_service import process_analyze_diagnosis
 from services.fornas_service import match_multiple_obat, get_fornas_compliance_status
 from services.fornas_lite_service import FornasLiteValidator
+from services.pnpk_summary_service import PNPKSummaryService
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -413,11 +414,15 @@ Obat: {obat}"""
 # ============================================================
 # 🔹 MAIN ANALYZER FUNCTION (Simplified)
 # ============================================================
-def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_lite_single(payload: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     Single analysis dengan OpenAI parsing
     
     Simplified karena tidak ada conditional logic regex vs AI
+    
+    Args:
+        payload: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     """
     mode = payload.get("mode", "text")
     
@@ -533,6 +538,48 @@ Obat: {obat_raw}"""
         logger.exception("Full parsing error traceback:")
         return error_response
     
+    # 🔹 Fetch PNPK Summary from DB (if available)
+    # Priority 1: Use pre-fetched data (from async endpoint)
+    pnpk_data = payload.get("_pnpk_data")
+    
+    if not pnpk_data and db_pool:
+        # Priority 2: Fetch now (sync context only)
+        try:
+            import asyncio
+            pnpk_service = PNPKSummaryService(db_pool)
+            if diagnosis_name:
+                # Run async function in sync context
+                try:
+                    # Try to get existing event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Event loop is running (e.g., FastAPI context)
+                        # Use run_coroutine_threadsafe or skip for now
+                        logger.warning("Event loop already running, skipping PNPK fetch in sync context")
+                        pnpk_data = None
+                    else:
+                        # No loop running, safe to run
+                        pnpk_data = loop.run_until_complete(
+                            pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                        )
+                        if pnpk_data:
+                            logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
+                except RuntimeError:
+                    # No event loop exists, create one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        pnpk_data = loop.run_until_complete(
+                            pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                        )
+                        if pnpk_data:
+                            logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
+                    finally:
+                        loop.close()
+        except Exception as e:
+            logger.warning(f"Could not fetch PNPK data: {e}")
+            pnpk_data = None
+    
     # 🔹 Call core analyzer
     try:
         claim_id = payload.get("claim_id", f"LITE-{datetime.now().strftime('%Y%m%d%H%M%S')}")
@@ -616,7 +663,7 @@ Obat: {obat_raw}"""
         "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
         "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
         
-        "cp_ringkas": _summarize_cp(full_analysis, diagnosis_name, parser.client if hasattr(parser, 'client') else None),
+        "cp_ringkas": _summarize_cp(full_analysis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
         
         "checklist_dokumen": _generate_dokumen_wajib(diagnosis_name, tindakan_list, full_analysis, parser.client if hasattr(parser, 'client') else None),
         
@@ -810,17 +857,46 @@ def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
     """
     return get_fornas_compliance_status(fornas_matched)
 
-def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None) -> List[str]:
+def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None, pnpk_data: Dict = None) -> List[str]:
     """
-    Ambil ringkasan CP dari DB, jika tidak ada fallback ke AI
+    Ambil ringkasan CP dari DB PNPK (prioritas utama), jika tidak ada fallback ke AI
+    
+    Args:
+        full_analysis: Full analysis result
+        diagnosis_name: Diagnosis name
+        client: OpenAI client (for fallback)
+        pnpk_data: PNPK summary data from database (already fetched)
+    
+    Returns:
+        List of CP summary steps
     """
-    # Coba ambil dari full_analysis (DB rules)
+    # 🔹 PRIORITAS 1: Ambil dari DB PNPK (tahapan/stages)
+    if pnpk_data and pnpk_data.get("stages"):
+        stages = pnpk_data["stages"]
+        cp_steps = []
+        
+        for stage in stages:
+            stage_name = stage.get("stage_name", "")
+            description = stage.get("description", "")
+            
+            # Format: "Tahap 1: Diagnosis - deskripsi singkat"
+            if description and len(description) > 100:
+                description = description[:100] + "..."
+            
+            if stage_name and description:
+                cp_steps.append(f"{stage_name}: {description}")
+            elif stage_name:
+                cp_steps.append(stage_name)
+        
+        if cp_steps:
+            logger.info(f"[CP_RINGKAS] ✓ Using PNPK DB data ({len(cp_steps)} stages)")
+            return cp_steps
+    
+    # 🔹 PRIORITAS 2: Coba ambil dari full_analysis (DB rules - rawat_inap)
     rawat_inap = full_analysis.get("rawat_inap", {})
     cp_steps = []
     
-    # Cek apakah ada data CP dari DB
     if rawat_inap.get("lama_rawat") and rawat_inap.get("lama_rawat") != "-":
-        # Ada data dari DB, format menjadi steps
         lama_rawat = rawat_inap.get("lama_rawat", "-")
         indikasi = rawat_inap.get("indikasi", "-")
         kriteria = rawat_inap.get("kriteria", "-")
@@ -832,15 +908,14 @@ def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None) 
         if lama_rawat != "-":
             cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
     
-    # Jika ada data dari DB, return
     if cp_steps:
-        print(f"[CP_RINGKAS] ✓ Using DB data ({len(cp_steps)} steps)")
+        logger.info(f"[CP_RINGKAS] ✓ Using rawat_inap rules ({len(cp_steps)} steps)")
         return cp_steps
     
-    # Fallback ke AI
+    # 🔹 PRIORITAS 3: Fallback ke AI
     if client and OPENAI_AVAILABLE:
         try:
-            print(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
+            logger.info(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
             
             prompt = f"""Berikan ringkasan Clinical Pathway untuk diagnosis: {diagnosis_name}
 
@@ -862,62 +937,35 @@ Berikan dalam format JSON array of strings."""
             )
             
             content = response.choices[0].message.content.strip()
-            # Parse JSON array
             if content.startswith("[") and content.endswith("]"):
                 cp_steps = json.loads(content)
-                print(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
-                return cp_steps[:3]  # Max 3 steps
+                logger.info(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
+                return cp_steps[:3]
             
         except Exception as e:
-            print(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
+            logger.warning(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
     
-    # Ultimate fallback: hardcoded generic
+    # 🔹 Semua prioritas gagal - return warning
+    logger.error(f"[CP_RINGKAS] ❌ All sources failed for {diagnosis_name}")
     return [
-        "Hari 1-2: Pemeriksaan awal dan terapi inisial",
-        "Hari 3: Evaluasi respon terapi",
-        "Hari 4-5: Persiapan discharge planning"
+        "⚠️ Data Clinical Pathway tidak tersedia di database",
+        "⚠️ AI tidak dapat menghasilkan ringkasan CP",
+        "⚠️ Silakan hubungi admin untuk menambahkan data PNPK"
     ]
 
 def _generate_dokumen_wajib(diagnosis: str, tindakan_list: List[str], full_analysis: Dict, client: Any = None) -> List[str]:
     """
-    Ambil daftar dokumen wajib dari DB, jika tidak ada fallback ke AI
+    Ambil daftar dokumen wajib dengan prioritas:
+    1. AI (generate berdasarkan diagnosis & tindakan)
+    2. DB (belum tersedia, reserved untuk future)
+    
     Returns list of strings (bukan dict dengan checkbox)
     """
-    dokumen_list = []
     
-    # Coba ambil dari full_analysis (DB rules)
-    # Biasanya ada di section tertentu, kita cek beberapa kemungkinan
-    rawat_inap = full_analysis.get("rawat_inap", {})
-    klinis = full_analysis.get("klinis", {})
-    
-    # Cek apakah ada informasi dokumen dari DB
-    # (Asumsi: belum ada field khusus dokumen_wajib di DB, jadi kita generate dari context)
-    
-    # Generate dari tindakan yang ada
-    base_docs = ["Resume Medis", "Hasil Lab Darah", "Resep Obat"]
-    
-    # Tambahkan dokumen berdasarkan tindakan
-    for tindakan in tindakan_list:
-        tindakan_lower = tindakan.lower()
-        if "rontgen" in tindakan_lower or "radiologi" in tindakan_lower or "x-ray" in tindakan_lower:
-            if "Hasil Radiologi" not in dokumen_list:
-                base_docs.append("Hasil Radiologi")
-        if "ct scan" in tindakan_lower or "mri" in tindakan_lower:
-            if "Hasil CT/MRI" not in dokumen_list:
-                base_docs.append("Hasil CT/MRI")
-        if "operasi" in tindakan_lower or "bedah" in tindakan_lower:
-            if "Laporan Operasi" not in dokumen_list:
-                base_docs.append("Laporan Operasi")
-    
-    # Jika ada data dari context, return
-    if base_docs:
-        print(f"[DOKUMEN_WAJIB] ✓ Generated from context ({len(base_docs)} items)")
-        return base_docs
-    
-    # Fallback ke AI
+    # 🔹 PRIORITAS 1: Generate dengan AI
     if client and OPENAI_AVAILABLE:
         try:
-            print(f"[DOKUMEN_WAJIB] 🤖 Fallback to AI for {diagnosis}")
+            logger.info(f"[DOKUMEN_WAJIB] 🤖 Generating with AI for {diagnosis}")
             
             tindakan_str = ", ".join(tindakan_list[:3]) if tindakan_list else "tidak ada"
             
@@ -944,14 +992,27 @@ Hanya dokumen yang relevan dan wajib."""
             # Parse JSON array
             if content.startswith("[") and content.endswith("]"):
                 dokumen_list = json.loads(content)
-                print(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
+                logger.info(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
                 return dokumen_list[:5]  # Max 5 items
             
         except Exception as e:
-            print(f"[DOKUMEN_WAJIB] ❌ AI fallback error: {e}")
+            logger.warning(f"[DOKUMEN_WAJIB] ❌ AI generation error: {e}")
     
-    # Ultimate fallback
-    return base_docs if base_docs else ["Resume Medis", "Hasil Lab", "Resep Obat"]
+    # 🔹 PRIORITAS 2: Ambil dari DB (belum ada implementasi)
+    # TODO: Implementasi fetch dari database ketika tabel dokumen_wajib sudah tersedia
+    # rawat_inap = full_analysis.get("rawat_inap", {})
+    # dokumen_db = rawat_inap.get("dokumen_wajib", [])
+    # if dokumen_db:
+    #     logger.info(f"[DOKUMEN_WAJIB] ✓ Using DB data ({len(dokumen_db)} docs)")
+    #     return dokumen_db
+    
+    # 🔹 Semua prioritas gagal - return warning
+    logger.error(f"[DOKUMEN_WAJIB] ❌ All sources failed for {diagnosis}")
+    return [
+        "⚠️ Data dokumen wajib tidak tersedia di database",
+        "⚠️ AI tidak dapat menghasilkan daftar dokumen",
+        "⚠️ Silakan hubungi admin untuk menambahkan data dokumen wajib"
+    ]
 
 def _generate_ai_insight(full_analysis: Dict, diagnosis: str, tindakan_list: List[str], obat_list: List[str], client: Any = None) -> str:
     """

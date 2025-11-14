@@ -4,16 +4,102 @@ Handles retrieval and intelligent matching of PNPK clinical pathway summaries
 """
 
 import re
+import time
+import logging
 from typing import List, Dict, Optional, Tuple
 from difflib import SequenceMatcher
 import asyncpg
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 
 class PNPKSummaryService:
     """Service for managing PNPK (Pedoman Nasional Praktik Klinik) summaries"""
     
-    def __init__(self, db_pool):
+    def __init__(self, db_pool, cache_ttl: int = 3600):
+        """
+        Initialize PNPK Summary Service
+        
+        Args:
+            db_pool: AsyncPG database connection pool
+            cache_ttl: Cache time-to-live in seconds (default: 3600 = 1 hour)
+        """
         self.db_pool = db_pool
+        self.cache_ttl = cache_ttl
+        
+        # Cache storage: {cache_key: (timestamp, data)}
+        self._cache = {}
+        
+        logger.info(f"PNPKSummaryService initialized with cache_ttl={cache_ttl}s")
+    
+    def _get_cache(self, cache_key: str) -> Optional[any]:
+        """
+        Get data from cache if exists and not expired
+        
+        Args:
+            cache_key: Cache key
+            
+        Returns:
+            Cached data or None if expired/not found
+        """
+        if cache_key in self._cache:
+            timestamp, data = self._cache[cache_key]
+            if time.time() - timestamp < self.cache_ttl:
+                logger.debug(f"Cache HIT: {cache_key}")
+                return data
+            else:
+                # Cache expired, remove it
+                logger.debug(f"Cache EXPIRED: {cache_key}")
+                del self._cache[cache_key]
+        
+        logger.debug(f"Cache MISS: {cache_key}")
+        return None
+    
+    def _set_cache(self, cache_key: str, data: any) -> None:
+        """
+        Store data in cache with current timestamp
+        
+        Args:
+            cache_key: Cache key
+            data: Data to cache
+        """
+        self._cache[cache_key] = (time.time(), data)
+        logger.debug(f"Cache SET: {cache_key}")
+    
+    def clear_cache(self) -> int:
+        """
+        Clear all cached data
+        
+        Returns:
+            Number of cache entries cleared
+        """
+        count = len(self._cache)
+        self._cache.clear()
+        logger.info(f"Cache cleared: {count} entries removed")
+        return count
+    
+    def get_cache_stats(self) -> Dict:
+        """
+        Get cache statistics
+        
+        Returns:
+            Dict with cache stats
+        """
+        total_entries = len(self._cache)
+        expired_entries = 0
+        current_time = time.time()
+        
+        for timestamp, _ in self._cache.values():
+            if current_time - timestamp >= self.cache_ttl:
+                expired_entries += 1
+        
+        return {
+            "total_entries": total_entries,
+            "active_entries": total_entries - expired_entries,
+            "expired_entries": expired_entries,
+            "cache_ttl": self.cache_ttl
+        }
     
     @staticmethod
     def normalize_diagnosis_name(name: str) -> str:
@@ -75,6 +161,14 @@ class PNPKSummaryService:
         Returns:
             List of dicts with diagnosis_name and stage_count
         """
+        # Check cache first
+        cache_key = "all_diagnoses"
+        cached_data = self._get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
+        logger.info("Fetching all diagnoses from database")
+        
         query = """
         SELECT 
             diagnosis_name,
@@ -84,16 +178,27 @@ class PNPKSummaryService:
         ORDER BY diagnosis_name
         """
         
-        async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch(query)
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(query)
             
-        return [
-            {
-                "diagnosis_name": row["diagnosis_name"],
-                "stage_count": row["stage_count"]
-            }
-            for row in rows
-        ]
+            result = [
+                {
+                    "diagnosis_name": row["diagnosis_name"],
+                    "stage_count": row["stage_count"]
+                }
+                for row in rows
+            ]
+            
+            # Cache the result
+            self._set_cache(cache_key, result)
+            
+            logger.info(f"Found {len(result)} diagnoses in database")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching all diagnoses: {e}")
+            raise
     
     async def search_diagnoses(self, keyword: str, limit: int = 10) -> List[Dict]:
         """
@@ -107,12 +212,15 @@ class PNPKSummaryService:
             List of matched diagnoses with similarity scores
         """
         if not keyword or len(keyword.strip()) < 2:
+            logger.warning(f"Search keyword too short: '{keyword}'")
             return []
+        
+        logger.info(f"Searching diagnoses for keyword: '{keyword}' (limit={limit})")
         
         normalized_keyword = self.normalize_diagnosis_name(keyword)
         base_keyword = self.extract_base_name(keyword)
         
-        # Get all diagnoses
+        # Get all diagnoses (from cache if possible)
         all_diagnoses = await self.get_all_diagnoses()
         
         # Score each diagnosis
@@ -172,6 +280,10 @@ class PNPKSummaryService:
         # Filter by minimum score threshold (0.6)
         filtered_results = [r for r in scored_results if r["match_score"] >= 0.6]
         
+        logger.info(f"Search completed: {len(filtered_results)} matches found for '{keyword}'")
+        if filtered_results:
+            logger.debug(f"Top match: {filtered_results[0]['diagnosis_name']} (score: {filtered_results[0]['match_score']})")
+        
         return filtered_results[:limit]
     
     async def find_best_match(self, input_diagnosis: str) -> Optional[Dict]:
@@ -184,15 +296,20 @@ class PNPKSummaryService:
         Returns:
             Best match dict with diagnosis_name and confidence score, or None
         """
+        logger.debug(f"Finding best match for: '{input_diagnosis}'")
+        
         results = await self.search_diagnoses(input_diagnosis, limit=1)
         
         if results and results[0]["match_score"] >= 0.7:
-            return {
+            match = {
                 "diagnosis_name": results[0]["diagnosis_name"],
                 "confidence": results[0]["match_score"],
                 "matched_by": results[0]["matched_by"]
             }
+            logger.info(f"Best match found: '{match['diagnosis_name']}' (confidence: {match['confidence']}, method: {match['matched_by']})")
+            return match
         
+        logger.warning(f"No sufficient match found for: '{input_diagnosis}'")
         return None
     
     async def get_pnpk_summary(
@@ -210,6 +327,15 @@ class PNPKSummaryService:
         Returns:
             Dict containing diagnosis info and ordered stages, or None if not found
         """
+        logger.info(f"Getting PNPK summary for: '{diagnosis_name}' (auto_match={auto_match})")
+        
+        # Check cache first
+        cache_key = f"pnpk_summary_{diagnosis_name}_{auto_match}"
+        cached_data = self._get_cache(cache_key)
+        if cached_data is not None:
+            logger.info(f"Returning cached PNPK summary for: '{diagnosis_name}'")
+            return cached_data
+        
         matched_name = diagnosis_name
         match_info = None
         
@@ -224,8 +350,10 @@ class PNPKSummaryService:
                     "confidence": match_result["confidence"],
                     "matched_by": match_result["matched_by"]
                 }
+                logger.info(f"Matched '{diagnosis_name}' to '{matched_name}' (confidence: {match_result['confidence']})")
             else:
                 # No good match found
+                logger.warning(f"No PNPK match found for: '{diagnosis_name}'")
                 return None
         
         # Fetch stages for the matched diagnosis
@@ -241,34 +369,44 @@ class PNPKSummaryService:
         ORDER BY urutan ASC
         """
         
-        async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch(query, matched_name)
-        
-        if not rows:
-            return None
-        
-        # Format response
-        stages = [
-            {
-                "id": row["id"],
-                "order": row["urutan"],
-                "stage_name": row["tahap"],
-                "description": row["deskripsi"]
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(query, matched_name)
+            
+            if not rows:
+                logger.warning(f"No PNPK stages found for: '{matched_name}'")
+                return None
+            
+            # Format response
+            stages = [
+                {
+                    "id": row["id"],
+                    "order": row["urutan"],
+                    "stage_name": row["tahap"],
+                    "description": row["deskripsi"]
+                }
+                for row in rows
+            ]
+            
+            result = {
+                "diagnosis": matched_name,
+                "total_stages": len(stages),
+                "stages": stages
             }
-            for row in rows
-        ]
-        
-        result = {
-            "diagnosis": matched_name,
-            "total_stages": len(stages),
-            "stages": stages
-        }
-        
-        # Include match info if intelligent matching was used
-        if match_info:
-            result["match_info"] = match_info
-        
-        return result
+            
+            # Include match info if intelligent matching was used
+            if match_info:
+                result["match_info"] = match_info
+            
+            # Cache the result
+            self._set_cache(cache_key, result)
+            
+            logger.info(f"PNPK summary retrieved: '{matched_name}' with {len(stages)} stages")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching PNPK summary for '{matched_name}': {e}")
+            raise
     
     async def get_stage_by_order(
         self, 
@@ -285,9 +423,12 @@ class PNPKSummaryService:
         Returns:
             Stage details or None
         """
+        logger.info(f"Getting stage {stage_order} for diagnosis: '{diagnosis_name}'")
+        
         # First, find the best match for diagnosis
         match_result = await self.find_best_match(diagnosis_name)
         if not match_result:
+            logger.warning(f"No diagnosis match found for: '{diagnosis_name}'")
             return None
         
         matched_name = match_result["diagnosis_name"]
@@ -303,19 +444,28 @@ class PNPKSummaryService:
         WHERE diagnosis_name = $1 AND urutan = $2
         """
         
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, matched_name, stage_order)
-        
-        if not row:
-            return None
-        
-        return {
-            "id": row["id"],
-            "diagnosis": row["diagnosis_name"],
-            "order": row["urutan"],
-            "stage_name": row["tahap"],
-            "description": row["deskripsi"]
-        }
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(query, matched_name, stage_order)
+            
+            if not row:
+                logger.warning(f"Stage {stage_order} not found for '{matched_name}'")
+                return None
+            
+            result = {
+                "id": row["id"],
+                "diagnosis": row["diagnosis_name"],
+                "order": row["urutan"],
+                "stage_name": row["tahap"],
+                "description": row["deskripsi"]
+            }
+            
+            logger.info(f"Stage retrieved: '{matched_name}' - Stage {stage_order}: {row['tahap']}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching stage {stage_order} for '{matched_name}': {e}")
+            raise
     
     async def validate_diagnosis_exists(self, diagnosis_name: str) -> bool:
         """
@@ -327,5 +477,14 @@ class PNPKSummaryService:
         Returns:
             True if exists, False otherwise
         """
+        logger.debug(f"Validating diagnosis exists: '{diagnosis_name}'")
+        
         match_result = await self.find_best_match(diagnosis_name)
-        return match_result is not None and match_result["confidence"] >= 0.8
+        exists = match_result is not None and match_result["confidence"] >= 0.8
+        
+        if exists:
+            logger.info(f"Diagnosis validation PASSED: '{diagnosis_name}' -> '{match_result['diagnosis_name']}'")
+        else:
+            logger.info(f"Diagnosis validation FAILED: '{diagnosis_name}'")
+        
+        return exists
