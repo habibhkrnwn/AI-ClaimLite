@@ -18,8 +18,15 @@ from services.lite_service import (
     load_from_history,
     get_history_list
 )
+
+# ============================================================
+# 🔹 IMPORT ALL SMART SERVICES (MERGED)
+# ============================================================
 from services.lite_service_optimized import analyze_lite_single_optimized
-from services.fornas_lite_service import validate_fornas_lite
+from services.fornas_smart_service import validate_fornas
+from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
+from services.icd10_service import select_icd10_code, get_icd10_statistics
+from services.dokumen_wajib_service import get_dokumen_wajib_service
 from services.pnpk_summary_service import PNPKSummaryService
 
 
@@ -617,6 +624,246 @@ def endpoint_export_results(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# 📌 ENDPOINT 7: ICD-10 Smart Lookup (NEW)
+# ============================================================
+def endpoint_icd10_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/lookup
+    
+    Smart ICD-10 lookup dengan AI (RAG approach).
+    Guarantee 100% match dengan database.
+    
+    Request:
+    {
+        "diagnosis_input": "paru2 basah"
+    }
+    
+    Response (Direct Flow):
+    {
+        "status": "success",
+        "flow": "direct",
+        "requires_modal": false,
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                {"code": "J18.1", "name": "Lobar pneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        },
+        "ai_used": true,
+        "ai_confidence": 95,
+        "ai_reasoning": "..."
+    }
+    
+    Response (Suggestion Flow):
+    {
+        "status": "success",
+        "flow": "suggestion",
+        "requires_modal": true,
+        "suggestions": [
+            {"code": "J18.9", "name": "Pneumonia, unspecified", "relevance": 1},
+            {"code": "J18.0", "name": "Bronchopneumonia, unspecified", "relevance": 2},
+            ...
+        ],
+        "total_suggestions": 5,
+        "message": "Silakan pilih diagnosis yang sesuai:"
+    }
+    """
+    try:
+        diagnosis_input = request_data.get("diagnosis_input", "")
+        
+        if not diagnosis_input or diagnosis_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "diagnosis_input required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Lookup: {diagnosis_input}")
+        
+        # Call smart lookup dengan RAG
+        result = lookup_icd10_smart_with_rag(diagnosis_input)
+        
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 8: ICD-10 Select Code (NEW)
+# ============================================================
+def endpoint_icd10_select(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/select
+    
+    Select ICD-10 code setelah user pilih dari modal suggestion.
+    Return subcategories dari code yang dipilih.
+    
+    Request:
+    {
+        "selected_code": "J18.9"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        }
+    }
+    """
+    try:
+        selected_code = request_data.get("selected_code", "")
+        
+        if not selected_code:
+            return {
+                "status": "error",
+                "message": "selected_code required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Select: {selected_code}")
+        
+        # Call select function
+        result = select_icd10_code(selected_code)
+        
+        return {
+            **result,  # Already has "status" field
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 9: ICD-10 Statistics (NEW)
+# ============================================================
+def endpoint_icd10_statistics(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/icd10/statistics
+    
+    Get statistik database ICD-10.
+    
+    Response:
+    {
+        "status": "success",
+        "statistics": {
+            "total_codes": 18543,
+            "total_categories": 2048,
+            "total_subcategories": 16495,
+            "database_source": "ICD10_2010",
+            "last_updated": "2025-11-14T..."
+        }
+    }
+    """
+    try:
+        print("[ENDPOINT_ICD10] Getting statistics...")
+        
+        stats = get_icd10_statistics()
+        
+        return {
+            "status": "success",
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 5: ICD-9 Smart Lookup (NEW - STANDALONE)
+# ============================================================
+def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd9/lookup
+    
+    Get ICD-9 procedure code dengan AI normalization fallback.
+    
+    Request:
+    {
+        "procedure_input": "x-ray thorax" atau "rontgen dada"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "status": "success" | "suggestions" | "not_found",
+            "result": {...} atau null,
+            "suggestions": [...],
+            "needs_selection": true/false
+        },
+        "timestamp": "2025-11-14T..."
+    }
+    """
+    from services.icd9_smart_service import lookup_icd9_procedure
+    
+    try:
+        procedure_input = request_data.get("procedure_input", "")
+        
+        if not procedure_input or procedure_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "procedure_input is required",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        print(f"[ENDPOINT_ICD9] Looking up: '{procedure_input}'")
+        
+        # Call ICD-9 smart service
+        result = lookup_icd9_procedure(procedure_input)
+        
+        return {
+            "status": "success",
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ENDPOINT_ICD9] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
 # 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
 # ============================================================
 LITE_ENDPOINTS = {
@@ -627,7 +874,21 @@ LITE_ENDPOINTS = {
     "get_history": endpoint_get_history,
     "load_history_detail": endpoint_load_history_detail,
     "delete_history": endpoint_delete_history,
-    "export_results": endpoint_export_results
+    "export_results": endpoint_export_results,
+    # ICD-10 endpoints
+    "icd10_lookup": endpoint_icd10_lookup,
+    "icd10_select": endpoint_icd10_select,
+    "icd10_statistics": endpoint_icd10_statistics,
+    # ICD-9 endpoints
+    "icd9_lookup": endpoint_icd9_lookup,
+    # FORNAS validation endpoint
+    "validate_fornas": endpoint_validate_fornas,
+    # Dokumen Wajib endpoints
+    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
+    "get_all_diagnosis": endpoint_get_all_diagnosis,
+    "search_diagnosis": endpoint_search_diagnosis,
+    # Medical Translation endpoint
+    "translate_medical": endpoint_translate_medical
 }
 
 
@@ -729,8 +990,8 @@ def endpoint_validate_fornas(request_data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             obat_list = obat_input
         
-        # Call FORNAS Lite validator
-        result = validate_fornas_lite(
+        # Call FORNAS Smart validator (with English→Indonesian support)
+        result = validate_fornas(
             drug_list=obat_list,
             diagnosis_icd10=diagnosis_icd10,
             diagnosis_name=diagnosis_name
@@ -814,3 +1075,286 @@ if __name__ == "__main__":
     print(f"Success: {batch_result.get('summary', {}).get('success', 0)}")
     
     print("\n✅ Testing completed!")
+
+
+# ============================================================
+# 📌 ENDPOINT 10: Dokumen Wajib (3 endpoints)
+# ============================================================
+
+def endpoint_get_dokumen_wajib(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET/POST /api/dokumen-wajib
+    
+    Mengambil list dokumen wajib berdasarkan diagnosis
+    
+    Request:
+    {
+        "diagnosis": "Pneumonia"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "diagnosis": "Pneumonia",
+        "total_dokumen": 7,
+        "dokumen_list": [
+            {
+                "id": 1,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Rekam Medis",
+                "status": "wajib",
+                "keterangan": "Dokumen utama klinis dan administratif."
+            },
+            {
+                "id": 6,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Prokalsitonin (PCT)",
+                "status": "opsional",
+                "keterangan": "Tidak rutin untuk memulai antibiotik..."
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Validasi input
+        diagnosis = request_data.get("diagnosis")
+        if not diagnosis:
+            return {
+                "status": "error",
+                "message": "Parameter 'diagnosis' wajib diisi",
+                "error_code": "MISSING_DIAGNOSIS"
+            }
+        
+        # Get service
+        service = get_dokumen_wajib_service()
+        
+        # Get dokumen wajib
+        result = service.get_dokumen_wajib_by_diagnosis(diagnosis)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            **result
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "DOKUMEN_WAJIB_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_get_all_diagnosis() -> Dict[str, Any]:
+    """
+    GET /api/dokumen-wajib/diagnosis-list
+    
+    Mengambil semua diagnosis yang tersedia di database
+    
+    Response:
+    {
+        "status": "success",
+        "total": 15,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)",
+            ...
+        ]
+    }
+    """
+    try:
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.get_all_diagnosis_list()
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "GET_DIAGNOSIS_LIST_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_search_diagnosis(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/dokumen-wajib/search-diagnosis
+    
+    Search diagnosis berdasarkan keyword
+    
+    Request:
+    {
+        "keyword": "pneumo"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "keyword": "pneumo",
+        "total": 3,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)"
+        ]
+    }
+    """
+    try:
+        keyword = request_data.get("keyword", "")
+        
+        if not keyword:
+            return {
+                "status": "error",
+                "message": "Parameter 'keyword' wajib diisi",
+                "error_code": "MISSING_KEYWORD"
+            }
+        
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.search_diagnosis(keyword)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "keyword": keyword,
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "SEARCH_DIAGNOSIS_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 11: Translate Medical Term (OpenAI)
+# ============================================================
+def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medical
+    
+    Translate colloquial/Indonesian medical term to standard medical terminology.
+    Uses OpenAI for intelligent translation.
+    
+    Request:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        from openai import OpenAI
+        import os
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medical term is required",
+                "result": None
+            }
+        
+        # Get OpenAI API key from environment
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured in environment",
+                "result": None
+            }
+        
+        # Initialize OpenAI client (v1.x syntax)
+        client = OpenAI(api_key=api_key)
+        
+        # Create prompt for medical term translation
+        prompt = f"""Translate the following Indonesian/colloquial medical term to standard English medical terminology.
+
+Input: "{term}"
+
+Instructions:
+- Translate to accurate medical terminology in English
+- Use standard medical vocabulary
+- If already medical terminology, return as is
+- Be concise and precise
+
+Examples:
+- "paru2 basah" → "pneumonia"
+- "radang paru paru bakteri" → "bacterial pneumonia"
+- "pneumonia cacar air" → "varicella pneumonia"
+- "demam berdarah" → "dengue hemorrhagic fever"
+
+Respond with ONLY the translated medical term in English, nothing else."""
+        
+        # Call OpenAI API (v1.x syntax)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical terminology translator. Respond with ONLY the medical term."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        # Extract medical term from response
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Handle different error types
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Invalid OpenAI API key",
+                "result": None
+            }
+        elif "rate limit" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API rate limit exceeded",
+                "result": None
+            }
+        elif "timeout" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API request timeout",
+                "result": None
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Translation failed: {error_msg}",
+                "result": None
+            }

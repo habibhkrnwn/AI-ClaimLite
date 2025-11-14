@@ -108,3 +108,37 @@ class PNPKSummary(Base):
     
     def __repr__(self):
         return f"<PNPKSummary {self.diagnosis_name} - Tahap {self.urutan}: {self.tahap}>"
+
+
+class ICD9CMMaster(Base):
+    """
+    ICD-9-CM Master Reference (Master Data Tindakan/Prosedur)
+    """
+    __tablename__ = "icd9cm_master"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(10), nullable=False, unique=True, index=True)  # Kode ICD-9-CM: "93.96", "87.44", dll
+    name = Column(Text, nullable=False, index=True)  # Nama prosedur: "Nebulisasi", "Rontgen Thorax", dll
+    source = Column(String(100), nullable=True)  # Sumber: "ICD9CM_2010", "WHO_2023", dll
+    validation_status = Column(String(50), nullable=True)  # Status: "official", "draft", dll
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    
+    def __repr__(self):
+        return f"<ICD9CMMaster {self.code}: {self.name}>"
+
+
+class DokumenWajib(Base):
+    """
+    Dokumen Wajib untuk setiap Diagnosis
+    Menyimpan list dokumen yang wajib, opsional, atau sesuai indikasi untuk diagnosis tertentu
+    """
+    __tablename__ = "dokumen_wajib"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    diagnosis_name = Column(Text, nullable=False, index=True)  # Nama diagnosis: "Pneumonia", "Hospital-Acquired Pneumonia (HAP)", dll
+    nama_dokumen = Column(Text, nullable=False)  # Nama dokumen: "Rekam Medis", "Radiografi Toraks (PA)", dll
+    status = Column(Text, nullable=False)  # Status: "wajib", "opsional", "sesuai indikasi"
+    keterangan = Column(Text, nullable=True)  # Keterangan/deskripsi dokumen
+    
+    def __repr__(self):
+        return f"<DokumenWajib {self.diagnosis_name} - {self.nama_dokumen} ({self.status})>"

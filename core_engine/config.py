@@ -7,6 +7,25 @@ Settings untuk customization dan feature flags
 
 from typing import Dict, List, Any
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+
+# ============================================================
+# 🔐 ENVIRONMENT CONFIGURATION
+# ============================================================
+class Config:
+    """Configuration loaded from environment variables"""
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")
+    APP_ENV = os.getenv("APP_ENV", "development")
+    DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+    APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
+    APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
 
 # ============================================================

@@ -68,7 +68,8 @@ from lite_endpoints import (
     endpoint_analyze_batch,
     endpoint_parse_text,
     endpoint_get_history,
-    endpoint_load_history_detail
+    endpoint_load_history_detail,
+    endpoint_translate_medical
 )
 
 # ============================================================
@@ -195,6 +196,46 @@ async def parse_text(request: Request):
         )
 
 # ============================================================
+# 🔬 ICD-9 SMART LOOKUP ENDPOINT (NEW)
+# ============================================================
+@app.post("/api/lite/icd9/lookup")
+async def icd9_lookup(request: Request):
+    """
+    ICD-9 smart lookup dengan AI normalization fallback.
+    
+    Request body:
+    {
+        "procedure_input": "x-ray thorax" atau "rontgen dada"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "status": "success" | "suggestions" | "not_found",
+            "result": {...} atau null,
+            "suggestions": [...],
+            "needs_selection": true/false
+        }
+    }
+    """
+    try:
+        data = await request.json()
+        from lite_endpoints import endpoint_icd9_lookup
+        result = endpoint_icd9_lookup(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in icd9_lookup: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# ============================================================
 # 📚 HISTORY ENDPOINTS
 # ============================================================
 @app.get("/api/lite/history")
@@ -228,6 +269,40 @@ async def get_history_detail(history_id: str):
         )
 
 # ============================================================
+# 🌐 MEDICAL TRANSLATION ENDPOINT
+# ============================================================
+@app.post("/api/lite/translate-medical")
+async def translate_medical_term(request: Request):
+    """
+    Translate colloquial/Indonesian medical term to standard medical terminology using OpenAI
+    
+    Request body:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high",
+            "alternatives": []
+        }
+    }
+    """
+    try:
+        data = await request.json()
+        result = endpoint_translate_medical(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in translate_medical_term: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# ============================================================
 # 🔧 CONFIGURATION ENDPOINTS
 # ============================================================
 @app.get("/api/lite/config")
@@ -244,6 +319,100 @@ async def get_config():
         })
     except Exception as e:
         logger.error(f"Error in get_config: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+# ============================================================
+# 📋 DOKUMEN WAJIB ENDPOINTS
+# ============================================================
+@app.post("/api/dokumen-wajib")
+async def get_dokumen_wajib(request: dict):
+    """
+    POST /api/dokumen-wajib
+    
+    Mendapatkan list dokumen wajib berdasarkan diagnosis
+    
+    Request Body:
+    {
+        "diagnosis": "Pneumonia"
+    }
+    """
+    try:
+        from lite_endpoints import endpoint_get_dokumen_wajib
+        result = endpoint_get_dokumen_wajib(request)
+        
+        if result.get("status") == "error":
+            return JSONResponse(
+                status_code=400,
+                content=result
+            )
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        logger.error(f"Error in get_dokumen_wajib: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/api/dokumen-wajib/diagnosis-list")
+async def get_all_diagnosis():
+    """
+    GET /api/dokumen-wajib/diagnosis-list
+    
+    Mendapatkan semua diagnosis yang tersedia
+    """
+    try:
+        from lite_endpoints import endpoint_get_all_diagnosis
+        result = endpoint_get_all_diagnosis()
+        
+        if result.get("status") == "error":
+            return JSONResponse(
+                status_code=500,
+                content=result
+            )
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        logger.error(f"Error in get_all_diagnosis: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.post("/api/dokumen-wajib/search-diagnosis")
+async def search_diagnosis(request: dict):
+    """
+    POST /api/dokumen-wajib/search-diagnosis
+    
+    Search diagnosis berdasarkan keyword
+    
+    Request Body:
+    {
+        "keyword": "pneumo"
+    }
+    """
+    try:
+        from lite_endpoints import endpoint_search_diagnosis
+        result = endpoint_search_diagnosis(request)
+        
+        if result.get("status") == "error":
+            return JSONResponse(
+                status_code=400,
+                content=result
+            )
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        logger.error(f"Error in search_diagnosis: {e}")
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": str(e)}

@@ -23,6 +23,7 @@ from services.lite_service import (
 )
 from services.consistency_service import analyze_clinical_consistency
 from services.analyze_diagnosis_service import process_analyze_diagnosis
+# REMOVED: analyze_diagnosis_service (tidak dipakai di lite_service_optimized)
 from services.fornas_service import match_multiple_obat
 from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
 from services.fast_diagnosis_translator import fast_translate_with_fallback
