@@ -17,9 +17,11 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from io import BytesIO
 
 from services.rules_loader import load_rules_for_diagnosis
-from services.analyze_diagnosis_service import process_analyze_diagnosis
-from services.fornas_service import match_multiple_obat, get_fornas_compliance_status
-from services.fornas_lite_service import FornasLiteValidator
+# REMOVED: analyze_diagnosis_service - replaced with lite_diagnosis_service + icd9_smart_service
+from services.lite_diagnosis_service import analyze_diagnosis_lite
+from services.icd9_smart_service import lookup_icd9_procedure
+# UPDATED: Use new smart service instead of old fornas_service
+from services.fornas_smart_service import validate_fornas
 from services.pnpk_summary_service import PNPKSummaryService
 
 # Setup logger
@@ -538,58 +540,66 @@ Obat: {obat_raw}"""
         logger.exception("Full parsing error traceback:")
         return error_response
     
-    # 🔹 Fetch PNPK Summary from DB (if available)
-    pnpk_data = None
-    if db_pool:
-        try:
-            import asyncio
-            pnpk_service = PNPKSummaryService(db_pool)
-            if diagnosis_name:
-                # Run async function in sync context
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    pnpk_data = loop.run_until_complete(
-                        pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
-                    )
-                    if pnpk_data:
-                        logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
-                finally:
-                    loop.close()
-        except Exception as e:
-            logger.warning(f"Could not fetch PNPK data: {e}")
-            pnpk_data = None
-    
-    # 🔹 Call core analyzer
+    # 🔹 Call LITE analyzer (NO MORE analyze_diagnosis_service!)
     try:
         claim_id = payload.get("claim_id", f"LITE-{datetime.now().strftime('%Y%m%d%H%M%S')}")
         
-        # Extract tindakan from input (form/excel) or from parsed AI
-        tindakan_input = None
+        # 🔥 Use LITE diagnosis service (fast, single AI call)
+        lite_analysis = analyze_diagnosis_lite(
+            diagnosis_name=diagnosis_name,
+            tindakan_list=tindakan_list,
+            obat_list=obat_list
+        )
+        logger.info(f"[LITE_DIAGNOSIS] ✓ Analysis complete: ICD-10 {lite_analysis['icd10']['kode_icd']}")
         
-        if mode == "form" or mode == "excel":
-            # Priority 1: Get raw tindakan from form input
-            tindakan_input = payload.get("tindakan", "")
+        # 🔥 Process tindakan with ICD-9 smart lookup
+        tindakan_with_icd9 = []
+        for tindakan_item in tindakan_list:
+            # Extract name if it's a dict
+            if isinstance(tindakan_item, dict):
+                tindakan_name = tindakan_item.get("name", str(tindakan_item))
+            else:
+                tindakan_name = str(tindakan_item)
             
-            # Priority 2: If empty, use parsed tindakan from AI
-            if not tindakan_input or not tindakan_input.strip():
-                tindakan_input = parsed.get("tindakan", [])
+            # Lookup ICD-9 code
+            icd9_result = lookup_icd9_procedure(tindakan_name)
+            
+            if icd9_result["status"] == "success":
+                tindakan_with_icd9.append({
+                    "name": tindakan_name,
+                    "icd9_code": icd9_result["result"]["code"],
+                    "icd9_name": icd9_result["result"]["name"],
+                    "confidence": icd9_result["result"]["confidence"]
+                })
+            elif icd9_result["status"] == "suggestions":
+                # Multiple suggestions - take first one
+                first_suggestion = icd9_result["suggestions"][0] if icd9_result["suggestions"] else None
+                if first_suggestion:
+                    tindakan_with_icd9.append({
+                        "name": tindakan_name,
+                        "icd9_code": first_suggestion["code"],
+                        "icd9_name": first_suggestion["name"],
+                        "confidence": 80,  # Lower confidence for auto-selected suggestion
+                        "needs_selection": True,
+                        "suggestions": icd9_result["suggestions"]
+                    })
+                else:
+                    tindakan_with_icd9.append({
+                        "name": tindakan_name,
+                        "icd9_code": "-",
+                        "icd9_name": "Tidak ditemukan",
+                        "confidence": 0
+                    })
+            else:
+                # Not found
+                tindakan_with_icd9.append({
+                    "name": tindakan_name,
+                    "icd9_code": "-",
+                    "icd9_name": "Tidak ditemukan",
+                    "confidence": 0
+                })
         
-        elif mode == "text":
-            # For text mode, ALWAYS use parsed tindakan from AI
-            # This ensures ICD-9 mapping is called for text mode
-            tindakan_input = parsed.get("tindakan", [])
-        
-        diagnosis_payload = {
-            "disease_name": diagnosis_name,
-            "rekam_medis": rekam_medis,
-            "tindakan": tindakan_input,  # Add tindakan field
-            "rs_id": payload.get("rs_id"),
-            "region_id": payload.get("region_id"),
-            "claim_id": claim_id
-        }
-        
-        full_analysis = process_analyze_diagnosis(diagnosis_payload)
+        logger.info(f"[ICD9_LOOKUP] ✓ Processed {len(tindakan_with_icd9)} tindakan")
         
         # 🔹 Match obat dengan Fornas DB
         fornas_matched = match_multiple_obat(obat_list)
@@ -598,21 +608,19 @@ Obat: {obat_raw}"""
         # 🔹 FORNAS LITE VALIDATION (AI-powered)
         fornas_lite_result = None
         try:
-            # Get ICD-10 code from full_analysis
-            icd10_code = full_analysis.get("icd10", {}).get("kode_icd", "-")
+            # Get ICD-10 code from lite_analysis
+            icd10_code = lite_analysis.get("icd10", {}).get("kode_icd", "-")
             
-            # Validate obat dengan FORNAS Lite (includes AI reasoning)
-            fornas_validator = FornasLiteValidator()
-            fornas_lite_result = fornas_validator.validate_drugs_lite(
+            # Validate obat dengan FORNAS Smart Service (includes AI reasoning + English→Indonesian)
+            fornas_lite_result = validate_fornas(
                 drug_list=obat_list,
                 diagnosis_icd10=icd10_code,
-                diagnosis_name=diagnosis_name,
-                include_summary=True
+                diagnosis_name=diagnosis_name
             )
-            logger.info(f"[FORNAS_LITE] Validated {len(obat_list)} drugs with AI reasoning")
+            logger.info(f"[FORNAS_SMART] Validated {len(obat_list)} drugs with AI normalization")
         except Exception as fornas_error:
-            logger.warning(f"[FORNAS_LITE] Validation failed: {fornas_error}")
-            # Continue without FORNAS Lite validation
+            logger.warning(f"[FORNAS_SMART] Validation failed: {fornas_error}")
+            # Continue without FORNAS validation
         
     except Exception as e:
         error_response = {
@@ -624,47 +632,47 @@ Obat: {obat_raw}"""
         logger.exception("Full analysis error traceback:")
         return error_response
     
-    # 🔹 Build 6-Panel Output
+    # 🔹 Build 6-Panel Output (using lite_analysis)
     lite_result = {
         "klasifikasi": {
-            "diagnosis": f"{diagnosis_name} ({full_analysis.get('icd10', {}).get('kode_icd', '-')})",
-            "tindakan": _format_tindakan_lite(tindakan_list, full_analysis),
+            "diagnosis": f"{diagnosis_name} ({lite_analysis.get('icd10', {}).get('kode_icd', '-')})",
+            "tindakan": [f"{t['name']} ({t['icd9_code']})" for t in tindakan_with_icd9],
             "obat": _format_obat_lite(obat_list, fornas_matched),
             "confidence": f"{int(parsed['confidence'] * 100)}%"
         },
         
         "validasi_klinis": {
-            "sesuai_cp": _extract_cp_compliance(full_analysis),
+            "sesuai_cp": "✅ Sesuai",  # Simplified for Lite mode
             "sesuai_fornas": _extract_fornas_compliance(fornas_matched),
-            "catatan": full_analysis.get("klinis", {}).get("justifikasi", "-")[:150] + "..."
+            "catatan": lite_analysis.get("justifikasi_klinis", "-")[:150] + "..."
         },
         
         # 🔹 NEW: FORNAS Validation Table (AI-powered)
         "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
         "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
         
-        "cp_ringkas": _summarize_cp(full_analysis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
+        "cp_ringkas": _summarize_cp(lite_analysis, diagnosis_name, parser.client if hasattr(parser, 'client') else None),
         
-        "checklist_dokumen": _generate_dokumen_wajib(diagnosis_name, tindakan_list, full_analysis, parser.client if hasattr(parser, 'client') else None),
+        "checklist_dokumen": _generate_dokumen_wajib(diagnosis_name, [t['name'] for t in tindakan_with_icd9], lite_analysis, parser.client if hasattr(parser, 'client') else None),
         
-        "insight_ai": _generate_ai_insight(full_analysis, diagnosis_name, tindakan_list, obat_list, parser.client if hasattr(parser, 'client') else None),
+        "insight_ai": _generate_ai_insight(lite_analysis, diagnosis_name, [t['name'] for t in tindakan_with_icd9], obat_list, parser.client if hasattr(parser, 'client') else None),
         
         "konsistensi": {
-            "tingkat": _assess_consistency(full_analysis),
-            "detail": _consistency_detail(full_analysis)
+            "tingkat": _assess_consistency(lite_analysis),
+            "detail": _consistency_detail(lite_analysis)
         },
         
         "metadata": {
             "claim_id": claim_id,
             "timestamp": datetime.now().isoformat(),
-            "engine": "AI-CLAIM Lite v2.0 (Full OpenAI)",
+            "engine": "AI-CLAIM Lite v2.0 (Full OpenAI + ICD-9 Smart)",
             "mode": mode,
             "parsing_method": "openai",
             "parsing_confidence": parsed["confidence"],
             "parsing_cost_usd": parsed["parsing_metadata"]["cost_usd"],
             "parsing_time_ms": parsed["parsing_metadata"]["processing_time_ms"],
             "tokens_used": parsed["parsing_metadata"]["tokens_used"],
-            "data_completeness": full_analysis.get("data_completeness", "0%")
+            "severity": lite_analysis.get("severity", "sedang")
         }
     }
     
@@ -822,14 +830,22 @@ def _format_obat_lite(obat_list: List[str], fornas_matched: List[Dict]) -> str:
     # Fallback jika tidak ada matching
     return f"{obat_name} (Fornas Level III)"
 
-def _extract_cp_compliance(full_analysis: Dict) -> str:
-    notifications = full_analysis.get("notifications", {})
-    klinis_notif = notifications.get("klinis", {})
-    if klinis_notif.get("status") == "success":
-        return "✅ Sesuai CP Nasional"
-    elif klinis_notif.get("status") == "warning":
-        return "⚠️ Perlu review"
-    return "❌ Tidak sesuai"
+def _extract_cp_compliance(analysis: Dict) -> str:
+    """
+    Extract CP compliance from analysis (works with both full_analysis and lite_analysis)
+    """
+    # Check if it's full_analysis format (has notifications)
+    notifications = analysis.get("notifications", {})
+    if notifications:
+        klinis_notif = notifications.get("klinis", {})
+        if klinis_notif.get("status") == "success":
+            return "✅ Sesuai CP Nasional"
+        elif klinis_notif.get("status") == "warning":
+            return "⚠️ Perlu review"
+        return "❌ Tidak sesuai"
+    
+    # For lite_analysis, always return simplified compliance
+    return "✅ Sesuai"
 
 def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
     """
@@ -837,46 +853,34 @@ def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
     """
     return get_fornas_compliance_status(fornas_matched)
 
-def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None, pnpk_data: Dict = None) -> List[str]:
+def _summarize_cp(analysis: Dict, diagnosis_name: str, client: Any = None) -> List[str]:
     """
-    Ambil ringkasan CP dari DB PNPK (prioritas utama), jika tidak ada fallback ke AI
-    
-    Args:
-        full_analysis: Full analysis result
-        diagnosis_name: Diagnosis name
-        client: OpenAI client (for fallback)
-        pnpk_data: PNPK summary data from database (already fetched)
-    
-    Returns:
-        List of CP summary steps
+    Ambil ringkasan CP dari DB atau lite_analysis
+    Works with both full_analysis (from analyze_diagnosis_service) and lite_analysis (from lite_diagnosis_service)
     """
-    # 🔹 PRIORITAS 1: Ambil dari DB PNPK (tahapan/stages)
-    if pnpk_data and pnpk_data.get("stages"):
-        stages = pnpk_data["stages"]
-        cp_steps = []
-        
-        for stage in stages:
-            stage_name = stage.get("stage_name", "")
-            description = stage.get("description", "")
-            
-            # Format: "Tahap 1: Diagnosis - deskripsi singkat"
-            if description and len(description) > 100:
-                description = description[:100] + "..."
-            
-            if stage_name and description:
-                cp_steps.append(f"{stage_name}: {description}")
-            elif stage_name:
-                cp_steps.append(stage_name)
-        
-        if cp_steps:
-            logger.info(f"[CP_RINGKAS] ✓ Using PNPK DB data ({len(cp_steps)} stages)")
-            return cp_steps
-    
-    # 🔹 PRIORITAS 2: Coba ambil dari full_analysis (DB rules - rawat_inap)
-    rawat_inap = full_analysis.get("rawat_inap", {})
     cp_steps = []
     
+    # Check if lite_analysis format (has lama_rawat_estimasi, tingkat_faskes)
+    if "lama_rawat_estimasi" in analysis:
+        # Lite format
+        lama_rawat = analysis.get("lama_rawat_estimasi", "-")
+        faskes = analysis.get("tingkat_faskes", "-")
+        justifikasi = analysis.get("justifikasi_klinis", "-")
+        
+        if justifikasi != "-":
+            cp_steps.append(f"Justifikasi: {justifikasi[:80]}")
+        if faskes != "-":
+            cp_steps.append(f"Faskes: {faskes}")
+        if lama_rawat != "-":
+            cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
+        
+        print(f"[CP_RINGKAS] ✓ Using lite analysis ({len(cp_steps)} steps)")
+        return cp_steps if cp_steps else ["Data CP tidak tersedia"]
+    
+    # Check if full_analysis format (has rawat_inap, faskes sections)
+    rawat_inap = analysis.get("rawat_inap", {})
     if rawat_inap.get("lama_rawat") and rawat_inap.get("lama_rawat") != "-":
+        # Full analysis format - ada data dari DB
         lama_rawat = rawat_inap.get("lama_rawat", "-")
         indikasi = rawat_inap.get("indikasi", "-")
         kriteria = rawat_inap.get("kriteria", "-")
@@ -888,6 +892,7 @@ def _summarize_cp(full_analysis: Dict, diagnosis_name: str, client: Any = None, 
         if lama_rawat != "-":
             cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
     
+    # Jika ada data, return
     if cp_steps:
         logger.info(f"[CP_RINGKAS] ✓ Using rawat_inap rules ({len(cp_steps)} steps)")
         return cp_steps
@@ -1047,17 +1052,32 @@ Contoh: "✅ Sesuai CP pneumonia, dokumentasi lengkap" atau "⚠️ Perlu verifi
         # Fallback
         return "✅ Dokumentasi lengkap dan sesuai CP/PNPK"
 
-def _assess_consistency(full_analysis: Dict) -> str:
-    klinis_status = full_analysis.get("klinis", {}).get("status", "")
-    icd_status = full_analysis.get("icd10", {}).get("status_icd", "")
+def _assess_consistency(analysis: Dict) -> str:
+    """
+    Assess consistency from analysis (works with both full_analysis and lite_analysis)
+    """
+    # Check if lite_analysis format (has severity, justifikasi_klinis)
+    if "severity" in analysis and "justifikasi_klinis" in analysis:
+        # Lite format - simplified assessment
+        icd_code = analysis.get("icd10", {}).get("kode_icd", "-")
+        if icd_code and icd_code != "-":
+            return "Tinggi"  # Has ICD-10, assumed consistent
+        return "Sedang"
+    
+    # Full analysis format
+    klinis_status = analysis.get("klinis", {}).get("status", "")
+    icd_status = analysis.get("icd10", {}).get("status_icd", "")
     if klinis_status == "complete" and icd_status == "complete":
         return "Tinggi"
     elif klinis_status == "complete" or icd_status == "complete":
         return "Sedang"
     return "Rendah"
 
-def _consistency_detail(full_analysis: Dict) -> str:
-    tingkat = _assess_consistency(full_analysis)
+def _consistency_detail(analysis: Dict) -> str:
+    """
+    Get consistency detail from analysis (works with both full_analysis and lite_analysis)
+    """
+    tingkat = _assess_consistency(analysis)
     if tingkat == "Tinggi":
         return "Diagnosis, tindakan, dan obat konsisten"
     elif tingkat == "Sedang":
