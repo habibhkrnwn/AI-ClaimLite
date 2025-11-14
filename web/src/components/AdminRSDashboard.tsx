@@ -165,8 +165,25 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     try {
       // Prepare request data based on input mode
       const requestData = inputMode === 'text' 
-        ? { mode: 'text' as const, input_text: freeText }
-        : { mode: 'form' as const, diagnosis, procedure, medication };
+        ? { 
+            mode: 'text' as const, 
+            input_text: freeText,
+            icd10_code: selectedICD10Code.code,
+            icd9_code: selectedICD9Code?.code || null
+          }
+        : { 
+            mode: 'form' as const, 
+            diagnosis, 
+            procedure, 
+            medication,
+            icd10_code: selectedICD10Code.code,
+            icd9_code: selectedICD9Code?.code || null
+          };
+
+      console.log('[AdminRS] Sending analysis request with codes:', {
+        icd10: selectedICD10Code.code,
+        icd9: selectedICD9Code?.code || 'none'
+      });
 
       // Call AI Analysis API
       const response = await apiService.analyzeClaimAI(requestData);

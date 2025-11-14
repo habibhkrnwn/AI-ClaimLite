@@ -21,8 +21,8 @@ from services.lite_service import (
     _consistency_detail,
     _summarize_cp
 )
-# REMOVED: analyze_diagnosis_service (tidak dipakai di lite_service_optimized)
-from services.fornas_service import match_multiple_obat
+# Import from fornas_smart_service (not fornas_service)
+from services.fornas_smart_service import match_multiple_obat
 from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
 from services.fast_diagnosis_translator import fast_translate_with_fallback
 from services.lite_diagnosis_service import analyze_diagnosis_lite
@@ -279,13 +279,32 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
         logger.info(f"[OPTIMIZED] ✓ Combined AI content generated (CP + Docs + Insight)")
         
         # Build final result
-        icd10_code = lite_diagnosis.get("icd10", {}).get("kode_icd", "-")
+        # Use user-selected ICD-10 code if provided, otherwise use AI-detected
+        user_icd10_code = payload.get("icd10_code")
+        user_icd9_code = payload.get("icd9_code")
+        
+        icd10_code = user_icd10_code if user_icd10_code else lite_diagnosis.get("icd10", {}).get("kode_icd", "-")
         icd10_nama = lite_diagnosis.get("icd10", {}).get("nama", diagnosis_name)
+        
+        # Format tindakan with user-selected ICD-9 if available
+        if user_icd9_code and tindakan_list:
+            # User selected specific ICD-9 code
+            tindakan_formatted = [{
+                "nama": tindakan_list[0] if tindakan_list else "Unknown",
+                "icd9": user_icd9_code,
+                "icd9_desc": f"User-selected code: {user_icd9_code}",
+                "confidence": 100,
+                "status": "✅ Dipilih Manual"
+            }]
+            logger.info(f"[OPTIMIZED] Using user-selected ICD-9: {user_icd9_code}")
+        else:
+            # Use AI-detected ICD-9 from lite_diagnosis
+            tindakan_formatted = _format_tindakan_lite(tindakan_list, lite_diagnosis)
         
         lite_result = {
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
-                "tindakan": _format_tindakan_lite(tindakan_list, lite_diagnosis),
+                "tindakan": tindakan_formatted,
                 "obat": _format_obat_lite(obat_list, fornas_matched),
                 "confidence": f"{int(parsed['confidence'] * 100)}%"
             },

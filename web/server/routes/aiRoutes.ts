@@ -63,11 +63,16 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
+    // Extract additional fields
+    const { icd10_code, icd9_code } = req.body;
+
     // Prepare payload for core_engine
     const payload = mode === 'text' 
       ? {
           mode: 'text',
           input_text: input_text,
+          icd10_code: icd10_code || null,
+          icd9_code: icd9_code || null,
           save_history: true,
           rs_id: userId,
         }
@@ -76,9 +81,17 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
           diagnosis: diagnosis,
           tindakan: procedure,
           obat: medication,
+          icd10_code: icd10_code || null,
+          icd9_code: icd9_code || null,
           save_history: true,
           rs_id: userId,
         };
+
+    console.log('[AI Analyze] Payload with codes:', {
+      mode,
+      icd10_code: icd10_code || 'auto',
+      icd9_code: icd9_code || 'auto'
+    });
 
     // Call core_engine endpoint 1A with 3 minute timeout (for heavy OpenAI processing)
     const startTime = Date.now();

@@ -49,6 +49,49 @@ from services.fornas_smart_service import validate_fornas
 from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
 from services.icd10_service import select_icd10_code, get_icd10_statistics
 from services.dokumen_wajib_service import get_dokumen_wajib_service
+
+# ============================================================
+# 📋 MEDICAL PROCEDURE SYNONYM MAPPING (OPTIMIZED - MODULE LEVEL)
+# ============================================================
+# Centralized synonym dictionary for medical procedures
+# Maps variations/synonyms to standardized database terms
+# Format: {synonym: [preferred_term, alternative1, alternative2]}
+PROCEDURE_SYNONYMS = {
+    # Ultrasound family
+    'usg': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasound': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonography': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonic': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'echo': ['ultrasound', 'ultrasonography', 'echocardiography'],
+    
+    # X-ray family
+    'rontgen': ['x-ray', 'radiography', 'radiograph'],
+    'x-ray': ['x-ray', 'radiography', 'radiograph'],
+    'xray': ['x-ray', 'radiography', 'radiograph'],
+    'radiography': ['x-ray', 'radiography', 'radiograph'],
+    'radiograph': ['x-ray', 'radiography', 'radiograph'],
+    
+    # CT Scan family
+    'ct scan': ['ct scan', 'computed tomography', 'cat scan'],
+    'ct': ['ct scan', 'computed tomography', 'cat scan'],
+    'cat scan': ['ct scan', 'computed tomography', 'cat scan'],
+    
+    # MRI family
+    'mri': ['mri', 'magnetic resonance imaging'],
+    
+    # Endoscopy family
+    'endoscopy': ['endoscopy', 'endoscopic examination'],
+    'scope': ['endoscopy', 'endoscopic examination'],
+    
+    # Surgery family
+    'operasi': ['surgery', 'operation', 'surgical procedure'],
+    'surgery': ['surgery', 'operation', 'surgical procedure'],
+    'operation': ['surgery', 'operation', 'surgical procedure'],
+    
+    # Biopsy family
+    'biopsy': ['biopsy', 'tissue sampling', 'histopathology'],
+    'biopsi': ['biopsy', 'tissue sampling', 'histopathology']
+}
 from services.pnpk_summary_service import PNPKSummaryService
 
 
@@ -886,45 +929,8 @@ def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
-# 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
+# 📌 FORNAS VALIDATION ENDPOINT
 # ============================================================
-LITE_ENDPOINTS = {
-    "validate_form": endpoint_validate_form,
-    "parse_text": endpoint_parse_text,
-    "analyze_single": endpoint_analyze_single,
-    "analyze_batch": endpoint_analyze_batch,
-    "get_history": endpoint_get_history,
-    "load_history_detail": endpoint_load_history_detail,
-    "delete_history": endpoint_delete_history,
-    "export_results": endpoint_export_results,
-    # ICD-10 endpoints
-    "icd10_lookup": endpoint_icd10_lookup,
-    "icd10_select": endpoint_icd10_select,
-    "icd10_statistics": endpoint_icd10_statistics,
-    # ICD-9 endpoints
-    "icd9_lookup": endpoint_icd9_lookup,
-    # FORNAS validation endpoint
-    "validate_fornas": endpoint_validate_fornas,
-    # Dokumen Wajib endpoints
-    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
-    "get_all_diagnosis": endpoint_get_all_diagnosis,
-    "search_diagnosis": endpoint_search_diagnosis,
-    # Medical Translation endpoint
-    "translate_medical": endpoint_translate_medical
-}
-
-
-# ============================================================
-# 📌 MAIN HANDLER - untuk dipanggil dari FastAPI/Flask router
-# ============================================================
-def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Universal handler untuk semua AI-CLAIM Lite endpoints.
-    
-    Usage:
-        result = handle_lite_request("analyze_single", request_data)
-    """
-    
     if endpoint_name not in LITE_ENDPOINTS:
         return {
             "status": "error",
@@ -1298,88 +1304,66 @@ def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 "result": None
             }
         
-        # Get OpenAI API key from environment
         api_key = os.getenv("OPENAI_API_KEY")
         
         if not api_key:
             return {
                 "status": "error",
-                "message": "OpenAI API key not configured in environment",
+                "message": "OpenAI API key not configured",
                 "result": None
             }
         
-        # Initialize OpenAI client (v1.x syntax)
         client = OpenAI(api_key=api_key)
         
-        # Create prompt for medical term translation
-        prompt = f"""Translate the following Indonesian/colloquial medical term to standard English medical terminology.
-
-Input: "{term}"
-
-Instructions:
-- Translate to accurate medical terminology in English
-- Use standard medical vocabulary
-- If already medical terminology, return as is
-- Be concise and precise
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical diagnosis term in English: "{term}"
 
 Examples:
 - "paru2 basah" → "pneumonia"
 - "radang paru paru bakteri" → "bacterial pneumonia"
-- "pneumonia cacar air" → "varicella pneumonia"
 - "demam berdarah" → "dengue hemorrhagic fever"
 
-Respond with ONLY the translated medical term in English, nothing else."""
+Respond with ONLY the medical term, nothing else."""
         
-        # Call OpenAI API (v1.x syntax)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a medical terminology translator. Respond with ONLY the medical term."},
+                {"role": "system", "content": "Medical diagnosis translator. Output: medical term only."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
             max_tokens=50
         )
         
-        # Extract medical term from response
         medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
         
         return {
             "status": "success",
             "result": {
                 "medical_term": medical_term,
-                "confidence": "high"
+                "confidence": "high",
+                "source": "openai"
             }
         }
     
     except Exception as e:
         error_msg = str(e)
         
-        # Handle different error types
-        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "Invalid OpenAI API key",
-                "result": None
-            }
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
         elif "rate limit" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API rate limit exceeded",
-                "result": None
-            }
+            msg = "API rate limit exceeded"
         elif "timeout" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API request timeout",
-                "result": None
-            }
+            msg = "API timeout"
         else:
-            return {
-                "status": "error",
-                "message": f"Translation failed: {error_msg}",
-                "result": None
-            }
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
 
 
 # ============================================================
@@ -1390,27 +1374,25 @@ def endpoint_translate_procedure(request_data: Dict[str, Any]) -> Dict[str, Any]
     POST /api/lite/translate-procedure
     
     Translate colloquial/Indonesian procedure term to standard medical terminology.
-    Uses OpenAI for intelligent translation.
+    Uses synonym mapping first (instant), then OpenAI if not found.
     
     Request:
     {
-        "term": "ultrason"
+        "term": "usg"
     }
     
     Response:
     {
         "status": "success",
         "result": {
-            "medical_term": "ultrasonography",
+            "medical_term": "ultrasound",
+            "synonyms": ["ultrasound", "ultrasonography", "ultrasonic"],
             "confidence": "high"
         }
     }
     """
     
     try:
-        from openai import OpenAI
-        import os
-        
         term = request_data.get("term", "").strip()
         
         if not term:
@@ -1420,301 +1402,90 @@ def endpoint_translate_procedure(request_data: Dict[str, Any]) -> Dict[str, Any]
                 "result": None
             }
         
-        # Medical procedure synonym mapping
-        # Maps variations/synonyms to standardized database terms
-        # Format: {synonym: [preferred_term, alternative1, alternative2]}
-        procedure_synonyms = {
-            # Ultrasound family
-            'usg': ['ultrasound', 'ultrasonography', 'ultrasonic'],
-            'ultrasound': ['ultrasound', 'ultrasonography', 'ultrasonic'],
-            'ultrasonography': ['ultrasound', 'ultrasonography', 'ultrasonic'],
-            'ultrasonic': ['ultrasound', 'ultrasonography', 'ultrasonic'],
-            'echo': ['ultrasound', 'ultrasonography', 'echocardiography'],
-            
-            # X-ray family
-            'rontgen': ['x-ray', 'radiography', 'radiograph'],
-            'x-ray': ['x-ray', 'radiography', 'radiograph'],
-            'xray': ['x-ray', 'radiography', 'radiograph'],
-            'radiography': ['x-ray', 'radiography', 'radiograph'],
-            'radiograph': ['x-ray', 'radiography', 'radiograph'],
-            
-            # CT Scan family
-            'ct scan': ['ct scan', 'computed tomography', 'cat scan'],
-            'ct': ['ct scan', 'computed tomography', 'cat scan'],
-            'cat scan': ['ct scan', 'computed tomography', 'cat scan'],
-            
-            # MRI family
-            'mri': ['mri', 'magnetic resonance imaging'],
-            
-            # Endoscopy family
-            'endoscopy': ['endoscopy', 'endoscopic examination'],
-            'scope': ['endoscopy', 'endoscopic examination'],
-            
-            # Surgery family
-            'operasi': ['surgery', 'operation', 'surgical procedure'],
-            'surgery': ['surgery', 'operation', 'surgical procedure'],
-            'operation': ['surgery', 'operation', 'surgical procedure'],
-            
-            # Biopsy family
-            'biopsy': ['biopsy', 'tissue sampling', 'histopathology'],
-            'biopsi': ['biopsy', 'tissue sampling', 'histopathology']
-        }
-        
         term_lower = term.lower().strip()
         
-        # Check if term matches a synonym group
-        if term_lower in procedure_synonyms:
-            # Return the synonym group for broader search
-            synonyms = procedure_synonyms[term_lower]
+        # FAST PATH: Check synonym dictionary first (no API call needed)
+        if term_lower in PROCEDURE_SYNONYMS:
+            synonyms = PROCEDURE_SYNONYMS[term_lower]
             return {
                 "status": "success",
                 "result": {
                     "medical_term": synonyms[0],  # Primary term
-                    "synonyms": synonyms,  # All related terms
-                    "confidence": "high"
+                    "synonyms": synonyms,  # All related terms for broader search
+                    "confidence": "high",
+                    "source": "synonym_dictionary"
                 }
             }
         
-        # Get OpenAI API key from environment
+        # SLOW PATH: Use OpenAI for unknown terms (typos, new terms, etc.)
+        from openai import OpenAI
+        import os
+        
         api_key = os.getenv("OPENAI_API_KEY")
         
         if not api_key:
             return {
                 "status": "error",
-                "message": "OpenAI API key not configured in environment",
+                "message": "OpenAI API key not configured",
                 "result": None
             }
         
-        # Initialize OpenAI client (v1.x syntax)
         client = OpenAI(api_key=api_key)
         
-        # Create prompt for medical procedure translation
-        prompt = f"""Translate the following Indonesian/colloquial medical procedure term to standard English medical terminology.
-
-Input: "{term}"
-
-Instructions:
-- Translate to accurate medical procedure terminology in English
-- Use standard medical vocabulary for procedures/operations
-- If already medical terminology, return as is
-- Be concise and precise
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical procedure term in English: "{term}"
 
 Examples:
 - "ultrason" → "ultrasonography"
 - "operasi usus buntu" → "appendectomy"
 - "rontgen dada" → "chest x-ray"
-- "cabut gigi" → "tooth extraction"
-- "jahit luka" → "wound suturing"
-- "pasang infus" → "intravenous infusion"
 
-Respond with ONLY the translated medical procedure term in English, nothing else."""
+Respond with ONLY the medical term, nothing else."""
         
-        # Call OpenAI API (v1.x syntax)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a medical procedure terminology translator. Respond with ONLY the medical procedure term."},
+                {"role": "system", "content": "Medical procedure translator. Output: medical term only."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
             max_tokens=50
         )
         
-        # Extract medical term from response
         medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
         
         return {
             "status": "success",
             "result": {
                 "medical_term": medical_term,
-                "confidence": "high"
+                "confidence": "high",
+                "source": "openai"
             }
         }
     
     except Exception as e:
         error_msg = str(e)
         
-        # Handle different error types
-        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "Invalid OpenAI API key",
-                "result": None
-            }
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
         elif "rate limit" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API rate limit exceeded",
-                "result": None
-            }
+            msg = "API rate limit exceeded"
         elif "timeout" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API request timeout",
-                "result": None
-            }
+            msg = "API timeout"
         else:
-            return {
-                "status": "error",
-                "message": f"Translation failed: {error_msg}",
-                "result": None
-            }
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
 
 
 # ============================================================
 # 🔹 ENDPOINT: ICD-9 Hierarchy (for Tindakan)
 # ============================================================
-def endpoint_icd9_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]:
-    """
-    POST /api/lite/icd9-hierarchy
-    
-    Get ICD-9 codes hierarchy based on search term (procedure).
-    Similar to ICD-10 but for procedures.
-    
-    Request:
-    {
-        "search_term": "ultrasound"
-    }
-    
-    Response:
-    {
-        "status": "success",
-        "data": {
-            "categories": [
-                {
-                    "headCode": "88.7",
-                    "headName": "Diagnostic ultrasound",
-                    "count": 9,
-                    "details": [
-                        {
-                            "code": "88.71",
-                            "name": "Diagnostic ultrasound of head and neck"
-                        },
-                        {
-                            "code": "88.73",
-                            "name": "Other diagnostic ultrasound of thorax"
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    """
-    
-    try:
-        from sqlalchemy import text
-        
-        search_term = request_data.get("search_term", "").strip().lower()
-        
-        if not search_term:
-            return {
-                "status": "error",
-                "message": "Search term is required",
-                "data": None
-            }
-        
-        # Smart filtering: single word vs multi-word
-        words = search_term.split()
-        
-        if len(words) == 1:
-            # Single word: Broad search (OR logic)
-            sql_query = text("""
-                SELECT code, name
-                FROM icd9cm_master
-                WHERE LOWER(name) LIKE :search_pattern
-                ORDER BY code
-                LIMIT 100
-            """)
-            params = {"search_pattern": f"%{search_term}%"}
-        else:
-            # Multi-word: Specific search (AND logic)
-            conditions = " AND ".join([f"LOWER(name) LIKE :word{i}" for i in range(len(words))])
-            sql_query = text(f"""
-                SELECT code, name
-                FROM icd9cm_master
-                WHERE {conditions}
-                ORDER BY code
-                LIMIT 100
-            """)
-            params = {f"word{i}": f"%{word}%" for i, word in enumerate(words)}
-        
-        # Execute query
-        result = db.execute(sql_query, params)
-        rows = result.fetchall()
-        
-        if not rows:
-            return {
-                "status": "success",
-                "data": {
-                    "categories": []
-                }
-            }
-        
-        # Group by HEAD code (first 2-3 digits)
-        categories_dict = {}
-        
-        for row in rows:
-            code = row[0]
-            name = row[1]
-            
-            # Determine HEAD code (e.g., "88.7" from "88.71")
-            if '.' in code:
-                parts = code.split('.')
-                if len(parts[1]) >= 1:
-                    head_code = f"{parts[0]}.{parts[1][0]}"  # e.g., "88.7"
-                else:
-                    head_code = parts[0]  # e.g., "88"
-            else:
-                head_code = code[:2] if len(code) >= 2 else code
-            
-            # Initialize category if not exists
-            if head_code not in categories_dict:
-                # Try to find HEAD code name
-                head_result = db.execute(
-                    text("SELECT name FROM icd9cm_master WHERE code = :code LIMIT 1"),
-                    {"code": head_code}
-                )
-                head_row = head_result.fetchone()
-                head_name = head_row[0] if head_row else name.split(',')[0]
-                
-                categories_dict[head_code] = {
-                    "headCode": head_code,
-                    "headName": head_name,
-                    "count": 0,
-                    "details": []
-                }
-            
-            # Add to details if it's a sub-code
-            if code != head_code:
-                categories_dict[head_code]["details"].append({
-                    "code": code,
-                    "name": name
-                })
-                categories_dict[head_code]["count"] += 1
-        
-        # Convert to list and sort
-        categories = sorted(
-            categories_dict.values(),
-            key=lambda x: x["headCode"]
-        )
-        
-        return {
-            "status": "success",
-            "data": {
-                "categories": categories
-            }
-        }
-    
-    except Exception as e:
-        print(f"[ICD9_HIERARCHY] Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        return {
-            "status": "error",
-            "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
-            "data": None
-        }
 
 
 # ============================================================
@@ -2005,3 +1776,60 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
             "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
             "data": None
         }
+
+
+# ============================================================
+# 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
+# ============================================================
+# IMPORTANT: Dictionary ini HARUS di akhir file setelah semua fungsi didefinisikan
+LITE_ENDPOINTS = {
+    "validate_form": endpoint_validate_form,
+    "parse_text": endpoint_parse_text,
+    "analyze_single": endpoint_analyze_single,
+    "analyze_batch": endpoint_analyze_batch,
+    "get_history": endpoint_get_history,
+    "load_history_detail": endpoint_load_history_detail,
+    "delete_history": endpoint_delete_history,
+    "export_results": endpoint_export_results,
+    # ICD-10 endpoints
+    "icd10_lookup": endpoint_icd10_lookup,
+    "icd10_select": endpoint_icd10_select,
+    "icd10_statistics": endpoint_icd10_statistics,
+    # ICD-9 endpoints
+    "icd9_lookup": endpoint_icd9_lookup,
+    "icd9_hierarchy": endpoint_icd9_hierarchy,
+    # FORNAS validation endpoint
+    "validate_fornas": endpoint_validate_fornas,
+    # Dokumen Wajib endpoints
+    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
+    "get_all_diagnosis": endpoint_get_all_diagnosis,
+    "search_diagnosis": endpoint_search_diagnosis,
+    # Medical Translation endpoint
+    "translate_medical": endpoint_translate_medical,
+    "translate_procedure": endpoint_translate_procedure
+}
+
+
+# ============================================================
+# 📌 MAIN HANDLER - untuk dipanggil dari FastAPI/Flask router
+# ============================================================
+def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any], db=None) -> Dict[str, Any]:
+    """
+    Universal handler untuk semua AI-CLAIM Lite endpoints.
+    
+    Usage:
+        result = handle_lite_request("analyze_single", request_data)
+    """
+    if endpoint_name not in LITE_ENDPOINTS:
+        return {
+            "status": "error",
+            "message": f"Unknown endpoint: {endpoint_name}"
+        }
+    
+    handler = LITE_ENDPOINTS[endpoint_name]
+    
+    # Check if endpoint needs db parameter
+    if endpoint_name in ["icd9_hierarchy"]:
+        return handler(request_data, db)
+    else:
+        return handler(request_data)
