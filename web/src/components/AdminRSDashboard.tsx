@@ -331,12 +331,17 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     } catch (error: any) {
       console.error('Analysis failed:', error);
       const errorMessage = error.response?.data?.message || error.message || 'Gagal melakukan analisis';
+      const errorType = error.response?.data?.error_type;
       
       // Check if it's a limit exceeded error
       if (error.response?.status === 429) {
         alert(`Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
+      } else if (errorType === 'timeout') {
+        alert(`Timeout: Analisis memakan waktu terlalu lama (>5 menit).\n\nCoba lagi atau hubungi admin jika masalah berlanjut.`);
+      } else if (errorType === 'connection_refused') {
+        alert(`Error: ${errorMessage}\n\nCore engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.`);
       } else {
-        alert(`Error: ${errorMessage}\n\nPastikan core_engine API sedang berjalan di port 8000.`);
+        alert(`Error: ${errorMessage}\n\n${error.response?.data?.detail || 'Silakan coba lagi atau hubungi admin.'}`);
       }
     } finally {
       setIsLoading(false);

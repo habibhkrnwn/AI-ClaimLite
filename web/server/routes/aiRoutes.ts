@@ -93,10 +93,10 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       icd9_code: icd9_code || 'auto'
     });
 
-    // Call core_engine endpoint 1A with 3 minute timeout (for heavy OpenAI processing)
+    // Call core_engine endpoint 1A with 5 minute timeout (for heavy OpenAI processing)
     const startTime = Date.now();
     const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload, {
-      timeout: 180000, // 3 minutes
+      timeout: 300000, // 5 minutes
     });
     const processingTime = Date.now() - startTime;
 
@@ -181,13 +181,29 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       console.error('AI Analysis error - response status:', error.response.status);
       console.error('AI Analysis error - response data:', JSON.stringify(error.response.data, null, 2));
     }
-    if (error.request) {
-      console.error('AI Analysis error - no response received. Request details:', error.request);
+    if (error.request && !error.response) {
+      console.error('AI Analysis error - no response received (connection/timeout issue)');
+    }
+
+    // Distinguish different error types
+    let errorMessage = 'Failed to analyze claim';
+    let errorType = 'internal_error';
+    
+    if (error.code === 'ECONNREFUSED') {
+      errorMessage = 'Core engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.';
+      errorType = 'connection_refused';
+    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+      errorMessage = 'Analisis timeout (>5 menit). Coba lagi atau hubungi admin.';
+      errorType = 'timeout';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+      errorType = 'core_engine_error';
     }
 
     res.status(500).json({
       success: false,
-      message: error.response?.data?.message || 'Failed to analyze claim',
+      message: errorMessage,
+      error_type: errorType,
       detail: error.message,
       // include response data when available to help frontend debug
       error_data: error.response?.data || null,
