@@ -1,16 +1,21 @@
 import { useState, useEffect } from 'react';
-import InputPanel from './InputPanel';
+import SmartInputPanel from './SmartInputPanel';
+import ICD10Explorer from './ICD10Explorer';
 import ResultsPanel from './ResultsPanel';
+import AnalysisHistory from './AnalysisHistory';
 import { AnalysisResult } from '../lib/supabase';
 import { apiService } from '../lib/api';
 
 type InputMode = 'form' | 'text';
+type TabMode = 'analysis' | 'history';
 
 interface AdminRSDashboardProps {
   isDark: boolean;
+  user?: any;
 }
 
-export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
+export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps) {
+  const [tabMode, setTabMode] = useState<TabMode>('analysis');
   const [inputMode, setInputMode] = useState<InputMode>('form');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');
@@ -19,6 +24,12 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
+  
+  // ICD-10 Explorer state
+  const [showICD10Explorer, setShowICD10Explorer] = useState(false);
+  const [correctedTerm, setCorrectedTerm] = useState('');
+  const [originalSearchTerm, setOriginalSearchTerm] = useState('');
+  const [selectedICD10Code, setSelectedICD10Code] = useState<{code: string; name: string} | null>(null);
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -42,6 +53,51 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   };
 
   const handleGenerate = async () => {
+    setIsLoading(true);
+    
+    // Reset previous state when generating new search
+    setShowICD10Explorer(false);
+    setResult(null);
+    setSelectedICD10Code(null);
+    
+    // Prepare AI correction
+    const inputTerm = inputMode === 'text' ? freeText : diagnosis;
+    setOriginalSearchTerm(inputTerm);
+    
+    try {
+      // Step 1: Translate to medical term using OpenAI
+      console.log('[ICD-10] Translating term:', inputTerm);
+      const translationResponse = await apiService.translateMedicalTerm(inputTerm);
+      
+      if (translationResponse.success) {
+        const medicalTerm = translationResponse.data.translated;
+        console.log('[ICD-10] Translated to:', medicalTerm);
+        setCorrectedTerm(medicalTerm);
+        setShowICD10Explorer(true);
+      } else {
+        console.error('[ICD-10] Translation failed');
+        // Fallback to original term
+        setCorrectedTerm(inputTerm);
+        setShowICD10Explorer(true);
+      }
+      
+    } catch (error) {
+      console.error('[ICD-10] Translation error:', error);
+      // Fallback to original term if translation fails
+      setCorrectedTerm(inputTerm);
+      setShowICD10Explorer(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle Generate AI Analysis after code selection
+  const handleGenerateAnalysis = async () => {
+    if (!selectedICD10Code) {
+      alert('Silakan pilih kode ICD-10 terlebih dahulu');
+      return;
+    }
+    
     setIsLoading(true);
     try {
       // Prepare request data based on input mode
@@ -70,10 +126,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         const aiResult = response.data;
         console.log('[AdminRS] Full AI Result:', JSON.stringify(aiResult, null, 2));
         
-        // Extract ICD codes from klasifikasi
-        const diagnosisText = aiResult.klasifikasi?.diagnosis || '';
-        const icd10Match = diagnosisText.match(/\(([A-Z]\d{2}(?:\.\d{1,2})?)\)/);
-        const icd10Code = icd10Match ? icd10Match[1] : '';
+        // Use selected ICD-10 code instead of auto-detected
+        const icd10Code = selectedICD10Code.code; // Use user-selected code
         
         // Extract ICD-9 codes from tindakan array
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
@@ -187,9 +241,15 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     }
   };
 
+  // Handle ICD-10 code selection (just store, don't analyze yet)
+  const handleCodeSelection = (code: string, name: string) => {
+    setSelectedICD10Code({ code, name });
+    console.log(`[ICD-10] Selected: ${code} - ${name}`);
+  };
+
   return (
     <div className="h-full flex gap-4">
-      {/* Left Panel - Fixed Width */}
+      {/* Left Panel - Input (Fixed Width) */}
       <div className="w-72 flex-shrink-0">
         <div
           className={`rounded-2xl p-6 h-full ${
@@ -283,7 +343,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           </div>
 
           <div className="flex-1 min-h-0">
-            <InputPanel
+            <SmartInputPanel
               mode={inputMode}
               diagnosis={diagnosis}
               procedure={procedure}
@@ -302,7 +362,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         </div>
       </div>
 
-      {/* Right Panel - Single Full Results Card */}
+      {/* Right Panel - Scrollable with ICD-10 Explorer + Results */}
       <div className="flex-1 overflow-hidden">
         <div
           className={`rounded-2xl p-6 h-full ${
@@ -316,10 +376,61 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               isDark ? 'text-cyan-300' : 'text-blue-700'
             }`}
           >
-            Hasil Analisis AI
+            Pilih Kode Spesifik ICD-10
           </h2>
-          <div className="flex-1 overflow-y-auto">
-            <ResultsPanel result={result} isDark={isDark} />
+          
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto space-y-6">
+            {/* ICD-10 Explorer Section */}
+            {showICD10Explorer && correctedTerm ? (
+              <div className="flex-shrink-0">
+                <ICD10Explorer
+                  searchTerm={originalSearchTerm}
+                  correctedTerm={correctedTerm}
+                  originalInput={{
+                    diagnosis,
+                    procedure,
+                    medication,
+                    freeText,
+                    mode: inputMode,
+                  }}
+                  isDark={isDark}
+                  isAnalyzing={isLoading}
+                  onCodeSelected={handleCodeSelection}
+                  onGenerateAnalysis={handleGenerateAnalysis}
+                />
+              </div>
+            ) : (
+              <div className={`flex flex-col items-center justify-center py-20 ${
+                isDark ? 'text-slate-400' : 'text-gray-500'
+              }`}>
+                <svg className="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="text-sm text-center px-4">
+                  Klik "Generate AI Insight" untuk melihat kategori ICD-10 yang sesuai dengan diagnosis
+                </p>
+              </div>
+            )}
+
+            {/* Results Section - Below Explorer */}
+            {result && (
+              <div className="flex-shrink-0">
+                <div className={`rounded-xl p-4 mb-4 ${
+                  isDark ? 'bg-cyan-500/10 border border-cyan-500/30' : 'bg-blue-50 border border-blue-200'
+                }`}>
+                  <h3 className={`text-base font-semibold mb-2 ${
+                    isDark ? 'text-cyan-300' : 'text-blue-700'
+                  }`}>
+                    📊 Hasil Analisis AI
+                  </h3>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                    Analisis lengkap berdasarkan input dan kode ICD-10 yang dipilih
+                  </p>
+                </div>
+                <ResultsPanel result={result} isDark={isDark} />
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -22,6 +22,7 @@ from services.lite_diagnosis_service import analyze_diagnosis_lite
 from services.icd9_smart_service import lookup_icd9_procedure
 # UPDATED: Use new smart service instead of old fornas_service
 from services.fornas_smart_service import validate_fornas
+from services.pnpk_summary_service import PNPKSummaryService
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -415,11 +416,15 @@ Obat: {obat}"""
 # ============================================================
 # 🔹 MAIN ANALYZER FUNCTION (Simplified)
 # ============================================================
-def analyze_lite_single(payload: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_lite_single(payload: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     Single analysis dengan OpenAI parsing
     
     Simplified karena tidak ada conditional logic regex vs AI
+    
+    Args:
+        payload: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     """
     mode = payload.get("mode", "text")
     
@@ -889,13 +894,13 @@ def _summarize_cp(analysis: Dict, diagnosis_name: str, client: Any = None) -> Li
     
     # Jika ada data, return
     if cp_steps:
-        print(f"[CP_RINGKAS] ✓ Using DB data ({len(cp_steps)} steps)")
+        logger.info(f"[CP_RINGKAS] ✓ Using rawat_inap rules ({len(cp_steps)} steps)")
         return cp_steps
     
-    # Fallback ke AI
+    # 🔹 PRIORITAS 3: Fallback ke AI
     if client and OPENAI_AVAILABLE:
         try:
-            print(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
+            logger.info(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
             
             prompt = f"""Berikan ringkasan Clinical Pathway untuk diagnosis: {diagnosis_name}
 
@@ -917,62 +922,35 @@ Berikan dalam format JSON array of strings."""
             )
             
             content = response.choices[0].message.content.strip()
-            # Parse JSON array
             if content.startswith("[") and content.endswith("]"):
                 cp_steps = json.loads(content)
-                print(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
-                return cp_steps[:3]  # Max 3 steps
+                logger.info(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
+                return cp_steps[:3]
             
         except Exception as e:
-            print(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
+            logger.warning(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
     
-    # Ultimate fallback: hardcoded generic
+    # 🔹 Semua prioritas gagal - return warning
+    logger.error(f"[CP_RINGKAS] ❌ All sources failed for {diagnosis_name}")
     return [
-        "Hari 1-2: Pemeriksaan awal dan terapi inisial",
-        "Hari 3: Evaluasi respon terapi",
-        "Hari 4-5: Persiapan discharge planning"
+        "⚠️ Data Clinical Pathway tidak tersedia di database",
+        "⚠️ AI tidak dapat menghasilkan ringkasan CP",
+        "⚠️ Silakan hubungi admin untuk menambahkan data PNPK"
     ]
 
 def _generate_dokumen_wajib(diagnosis: str, tindakan_list: List[str], full_analysis: Dict, client: Any = None) -> List[str]:
     """
-    Ambil daftar dokumen wajib dari DB, jika tidak ada fallback ke AI
+    Ambil daftar dokumen wajib dengan prioritas:
+    1. AI (generate berdasarkan diagnosis & tindakan)
+    2. DB (belum tersedia, reserved untuk future)
+    
     Returns list of strings (bukan dict dengan checkbox)
     """
-    dokumen_list = []
     
-    # Coba ambil dari full_analysis (DB rules)
-    # Biasanya ada di section tertentu, kita cek beberapa kemungkinan
-    rawat_inap = full_analysis.get("rawat_inap", {})
-    klinis = full_analysis.get("klinis", {})
-    
-    # Cek apakah ada informasi dokumen dari DB
-    # (Asumsi: belum ada field khusus dokumen_wajib di DB, jadi kita generate dari context)
-    
-    # Generate dari tindakan yang ada
-    base_docs = ["Resume Medis", "Hasil Lab Darah", "Resep Obat"]
-    
-    # Tambahkan dokumen berdasarkan tindakan
-    for tindakan in tindakan_list:
-        tindakan_lower = tindakan.lower()
-        if "rontgen" in tindakan_lower or "radiologi" in tindakan_lower or "x-ray" in tindakan_lower:
-            if "Hasil Radiologi" not in dokumen_list:
-                base_docs.append("Hasil Radiologi")
-        if "ct scan" in tindakan_lower or "mri" in tindakan_lower:
-            if "Hasil CT/MRI" not in dokumen_list:
-                base_docs.append("Hasil CT/MRI")
-        if "operasi" in tindakan_lower or "bedah" in tindakan_lower:
-            if "Laporan Operasi" not in dokumen_list:
-                base_docs.append("Laporan Operasi")
-    
-    # Jika ada data dari context, return
-    if base_docs:
-        print(f"[DOKUMEN_WAJIB] ✓ Generated from context ({len(base_docs)} items)")
-        return base_docs
-    
-    # Fallback ke AI
+    # 🔹 PRIORITAS 1: Generate dengan AI
     if client and OPENAI_AVAILABLE:
         try:
-            print(f"[DOKUMEN_WAJIB] 🤖 Fallback to AI for {diagnosis}")
+            logger.info(f"[DOKUMEN_WAJIB] 🤖 Generating with AI for {diagnosis}")
             
             tindakan_str = ", ".join(tindakan_list[:3]) if tindakan_list else "tidak ada"
             
@@ -999,14 +977,27 @@ Hanya dokumen yang relevan dan wajib."""
             # Parse JSON array
             if content.startswith("[") and content.endswith("]"):
                 dokumen_list = json.loads(content)
-                print(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
+                logger.info(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
                 return dokumen_list[:5]  # Max 5 items
             
         except Exception as e:
-            print(f"[DOKUMEN_WAJIB] ❌ AI fallback error: {e}")
+            logger.warning(f"[DOKUMEN_WAJIB] ❌ AI generation error: {e}")
     
-    # Ultimate fallback
-    return base_docs if base_docs else ["Resume Medis", "Hasil Lab", "Resep Obat"]
+    # 🔹 PRIORITAS 2: Ambil dari DB (belum ada implementasi)
+    # TODO: Implementasi fetch dari database ketika tabel dokumen_wajib sudah tersedia
+    # rawat_inap = full_analysis.get("rawat_inap", {})
+    # dokumen_db = rawat_inap.get("dokumen_wajib", [])
+    # if dokumen_db:
+    #     logger.info(f"[DOKUMEN_WAJIB] ✓ Using DB data ({len(dokumen_db)} docs)")
+    #     return dokumen_db
+    
+    # 🔹 Semua prioritas gagal - return warning
+    logger.error(f"[DOKUMEN_WAJIB] ❌ All sources failed for {diagnosis}")
+    return [
+        "⚠️ Data dokumen wajib tidak tersedia di database",
+        "⚠️ AI tidak dapat menghasilkan daftar dokumen",
+        "⚠️ Silakan hubungi admin untuk menambahkan data dokumen wajib"
+    ]
 
 def _generate_ai_insight(full_analysis: Dict, diagnosis: str, tindakan_list: List[str], obat_list: List[str], client: Any = None) -> str:
     """

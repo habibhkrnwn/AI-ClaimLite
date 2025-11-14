@@ -18,16 +18,56 @@ from services.lite_service import (
     load_from_history,
     get_history_list
 )
-from services.lite_service_optimized import analyze_lite_single_optimized
-# UPDATED: Use smart service with English→Indonesian support
-from services.fornas_smart_service import validate_fornas
 
-# Import ICD-10 Smart Service (NEW)
+# ============================================================
+# 🔹 IMPORT ALL SMART SERVICES (MERGED)
+# ============================================================
+from services.lite_service_optimized import analyze_lite_single_optimized
+from services.fornas_smart_service import validate_fornas
 from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
 from services.icd10_service import select_icd10_code, get_icd10_statistics
-
-# Import Dokumen Wajib Service
 from services.dokumen_wajib_service import get_dokumen_wajib_service
+from services.pnpk_summary_service import PNPKSummaryService
+
+
+# ============================================================
+# 🔹 ASYNC WRAPPER for analyze_lite_single (with PNPK fetch)
+# ============================================================
+async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+    """
+    Async wrapper untuk analyze_lite_single yang melakukan PNPK fetch terlebih dahulu
+    """
+    pnpk_data = None
+    
+    # Pre-fetch PNPK data jika db_pool tersedia
+    if db_pool:
+        try:
+            # Extract diagnosis untuk pre-fetch
+            diagnosis_name = None
+            mode = request_data.get("mode", "text")
+            
+            if mode == "form" or mode == "excel":
+                diagnosis_name = request_data.get("diagnosis", "")
+            elif mode == "text":
+                # Untuk text mode, kita belum punya diagnosis, skip pre-fetch
+                pass
+            
+            if diagnosis_name:
+                pnpk_service = PNPKSummaryService(db_pool)
+                pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
+        except Exception as e:
+            print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+    
+    # Inject pnpk_data ke request
+    request_data["_pnpk_data"] = pnpk_data
+    
+    # Call synchronous analyzer
+    use_optimized = request_data.get("use_optimized", True)
+    if use_optimized:
+        return analyze_lite_single_optimized(request_data, db_pool=db_pool)
+    else:
+        return analyze_lite_single(request_data, db_pool=db_pool)
 
 
 # ============================================================
@@ -182,7 +222,7 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 # 📌 ENDPOINT 2: Analyze Single Claim (ENHANCED untuk Form Mode)
 # ============================================================
-def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
+def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
     """
     POST /api/lite/analyze/single
     
@@ -191,6 +231,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
     OPTIMIZED VERSION: Uses combined AI prompts for faster processing
     - Original: 5 OpenAI calls, ~15-18 seconds
     - Optimized: 3 OpenAI calls, ~8-12 seconds (40-50% faster)
+    
+    Args:
+        request_data: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
     
     Request:
     {
@@ -270,10 +314,10 @@ def endpoint_analyze_single(request_data: Dict[str, Any]) -> Dict[str, Any]:
         # Call analyzer (optimized or original)
         if use_optimized:
             print(f"[ENDPOINT] Using OPTIMIZED analyzer (3 AI calls)")
-            result = analyze_lite_single_optimized(request_data)
+            result = analyze_lite_single_optimized(request_data, db_pool=db_pool)
         else:
             print(f"[ENDPOINT] Using ORIGINAL analyzer (5 AI calls)")
-            result = analyze_lite_single(request_data)
+            result = analyze_lite_single(request_data, db_pool=db_pool)
         
         # Save to history (optional, based on config)
         if request_data.get("save_history", False):
@@ -831,12 +875,20 @@ LITE_ENDPOINTS = {
     "load_history_detail": endpoint_load_history_detail,
     "delete_history": endpoint_delete_history,
     "export_results": endpoint_export_results,
-    # ICD-10 endpoints (NEW)
+    # ICD-10 endpoints
     "icd10_lookup": endpoint_icd10_lookup,
     "icd10_select": endpoint_icd10_select,
     "icd10_statistics": endpoint_icd10_statistics,
-    # ICD-9 endpoints (NEW)
-    "icd9_lookup": endpoint_icd9_lookup
+    # ICD-9 endpoints
+    "icd9_lookup": endpoint_icd9_lookup,
+    # FORNAS validation endpoint
+    "validate_fornas": endpoint_validate_fornas,
+    # Dokumen Wajib endpoints
+    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
+    "get_all_diagnosis": endpoint_get_all_diagnosis,
+    "search_diagnosis": endpoint_search_diagnosis,
+    # Medical Translation endpoint
+    "translate_medical": endpoint_translate_medical
 }
 
 
@@ -1026,7 +1078,7 @@ if __name__ == "__main__":
 
 
 # ============================================================
-# 📌 ENDPOINT: Dokumen Wajib
+# 📌 ENDPOINT 10: Dokumen Wajib (3 endpoints)
 # ============================================================
 
 def endpoint_get_dokumen_wajib(request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1184,3 +1236,125 @@ def endpoint_search_diagnosis(request_data: Dict[str, Any]) -> Dict[str, Any]:
             "error_code": "SEARCH_DIAGNOSIS_ERROR",
             "timestamp": datetime.now().isoformat()
         }
+
+
+# ============================================================
+# 📌 ENDPOINT 11: Translate Medical Term (OpenAI)
+# ============================================================
+def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medical
+    
+    Translate colloquial/Indonesian medical term to standard medical terminology.
+    Uses OpenAI for intelligent translation.
+    
+    Request:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        from openai import OpenAI
+        import os
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medical term is required",
+                "result": None
+            }
+        
+        # Get OpenAI API key from environment
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured in environment",
+                "result": None
+            }
+        
+        # Initialize OpenAI client (v1.x syntax)
+        client = OpenAI(api_key=api_key)
+        
+        # Create prompt for medical term translation
+        prompt = f"""Translate the following Indonesian/colloquial medical term to standard English medical terminology.
+
+Input: "{term}"
+
+Instructions:
+- Translate to accurate medical terminology in English
+- Use standard medical vocabulary
+- If already medical terminology, return as is
+- Be concise and precise
+
+Examples:
+- "paru2 basah" → "pneumonia"
+- "radang paru paru bakteri" → "bacterial pneumonia"
+- "pneumonia cacar air" → "varicella pneumonia"
+- "demam berdarah" → "dengue hemorrhagic fever"
+
+Respond with ONLY the translated medical term in English, nothing else."""
+        
+        # Call OpenAI API (v1.x syntax)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical terminology translator. Respond with ONLY the medical term."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        # Extract medical term from response
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Handle different error types
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Invalid OpenAI API key",
+                "result": None
+            }
+        elif "rate limit" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API rate limit exceeded",
+                "result": None
+            }
+        elif "timeout" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "OpenAI API request timeout",
+                "result": None
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Translation failed: {error_msg}",
+                "result": None
+            }
