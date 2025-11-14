@@ -23,13 +23,15 @@ export interface AnalysisResult {
     status: 'valid' | 'warning' | 'invalid';
     message: string;
   };
-  severity: 'ringan' | 'sedang' | 'berat';
-  cpNasional: string;
+  // severity: 'ringan' | 'sedang' | 'berat';
+  cpNasional: { tahap: string; keterangan: string }[];
   requiredDocs: string[];
   fornas: {
     status: 'sesuai' | 'tidak-sesuai' | 'perlu-review';
     message: string;
   };
+  fornasList: any[];        // ADD
+  fornasSummary: any;
   aiInsight: string;
   consistency: number;
 }

@@ -98,14 +98,14 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           validationStatus = 'warning';
         }
 
-        // Extract severity from konsistensi.tingkat (percentage)
-        let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
-        const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
-        if (konsistensiTingkat >= 80) {
-          severityLevel = 'ringan';
-        } else if (konsistensiTingkat < 60) {
-          severityLevel = 'berat';
-        }
+        // // Extract severity from konsistensi.tingkat (percentage)
+        // let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
+        // const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
+        // if (konsistensiTingkat >= 80) {
+        //   severityLevel = 'ringan';
+        // } else if (konsistensiTingkat < 60) {
+        //   severityLevel = 'berat';
+        // }
 
         // Map Fornas status from fornas_summary
         let fornasStatus: 'sesuai' | 'tidak-sesuai' | 'perlu-review' = 'sesuai';
@@ -121,12 +121,18 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         }
         
         // Format CP Ringkas
-        const cpRingkasText = Array.isArray(aiResult.cp_ringkas) 
+        const cpRingkasList = Array.isArray(aiResult.cp_ringkas)
           ? aiResult.cp_ringkas.map((item: any) => {
-              if (typeof item === 'string') return item;
-              return `${item.tahap || item.stage_name || ''}: ${item.keterangan || item.description || ''}`;
-            }).join(' • ')
-          : (typeof aiResult.cp_ringkas === 'string' ? aiResult.cp_ringkas : '-');
+              if (typeof item === 'string') {
+                return { tahap: '', keterangan: item };
+              }
+              return {
+                tahap: item.tahap || item.stage_name || '',
+                keterangan: item.keterangan || item.description || '',
+              };
+            })
+          : [];
+
         
         // Format Required Docs
         const requiredDocs = Array.isArray(aiResult.checklist_dokumen)
@@ -146,15 +152,18 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             message: aiResult.validasi_klinis?.catatan || 
                     `CP: ${sesuaiCP ? '✓ Sesuai' : '✗ Tidak sesuai'}, Fornas: ${sesuaiFornas ? '✓ Sesuai' : '✗ Tidak sesuai'}`,
           },
-          severity: severityLevel,
-          cpNasional: cpRingkasText,
+          // severity: severityLevel,
+          cpNasional: cpRingkasList,
           requiredDocs: requiredDocs,
           fornas: {
             status: fornasStatus,
             message: `${sesuaiCount}/${totalObat} obat sesuai Fornas (${Math.round(fornasPercentage)}%)`,
           },
+          // ⬇️ TAMBAHKAN INI
+          fornasList: aiResult.fornas_validation || [],
+          fornasSummary: aiResult.fornas_summary || {},
           aiInsight: aiResult.insight_ai || 'Analisis berhasil dilakukan.',
-          consistency: aiResult.konsistensi?.tingkat || 85,
+          consistency: Number(aiResult.konsistensi?.tingkat) || 85,
         };
 
         setResult(analysisResult);
