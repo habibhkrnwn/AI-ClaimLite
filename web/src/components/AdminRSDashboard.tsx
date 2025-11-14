@@ -209,10 +209,15 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
         
-        // Extract ICD-9 codes from tindakan array
+        // Extract ICD-9 codes from tindakan array (NEW FORMAT)
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
         const icd9Codes = tindakanArray
           .map((t: any) => {
+            // New format: tindakan is array of objects with icd9 property
+            if (typeof t === 'object' && t.icd9 && t.icd9 !== '-') {
+              return t.icd9;
+            }
+            // Old format fallback: extract from string pattern
             if (typeof t === 'string') {
               const match = t.match(/\((\d{2}\.\d{2})\)/);
               return match ? match[1] : null;
@@ -220,6 +225,8 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             return null;
           })
           .filter((code: any) => code !== null);
+
+        console.log('[AdminRS] Extracted ICD-9 codes:', icd9Codes);
 
         // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';
