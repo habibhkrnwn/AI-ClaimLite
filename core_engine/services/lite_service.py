@@ -539,23 +539,43 @@ Obat: {obat_raw}"""
         return error_response
     
     # 🔹 Fetch PNPK Summary from DB (if available)
-    pnpk_data = None
-    if db_pool:
+    # Priority 1: Use pre-fetched data (from async endpoint)
+    pnpk_data = payload.get("_pnpk_data")
+    
+    if not pnpk_data and db_pool:
+        # Priority 2: Fetch now (sync context only)
         try:
             import asyncio
             pnpk_service = PNPKSummaryService(db_pool)
             if diagnosis_name:
                 # Run async function in sync context
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
                 try:
-                    pnpk_data = loop.run_until_complete(
-                        pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
-                    )
-                    if pnpk_data:
-                        logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
-                finally:
-                    loop.close()
+                    # Try to get existing event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Event loop is running (e.g., FastAPI context)
+                        # Use run_coroutine_threadsafe or skip for now
+                        logger.warning("Event loop already running, skipping PNPK fetch in sync context")
+                        pnpk_data = None
+                    else:
+                        # No loop running, safe to run
+                        pnpk_data = loop.run_until_complete(
+                            pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                        )
+                        if pnpk_data:
+                            logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
+                except RuntimeError:
+                    # No event loop exists, create one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        pnpk_data = loop.run_until_complete(
+                            pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                        )
+                        if pnpk_data:
+                            logger.info(f"✓ PNPK data fetched from DB for: {diagnosis_name}")
+                    finally:
+                        loop.close()
         except Exception as e:
             logger.warning(f"Could not fetch PNPK data: {e}")
             pnpk_data = None

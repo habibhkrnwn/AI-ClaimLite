@@ -20,6 +20,47 @@ from services.lite_service import (
 )
 from services.lite_service_optimized import analyze_lite_single_optimized
 from services.fornas_lite_service import validate_fornas_lite
+from services.pnpk_summary_service import PNPKSummaryService
+
+
+# ============================================================
+# 🔹 ASYNC WRAPPER for analyze_lite_single (with PNPK fetch)
+# ============================================================
+async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+    """
+    Async wrapper untuk analyze_lite_single yang melakukan PNPK fetch terlebih dahulu
+    """
+    pnpk_data = None
+    
+    # Pre-fetch PNPK data jika db_pool tersedia
+    if db_pool:
+        try:
+            # Extract diagnosis untuk pre-fetch
+            diagnosis_name = None
+            mode = request_data.get("mode", "text")
+            
+            if mode == "form" or mode == "excel":
+                diagnosis_name = request_data.get("diagnosis", "")
+            elif mode == "text":
+                # Untuk text mode, kita belum punya diagnosis, skip pre-fetch
+                pass
+            
+            if diagnosis_name:
+                pnpk_service = PNPKSummaryService(db_pool)
+                pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
+        except Exception as e:
+            print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+    
+    # Inject pnpk_data ke request
+    request_data["_pnpk_data"] = pnpk_data
+    
+    # Call synchronous analyzer
+    use_optimized = request_data.get("use_optimized", True)
+    if use_optimized:
+        return analyze_lite_single_optimized(request_data, db_pool=db_pool)
+    else:
+        return analyze_lite_single(request_data, db_pool=db_pool)
 
 
 # ============================================================

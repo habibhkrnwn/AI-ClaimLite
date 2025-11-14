@@ -64,6 +64,7 @@ app.add_middleware(
 from lite_endpoints import (
     endpoint_validate_form,
     endpoint_analyze_single,
+    endpoint_analyze_single_async,  # NEW: Async wrapper
     endpoint_analyze_batch,
     endpoint_parse_text,
     endpoint_get_history,
@@ -142,7 +143,7 @@ async def analyze_single(request: Request):
     """
     try:
         data = await request.json()
-        result = endpoint_analyze_single(data, db_pool=db_pool)
+        result = await endpoint_analyze_single_async(data, db_pool=db_pool)
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error in analyze_single: {e}")
