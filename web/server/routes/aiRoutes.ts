@@ -63,11 +63,16 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
+    // Extract additional fields
+    const { icd10_code, icd9_code } = req.body;
+
     // Prepare payload for core_engine
     const payload = mode === 'text' 
       ? {
           mode: 'text',
           input_text: input_text,
+          icd10_code: icd10_code || null,
+          icd9_code: icd9_code || null,
           save_history: true,
           rs_id: userId,
         }
@@ -76,9 +81,17 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
           diagnosis: diagnosis,
           tindakan: procedure,
           obat: medication,
+          icd10_code: icd10_code || null,
+          icd9_code: icd9_code || null,
           save_history: true,
           rs_id: userId,
         };
+
+    console.log('[AI Analyze] Payload with codes:', {
+      mode,
+      icd10_code: icd10_code || 'auto',
+      icd9_code: icd9_code || 'auto'
+    });
 
     // Call core_engine endpoint 1A with 3 minute timeout (for heavy OpenAI processing)
     const startTime = Date.now();
@@ -87,38 +100,42 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     });
     const processingTime = Date.now() - startTime;
 
-    if (response.data.status === 'success') {
+    console.log('[AI Analyze] Core engine response:', JSON.stringify(response.data, null, 2));
+
+    // Core engine returns result directly, not wrapped in {status, result}
+    const result = response.data;
+    
+    // Check if result has required analysis data
+    if (result && result.klasifikasi) {
       // Increment usage count AFTER successful analysis
       const updatedUsage = await authService.incrementAIUsage(userId);
       
       console.log(`[AI Analyze] Analysis success, updated usage:`, updatedUsage);
-      
-      const result = response.data.result;
       
       // Save complete analysis to database for history
       try {
         await analysisService.logAnalysis(
           userId,
           mode === 'text' ? input_text : diagnosis,
-          mode === 'text' ? (result.tindakan_medis?.join(', ') || '') : procedure,
-          mode === 'text' ? (result.obat_list?.join(', ') || '') : medication,
+          mode === 'text' ? (result.klasifikasi?.tindakan?.map((t: any) => t.nama).join(', ') || '') : procedure,
+          mode === 'text' ? result.klasifikasi?.obat || '' : medication,
           {
-            analysis_id: result.analysis_id,
+            analysis_id: result.metadata?.claim_id || `CLAIM-${Date.now()}`,
             analysis_mode: mode || 'form',
             input_data: {
               mode: mode,
               ...(mode === 'text' ? { input_text } : { diagnosis, procedure, medication }),
             },
             analysis_result: result,
-            icd10_code: result.diagnosis?.icd10?.kode_icd || null,
-            severity: result.diagnosis?.severity || null,
-            total_cost: result.estimated_total_cost || null,
+            icd10_code: result.metadata?.icd10_code || null,
+            severity: result.metadata?.severity || null,
+            total_cost: undefined,
             processing_time_ms: processingTime,
-            ai_calls_count: 4, // lite mode uses 4 AI calls
+            ai_calls_count: result.metadata?.ai_calls || 4,
             status: 'completed',
           }
         );
-        console.log(`[AI Analyze] Saved analysis log for analysis_id: ${result.analysis_id}`);
+        console.log(`[AI Analyze] Saved analysis log for analysis_id: ${result.metadata?.claim_id}`);
       } catch (logError) {
         console.error('[AI Analyze] Failed to save analysis log:', logError);
         // Don't fail the request if logging fails
@@ -348,16 +365,32 @@ router.get('/icd10-hierarchy', async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const hierarchy = await icd10Service.getICD10Hierarchy(search);
+    // Call core_engine API for ICD-10 hierarchy
+    console.log('[Express] Calling core_engine /api/lite/icd10-hierarchy with search:', search);
+    const response = await axios.post(
+      `${CORE_ENGINE_URL}/api/lite/icd10-hierarchy`,
+      { search_term: search },
+      { timeout: 30000 }
+    );
 
-    res.status(200).json({
-      success: true,
-      data: {
-        search_term: search,
-        categories: hierarchy,
-        total_categories: hierarchy.length,
-      },
-    });
+    console.log('[Express] Core engine response:', response.data);
+
+    // The core_engine returns { status: "success", data: { categories: [...] } }
+    if (response.data.status === 'success' && response.data.data) {
+      res.status(200).json({
+        success: true,
+        data: {
+          search_term: search,
+          categories: response.data.data.categories,
+          total_categories: response.data.data.categories.length,
+        },
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get ICD-10 hierarchy from core engine',
+      });
+    }
   } catch (error: any) {
     console.error('Get ICD-10 hierarchy error:', error);
     res.status(500).json({
@@ -471,6 +504,91 @@ router.post('/translate-medical-term', async (req: Request, res: Response): Prom
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to translate medical term',
+    });
+  }
+});
+
+// Translate procedure term (e.g., "ultrason" → "ultrasonography")
+router.post('/translate-procedure-term', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { term } = req.body;
+
+    if (!term || typeof term !== 'string' || term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Procedure term is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for AI translation
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/translate-procedure`, {
+      term: term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: {
+          original: term,
+          translated: response.data.result.medical_term,
+          synonyms: response.data.result.synonyms || [response.data.result.medical_term],
+          confidence: response.data.result.confidence || 'high',
+        },
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Translation failed',
+      });
+    }
+  } catch (error: any) {
+    console.error('Procedure term translation error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to translate procedure term',
+    });
+  }
+});
+
+// Get ICD-9 hierarchy for procedures (Tindakan)
+router.post('/icd9-hierarchy', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search_term } = req.body;
+
+    if (!search_term || typeof search_term !== 'string' || search_term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Search term is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for ICD-9 hierarchy
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/icd9-hierarchy`, {
+      search_term: search_term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: response.data.data,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Failed to get ICD-9 hierarchy',
+      });
+    }
+  } catch (error: any) {
+    console.error('ICD-9 hierarchy error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get ICD-9 hierarchy',
     });
   }
 });

@@ -854,12 +854,30 @@ def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
     """
     Extract Fornas compliance dari hasil matching obat
     """
-    return get_fornas_compliance_status(fornas_matched)
+    if not fornas_matched:
+        return "❓ Belum Divalidasi"
+    
+    # Count compliance status
+    total = len(fornas_matched)
+    sesuai = sum(1 for item in fornas_matched if item.get("status_fornas") == "✅ Sesuai Fornas")
+    
+    if sesuai == total:
+        return "✅ Sesuai Fornas"
+    elif sesuai > 0:
+        return "⚠️ Sebagian Sesuai Fornas"
+    else:
+        return "❌ Tidak Sesuai Fornas"
 
-def _summarize_cp(analysis: Dict, diagnosis_name: str, client: Any = None) -> List[str]:
+def _summarize_cp(analysis: Dict, diagnosis_name: str, client: Any = None, pnpk_data: Dict = None) -> List[str]:
     """
     Ambil ringkasan CP dari DB atau lite_analysis
     Works with both full_analysis (from analyze_diagnosis_service) and lite_analysis (from lite_diagnosis_service)
+    
+    Args:
+        analysis: Full analysis or lite analysis dict
+        diagnosis_name: Diagnosis name string
+        client: OpenAI client (optional)
+        pnpk_data: Pre-fetched PNPK data (optional, for optimization)
     """
     cp_steps = []
     

@@ -63,9 +63,16 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Start server
 export const startServer = async () => {
   try {
-    // Test database connection
-    await pool.query('SELECT NOW()');
-    console.log('✅ Database connection successful');
+    // Test database connection (non-blocking)
+    try {
+      await pool.query('SELECT NOW()');
+      console.log('✅ Connected to PostgreSQL database');
+      console.log('✅ Database connection successful');
+    } catch (dbError) {
+      console.warn('⚠️  Database connection failed, but server will continue');
+      console.warn('⚠️  Database error:', dbError);
+      console.warn('⚠️  Some features may be unavailable');
+    }
 
     const server = app.listen(PORT, () => {
       console.log(`🚀 API Server is running on port ${PORT}`);

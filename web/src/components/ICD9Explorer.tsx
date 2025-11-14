@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Sparkles, ChevronRight } from 'lucide-react';
-import ICD10CategoryPanel, { ICD10Category } from './ICD10CategoryPanel';
-import ICD10DetailPanel from './ICD10DetailPanel';
+import ICD9CategoryPanel, { ICD9Category } from './ICD9CategoryPanel';
+import ICD9DetailPanel from './ICD9DetailPanel';
 
-interface ICD10ExplorerProps {
+interface ICD9ExplorerProps {
   searchTerm: string;
   correctedTerm: string;
+  synonyms?: string[];
   originalInput: {
     diagnosis?: string;
     procedure?: string;
@@ -20,43 +21,37 @@ interface ICD10ExplorerProps {
   onGenerateAnalysis?: () => void;
 }
 
-export default function ICD10Explorer({
+export default function ICD9Explorer({
   searchTerm,
   correctedTerm,
+  synonyms = [],
   originalInput,
   isDark,
   isAnalyzing = false,
   hidePreview = false,
   onCodeSelected,
   onGenerateAnalysis,
-}: ICD10ExplorerProps) {
-  const [icd10Categories, setIcd10Categories] = useState<ICD10Category[]>([]);
+}: ICD9ExplorerProps) {
+  const [icd9Categories, setIcd9Categories] = useState<ICD9Category[]>([]);
   const [selectedHeadCode, setSelectedHeadCode] = useState<string | null>(null);
   const [selectedDetails, setSelectedDetails] = useState<Array<{code: string; name: string}>>([]);
   const [selectedSubCode, setSelectedSubCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    console.log('[ICD10Explorer] useEffect triggered, correctedTerm:', correctedTerm);
     if (correctedTerm) {
-      loadICD10Hierarchy();
+      loadICD9Hierarchy();
     }
-  }, [correctedTerm]);
+  }, [correctedTerm, synonyms]);
 
-  const loadICD10Hierarchy = async () => {
-    console.log('[ICD10Explorer] Loading hierarchy for:', correctedTerm);
+  const loadICD9Hierarchy = async () => {
     setIsLoading(true);
     try {
       const { apiService } = await import('../lib/api');
-      console.log('[ICD10Explorer] Calling getICD10Hierarchy...');
-      const response = await apiService.getICD10Hierarchy(correctedTerm);
-      console.log('[ICD10Explorer] Response:', response);
-      console.log('[ICD10Explorer] Response.data:', response.data);
-      console.log('[ICD10Explorer] Response.data.categories:', response.data?.categories);
+      const response = await apiService.getICD9Hierarchy(correctedTerm, synonyms);
       
-      if (response.success && response.data.categories && response.data.categories.length > 0) {
-        console.log('[ICD10Explorer] Got', response.data.categories.length, 'categories');
-        setIcd10Categories(response.data.categories);
+      if (response.success && response.data.categories.length > 0) {
+        setIcd9Categories(response.data.categories);
         
         // Auto-select first category
         const firstCategory = response.data.categories[0];
@@ -68,11 +63,9 @@ export default function ICD10Explorer({
           setSelectedSubCode(firstCategory.headCode);
           onCodeSelected?.(firstCategory.headCode, firstCategory.headName);
         }
-      } else {
-        console.error('[ICD10Explorer] No categories returned or not successful');
       }
     } catch (error) {
-      console.error('[ICD10Explorer] Failed to load ICD-10 hierarchy:', error);
+      console.error('Failed to load ICD-9 hierarchy:', error);
     } finally {
       setIsLoading(false);
     }
@@ -80,7 +73,7 @@ export default function ICD10Explorer({
 
   const handleSelectCategory = (headCode: string) => {
     setSelectedHeadCode(headCode);
-    const category = icd10Categories.find(c => c.headCode === headCode);
+    const category = icd9Categories.find(c => c.headCode === headCode);
     if (category && category.details) {
       setSelectedDetails(category.details);
       
@@ -104,8 +97,6 @@ export default function ICD10Explorer({
     onCodeSelected?.(code, name);
   };
 
-  console.log('[ICD10Explorer] RENDERING - Categories:', icd10Categories.length, 'Selected:', selectedSubCode);
-
   return (
     <div className="h-full flex flex-col gap-4">
       {/* Header with Correction Info */}
@@ -115,7 +106,7 @@ export default function ICD10Explorer({
         <div className="flex items-center gap-2 mb-2">
           <Sparkles className={`w-4 h-4 ${isDark ? 'text-cyan-400' : 'text-blue-600'}`} />
           <span className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-            AI Translation
+            AI Translation (Tindakan)
           </span>
         </div>
         <div className="flex items-center gap-2 text-sm">
@@ -149,12 +140,12 @@ export default function ICD10Explorer({
 
       {/* Layout: Categories | Details (or + Preview if not hidden) */}
       <div className={hidePreview ? "grid grid-cols-2 gap-4 items-start" : "grid grid-cols-3 gap-4 items-start"}>
-        {/* Column 1: ICD-10 Categories (Left) */}
+        {/* Column 1: ICD-9 Categories (Left) */}
         <div className={`rounded-lg p-4 ${
           isDark ? 'bg-slate-800/50 border border-slate-700/50' : 'bg-white/50 border border-gray-200'
         }`}>
-          <ICD10CategoryPanel
-            categories={icd10Categories}
+          <ICD9CategoryPanel
+            categories={icd9Categories}
             selectedHeadCode={selectedHeadCode}
             onSelectCategory={handleSelectCategory}
             isDark={isDark}
@@ -162,11 +153,11 @@ export default function ICD10Explorer({
           />
         </div>
 
-        {/* Column 2: ICD-10 Details (Middle) */}
+        {/* Column 2: ICD-9 Details (Middle) */}
         <div className={`rounded-lg p-4 ${
           isDark ? 'bg-slate-800/50 border border-slate-700/50' : 'bg-white/50 border border-gray-200'
         }`}>
-          <ICD10DetailPanel
+          <ICD9DetailPanel
             headCode={selectedHeadCode}
             details={selectedDetails}
             isDark={isDark}
@@ -182,21 +173,21 @@ export default function ICD10Explorer({
           isDark ? 'bg-slate-800/50 border border-slate-700/50' : 'bg-white/50 border border-gray-200'
         }`}>
           <h3 className={`text-sm font-semibold mb-3 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-            Preview Mapping
+            Preview Mapping (Tindakan)
           </h3>
           
           {selectedSubCode ? (
             <div className="space-y-4">
-              {/* Diagnosis Mapping */}
+              {/* Tindakan Mapping */}
               <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-blue-50'}`}>
                 <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                  Diagnosis (Original)
+                  Tindakan (Original)
                 </label>
                 <p className={`text-sm mb-2 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
-                  {originalInput.mode === 'text' ? originalInput.freeText : originalInput.diagnosis}
+                  {originalInput.mode === 'text' ? originalInput.freeText : originalInput.procedure}
                 </p>
                 <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                  Diagnosis (Medical Term)
+                  Tindakan (Medical Term)
                 </label>
                 <div className={`p-2 rounded border ${isDark ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300' : 'bg-blue-100 border-blue-300 text-blue-700'}`}>
                   <div className="font-bold text-sm">{selectedSubCode}</div>
@@ -207,7 +198,7 @@ export default function ICD10Explorer({
                       if (detail) return detail.name;
                       
                       // If not found, it's a HEAD code - find in categories
-                      const category = icd10Categories.find(c => c.headCode === selectedSubCode);
+                      const category = icd9Categories.find(c => c.headCode === selectedSubCode);
                       if (category) return category.headName;
                       
                       // Fallback to corrected term
@@ -216,30 +207,6 @@ export default function ICD10Explorer({
                   </div>
                 </div>
               </div>
-
-              {/* Tindakan */}
-              {originalInput.mode === 'form' && originalInput.procedure && (
-                <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-blue-50'}`}>
-                  <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                    Tindakan
-                  </label>
-                  <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    {originalInput.procedure}
-                  </p>
-                </div>
-              )}
-
-              {/* Obat */}
-              {originalInput.mode === 'form' && originalInput.medication && (
-                <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-blue-50'}`}>
-                  <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                    Obat
-                  </label>
-                  <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    {originalInput.medication}
-                  </p>
-                </div>
-              )}
 
               {/* Info */}
               <div className={`p-3 rounded-lg ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}>
@@ -250,7 +217,7 @@ export default function ICD10Explorer({
                       Preview Mapping
                     </p>
                     <p className={`text-xs ${isDark ? 'text-amber-200/80' : 'text-amber-600'}`}>
-                      Diagnosis akan menggunakan kode <strong>{selectedSubCode}</strong> untuk analisis AI.
+                      Tindakan akan menggunakan kode <strong>{selectedSubCode}</strong> untuk analisis AI.
                     </p>
                   </div>
                 </div>
@@ -289,7 +256,7 @@ export default function ICD10Explorer({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
               <p className="text-sm text-center px-4">
-                Pilih sub-kode ICD-10 untuk melihat preview mapping
+                Pilih sub-kode ICD-9 untuk melihat preview mapping
               </p>
             </div>
           )}

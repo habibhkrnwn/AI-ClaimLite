@@ -1,30 +1,30 @@
 import { FileText } from 'lucide-react';
-import { ICD10Detail } from './ICD10CategoryPanel';
+import { ICD9Detail } from './ICD9CategoryPanel';
 
-interface ICD10DetailPanelProps {
+interface ICD9DetailPanelProps {
   headCode: string | null;
-  details: ICD10Detail[];
+  details: ICD9Detail[];
   isDark: boolean;
   isLoading?: boolean;
   selectedCode?: string | null;
   onSelectCode?: (code: string, name: string) => void;
 }
 
-export default function ICD10DetailPanel({
+export default function ICD9DetailPanel({
   headCode,
   details,
   isDark,
   isLoading = false,
   selectedCode = null,
   onSelectCode,
-}: ICD10DetailPanelProps) {
+}: ICD9DetailPanelProps) {
   // Show empty state if no head selected
   if (!headCode) {
     return (
       <div className={`flex flex-col items-center justify-center py-12 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
         <FileText className="w-12 h-12 mb-3 opacity-30" />
         <p className="text-sm text-center">
-          Pilih kategori untuk melihat detail sub-kode ICD-10
+          Pilih kategori untuk melihat detail sub-kode ICD-9
         </p>
       </div>
     );
@@ -51,8 +51,8 @@ export default function ICD10DetailPanel({
   }
 
   return (
-    <div className="flex flex-col">
-      <div className={`flex-shrink-0 pb-3 mb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
+    <div className="flex flex-col space-y-4">
+      <div className={`pb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
         <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
           Detail Sub-Kode: {headCode}
         </h3>
@@ -61,14 +61,7 @@ export default function ICD10DetailPanel({
         </p>
       </div>
 
-      {/* Details list - scroll if more than 6 items */}
-      <div className={`space-y-2 pr-2 ${
-        details.length > 6 ? 'max-h-[400px] overflow-y-auto' : ''
-      } ${
-        isDark 
-          ? 'scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-slate-800/20' 
-          : 'scrollbar-thin scrollbar-thumb-blue-400/40 scrollbar-track-gray-200/40'
-      } hover:scrollbar-thumb-cyan-500/50`}>
+      <div className="space-y-2 max-h-96 overflow-y-auto">
         {details.map((detail, index) => (
           <button
             key={detail.code}
@@ -113,28 +106,6 @@ export default function ICD10DetailPanel({
                       ✓ Dipilih
                     </span>
                   )}
-                  {detail.code.endsWith('.9') && (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
-                        isDark
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-amber-100 text-amber-700'
-                      }`}
-                    >
-                      Unspecified
-                    </span>
-                  )}
-                  {detail.code.endsWith('.0') && (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
-                        isDark
-                          ? 'bg-green-500/20 text-green-300'
-                          : 'bg-green-100 text-green-700'
-                      }`}
-                    >
-                      Primary
-                    </span>
-                  )}
                 </div>
                 <p
                   className={`text-sm leading-relaxed font-medium ${
@@ -169,14 +140,9 @@ export default function ICD10DetailPanel({
 
       <div className={`pt-3 border-t ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
         <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'} space-y-1`}>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${isDark ? 'bg-green-500/20' : 'bg-green-100'}`} />
-            <span>Kode .0 = Primary/Specific type</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${isDark ? 'bg-amber-500/20' : 'bg-amber-100'}`} />
-            <span>Kode .9 = Unspecified (gunakan jika detail tidak diketahui)</span>
-          </div>
+          <p className="italic">
+            💡 ICD-9 untuk tindakan medis dan prosedur diagnostik
+          </p>
         </div>
       </div>
     </div>

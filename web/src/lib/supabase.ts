@@ -23,13 +23,30 @@ export interface AnalysisResult {
     status: 'valid' | 'warning' | 'invalid';
     message: string;
   };
-  severity: 'ringan' | 'sedang' | 'berat';
-  cpNasional: string;
+  // severity: 'ringan' | 'sedang' | 'berat';
+  cpNasional: { tahap: string; keterangan: string }[];
   requiredDocs: string[];
   fornas: {
     status: 'sesuai' | 'tidak-sesuai' | 'perlu-review';
     message: string;
   };
+  fornasList: any[];        // ADD
+  fornasSummary: any;
   aiInsight: string;
-  consistency: number;
+  consistency: {
+    dx_tx: {
+      status: string;
+      catatan: string;
+    };
+    dx_drug: {
+      status: string;
+      catatan: string;
+    };
+    tx_drug: {
+      status: string;
+      catatan: string;
+    };
+    tingkat: string;   // "Rendah" | "Sedang" | "Tinggi"
+    score: number;     // tetap ada BIAR PARSING TIDAK ERROR (abaikan di UI)
+  };
 }
