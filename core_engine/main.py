@@ -144,7 +144,17 @@ async def analyze_single(request: Request):
     try:
         data = await request.json()
         result = await endpoint_analyze_single_async(data, db_pool=db_pool)
-        return JSONResponse(content=result)
+        # Normalize response shape for web backend compatibility
+        # Old contract: {"status":"success", "result": {...}}
+        # New analyzer returns the result dict directly. Wrap when needed.
+        if isinstance(result, dict) and "status" not in result and "klasifikasi" in result:
+            normalized = {
+                "status": "success",
+                "result": result,
+            }
+            return JSONResponse(content=normalized)
+        else:
+            return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error in analyze_single: {e}")
         return JSONResponse(

@@ -21,6 +21,7 @@ from services.lite_service import (
     _consistency_detail,
     _summarize_cp
 )
+from services.consistency_service import analyze_clinical_consistency
 from services.analyze_diagnosis_service import process_analyze_diagnosis
 from services.fornas_service import match_multiple_obat
 from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
@@ -303,10 +304,12 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
-            "konsistensi": {
-                "tingkat": lite_diagnosis.get("severity", "sedang").upper(),
-                "detail": f"Severity: {lite_diagnosis.get('severity', 'sedang')}, Faskes: {lite_diagnosis.get('tingkat_faskes', 'RS Tipe C')}"
-            },
+            # 🔹 Clinical Consistency Validation
+            **analyze_clinical_consistency(
+                dx=icd10_code,
+                tx_list=[t.get("icd9_code") for t in lite_diagnosis.get("tindakan", []) if t.get("icd9_code")],
+                drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
+            ),
             
             "metadata": {
                 "claim_id": claim_id,

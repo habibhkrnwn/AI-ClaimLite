@@ -21,6 +21,7 @@ from services.analyze_diagnosis_service import process_analyze_diagnosis
 from services.fornas_service import match_multiple_obat, get_fornas_compliance_status
 from services.fornas_lite_service import FornasLiteValidator
 from services.pnpk_summary_service import PNPKSummaryService
+from services.consistency_service import analyze_clinical_consistency
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -669,10 +670,12 @@ Obat: {obat_raw}"""
         
         "insight_ai": _generate_ai_insight(full_analysis, diagnosis_name, tindakan_list, obat_list, parser.client if hasattr(parser, 'client') else None),
         
-        "konsistensi": {
-            "tingkat": _assess_consistency(full_analysis),
-            "detail": _consistency_detail(full_analysis)
-        },
+        # 🔹 Clinical Consistency Validation
+        **analyze_clinical_consistency(
+            dx=full_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
+            tx_list=[t.get("icd9_code") for t in full_analysis.get("tindakan", []) if t.get("icd9_code")],
+            drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
+        ),
         
         "metadata": {
             "claim_id": claim_id,
