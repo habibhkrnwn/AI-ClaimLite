@@ -275,7 +275,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             dx_drug: aiResult.konsistensi?.dx_drug || {},
             tx_drug: aiResult.konsistensi?.tx_drug || {},
             tingkat: aiResult.konsistensi?.tingkat_konsistensi || "-",
-            score: Number(aiResult.konsistensi2?.score_konsistensi) || 0
+            score: Number(aiResult.konsistensi?._score) || 0
           },
         };
 

@@ -870,67 +870,49 @@ def _extract_fornas_compliance(fornas_matched: List[Dict]) -> str:
 
 def _summarize_cp(analysis: Dict, diagnosis_name: str, client: Any = None, pnpk_data: Dict = None) -> List[str]:
     """
-    Ambil ringkasan CP dari DB atau lite_analysis
-    Works with both full_analysis (from analyze_diagnosis_service) and lite_analysis (from lite_diagnosis_service)
+    Ambil ringkasan CP dengan prioritas sederhana:
+    1. PNPK Database (via pnpk_data parameter)
+    2. AI Fallback (jika DB tidak tersedia)
     
     Args:
-        analysis: Full analysis or lite analysis dict
+        analysis: Analysis dict (for metadata)
         diagnosis_name: Diagnosis name string
-        client: OpenAI client (optional)
-        pnpk_data: Pre-fetched PNPK data (optional, for optimization)
+        client: OpenAI client (for AI fallback)
+        pnpk_data: Pre-fetched PNPK data from database
     """
-    cp_steps = []
     
-    # Check if lite_analysis format (has lama_rawat_estimasi, tingkat_faskes)
-    if "lama_rawat_estimasi" in analysis:
-        # Lite format
-        lama_rawat = analysis.get("lama_rawat_estimasi", "-")
-        faskes = analysis.get("tingkat_faskes", "-")
-        justifikasi = analysis.get("justifikasi_klinis", "-")
-        
-        if justifikasi != "-":
-            cp_steps.append(f"Justifikasi: {justifikasi[:80]}")
-        if faskes != "-":
-            cp_steps.append(f"Faskes: {faskes}")
-        if lama_rawat != "-":
-            cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
-        
-        print(f"[CP_RINGKAS] ✓ Using lite analysis ({len(cp_steps)} steps)")
-        return cp_steps if cp_steps else ["Data CP tidak tersedia"]
+    # 🔹 PRIORITAS 1: PNPK Database
+    if pnpk_data and isinstance(pnpk_data, dict):
+        stages = pnpk_data.get("stages", [])
+        if stages:
+            cp_steps = []
+            # Convert PNPK stages to CP ringkas format (tahap-tahap)
+            for stage in stages[:5]:  # Ambil semua tahap yang tersedia (max 5)
+                tahap = stage.get("stage_name", "")
+                deskripsi = stage.get("description", "")
+                if tahap and deskripsi:
+                    # Format: "Tahap X: Deskripsi"
+                    cp_steps.append(f"{tahap}: {deskripsi[:150]}")
+            
+            if cp_steps:
+                logger.info(f"[CP_RINGKAS] ✓ Using PNPK database ({len(cp_steps)} stages)")
+                return cp_steps
     
-    # Check if full_analysis format (has rawat_inap, faskes sections)
-    rawat_inap = analysis.get("rawat_inap", {})
-    if rawat_inap.get("lama_rawat") and rawat_inap.get("lama_rawat") != "-":
-        # Full analysis format - ada data dari DB
-        lama_rawat = rawat_inap.get("lama_rawat", "-")
-        indikasi = rawat_inap.get("indikasi", "-")
-        kriteria = rawat_inap.get("kriteria", "-")
-        
-        if indikasi != "-":
-            cp_steps.append(f"Indikasi: {indikasi[:80]}")
-        if kriteria != "-":
-            cp_steps.append(f"Kriteria: {kriteria[:80]}")
-        if lama_rawat != "-":
-            cp_steps.append(f"Estimasi lama rawat: {lama_rawat}")
-    
-    # Jika ada data, return
-    if cp_steps:
-        logger.info(f"[CP_RINGKAS] ✓ Using rawat_inap rules ({len(cp_steps)} steps)")
-        return cp_steps
-    
-    # 🔹 PRIORITAS 3: Fallback ke AI
+    # 🔹 PRIORITAS 2: AI Fallback
     if client and OPENAI_AVAILABLE:
         try:
             logger.info(f"[CP_RINGKAS] 🤖 Fallback to AI for {diagnosis_name}")
             
             prompt = f"""Berikan ringkasan Clinical Pathway untuk diagnosis: {diagnosis_name}
 
-Format output sebagai list langkah-langkah singkat (max 3 poin), contoh:
-- Hari 1-2: Antibiotik injeksi + monitoring vital signs
-- Hari 3: Evaluasi klinis dan radiologi
-- Hari 4-5: Persiapan pulang
+Format output sebagai tahap-tahap perawatan (max 5 tahap), contoh:
+- Tahap 1: Pemeriksaan awal dan stabilisasi pasien
+- Tahap 2: Pemberian antibiotik empiris dan terapi suportif  
+- Tahap 3: Monitoring respons terapi dan evaluasi klinis
+- Tahap 4: Penyesuaian terapi berdasarkan kultur
+- Tahap 5: Persiapan pulang dan edukasi pasien
 
-Berikan dalam format JSON array of strings."""
+Berikan dalam format JSON array of strings dengan format "Tahap X: [deskripsi]"."""
             
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -939,20 +921,20 @@ Berikan dalam format JSON array of strings."""
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=300
+                max_tokens=500
             )
             
             content = response.choices[0].message.content.strip()
             if content.startswith("[") and content.endswith("]"):
                 cp_steps = json.loads(content)
                 logger.info(f"[CP_RINGKAS] ✓ AI generated {len(cp_steps)} steps")
-                return cp_steps[:3]
+                return cp_steps[:5]  # Max 5 steps
             
         except Exception as e:
             logger.warning(f"[CP_RINGKAS] ❌ AI fallback error: {e}")
     
-    # 🔹 Semua prioritas gagal - return warning
-    logger.error(f"[CP_RINGKAS] ❌ All sources failed for {diagnosis_name}")
+    # 🔹 Semua prioritas gagal - return error message
+    logger.error(f"[CP_RINGKAS] ❌ Both DB and AI failed for {diagnosis_name}")
     return [
         "⚠️ Data Clinical Pathway tidak tersedia di database",
         "⚠️ AI tidak dapat menghasilkan ringkasan CP",

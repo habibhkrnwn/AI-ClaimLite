@@ -35,6 +35,7 @@ from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
 from services.fast_diagnosis_translator import fast_translate_with_fallback
 from services.lite_diagnosis_service import analyze_diagnosis_lite
 from services.pnpk_summary_service import PNPKSummaryService
+from services.consistency_service import analyze_clinical_consistency
 
 logger = logging.getLogger(__name__)
 
@@ -459,6 +460,17 @@ async def analyze_lite_single_ultra_fast(
         
         emit_progress("Menyusun hasil akhir...", 90)
         
+        # 🔍 EVALUATE CLINICAL CONSISTENCY
+        # Extract ICD-9 codes from tindakan
+        icd9_codes = [t.get("icd9", "") for t in tindakan_formatted if t.get("icd9") and t.get("icd9") != "-"]
+        
+        # Analyze consistency
+        consistency_result = analyze_clinical_consistency(
+            dx=icd10_code,
+            tx_list=icd9_codes,
+            drug_list=obat_list
+        )
+        
         lite_result = {
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
@@ -480,10 +492,8 @@ async def analyze_lite_single_ultra_fast(
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
-            "konsistensi": {
-                "tingkat": lite_diagnosis.get("severity", "sedang").upper(),
-                "detail": f"Severity: {lite_diagnosis.get('severity', 'sedang')}, Faskes: {lite_diagnosis.get('tingkat_faskes', 'RS Tipe C')}"
-            },
+            # Use consistency service result
+            "konsistensi": consistency_result["konsistensi"],
             
             "metadata": {
                 "claim_id": claim_id,

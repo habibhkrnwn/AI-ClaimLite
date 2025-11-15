@@ -102,8 +102,10 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
 
     console.log('[AI Analyze] Core engine response:', JSON.stringify(response.data, null, 2));
 
-    // Core engine returns result directly, not wrapped in {status, result}
-    const result = response.data;
+    // Core engine returns {status: "success", result: {...}}
+    // Extract the actual result from the wrapper
+    const coreResponse = response.data;
+    const result = coreResponse.result || coreResponse; // Fallback for backward compatibility
     
     // Check if result has required analysis data
     if (result && result.klasifikasi) {
