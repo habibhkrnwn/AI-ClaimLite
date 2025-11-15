@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
+import ICD9Explorer from './ICD9Explorer';
+import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
 import AnalysisHistory from './AnalysisHistory';
 import { AnalysisResult } from '../lib/supabase';
@@ -25,11 +27,18 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
   
-  // ICD-10 Explorer state
+  // ICD-10 Explorer state (Diagnosis)
   const [showICD10Explorer, setShowICD10Explorer] = useState(false);
   const [correctedTerm, setCorrectedTerm] = useState('');
   const [originalSearchTerm, setOriginalSearchTerm] = useState('');
   const [selectedICD10Code, setSelectedICD10Code] = useState<{code: string; name: string} | null>(null);
+
+  // ICD-9 Explorer state (Procedure/Tindakan)
+  const [showICD9Explorer, setShowICD9Explorer] = useState(false);
+  const [correctedProcedureTerm, setCorrectedProcedureTerm] = useState('');
+  const [procedureSynonyms, setProcedureSynonyms] = useState<string[]>([]);
+  const [originalProcedureTerm, setOriginalProcedureTerm] = useState('');
+  const [selectedICD9Code, setSelectedICD9Code] = useState<{code: string; name: string} | null>(null);
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -38,17 +47,12 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
 
   const loadAIUsage = async () => {
     try {
-      console.log('[AdminRS] Loading AI usage...');
       const response = await apiService.getAIUsageStatus();
-      console.log('[AdminRS] getAIUsageStatus response:', response);
       if (response.success) {
-        console.log('[AdminRS] Setting aiUsage to:', response.data);
         setAiUsage(response.data);
-      } else {
-        console.error('[AdminRS] Failed to load usage - response not successful');
       }
     } catch (error) {
-      console.error('[AdminRS] Failed to load AI usage:', error);
+      // Silent error handling
     }
   };
 
@@ -57,35 +61,72 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     
     // Reset previous state when generating new search
     setShowICD10Explorer(false);
+    setShowICD9Explorer(false);
     setResult(null);
     setSelectedICD10Code(null);
+    setSelectedICD9Code(null);
     
-    // Prepare AI correction
+    // Prepare AI correction for diagnosis
     const inputTerm = inputMode === 'text' ? freeText : diagnosis;
     setOriginalSearchTerm(inputTerm);
     
     try {
-      // Step 1: Translate to medical term using OpenAI
-      console.log('[ICD-10] Translating term:', inputTerm);
-      const translationResponse = await apiService.translateMedicalTerm(inputTerm);
+      // Step 1: Translate diagnosis to medical term using OpenAI
+      if (inputTerm) {
+        const translationResponse = await apiService.translateMedicalTerm(inputTerm);
+        
+        if (translationResponse.success) {
+          const medicalTerm = translationResponse.data.translated;
+          setCorrectedTerm(medicalTerm);
+          setShowICD10Explorer(true);
+        } else {
+          // Fallback to original term
+          setCorrectedTerm(inputTerm);
+          setShowICD10Explorer(true);
+        }
+      }
       
-      if (translationResponse.success) {
-        const medicalTerm = translationResponse.data.translated;
-        console.log('[ICD-10] Translated to:', medicalTerm);
-        setCorrectedTerm(medicalTerm);
-        setShowICD10Explorer(true);
-      } else {
-        console.error('[ICD-10] Translation failed');
-        // Fallback to original term
+      // Step 2: Translate procedure if provided
+      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      if (procedureTerm) {
+        setOriginalProcedureTerm(procedureTerm);
+        
+        const procedureTranslation = await apiService.translateProcedureTerm(procedureTerm);
+        
+        if (procedureTranslation.success) {
+          const medicalProcedureTerm = procedureTranslation.data.translated;
+          const synonyms = procedureTranslation.data.synonyms || [medicalProcedureTerm];
+          setCorrectedProcedureTerm(medicalProcedureTerm);
+          setProcedureSynonyms(synonyms);
+          setShowICD9Explorer(true);
+        } else {
+          setCorrectedProcedureTerm(procedureTerm);
+          setProcedureSynonyms([procedureTerm]);
+          setShowICD9Explorer(true);
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('[Translation] Error:', error);
+      
+      // Show user-friendly error message
+      const errorMessage = error?.response?.data?.message 
+        || error?.message 
+        || 'Terjadi kesalahan saat melakukan analisis. Silakan coba lagi.';
+      
+      alert(`Error: ${errorMessage}`);
+      
+      // Fallback to original terms if translation fails
+      if (inputTerm) {
         setCorrectedTerm(inputTerm);
         setShowICD10Explorer(true);
       }
-      
-    } catch (error) {
-      console.error('[ICD-10] Translation error:', error);
-      // Fallback to original term if translation fails
-      setCorrectedTerm(inputTerm);
-      setShowICD10Explorer(true);
+      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      if (procedureTerm) {
+        setCorrectedProcedureTerm(procedureTerm);
+        setShowICD9Explorer(true);
+      }
+      console.log('[DEBUG] Error fallback - Setting explorers to TRUE');
     } finally {
       setIsLoading(false);
     }
@@ -102,8 +143,20 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     try {
       // Prepare request data based on input mode
       const requestData = inputMode === 'text' 
-        ? { mode: 'text' as const, input_text: freeText }
-        : { mode: 'form' as const, diagnosis, procedure, medication };
+        ? { 
+            mode: 'text' as const, 
+            input_text: freeText,
+            icd10_code: selectedICD10Code.code,
+            icd9_code: selectedICD9Code?.code || null
+          }
+        : { 
+            mode: 'form' as const, 
+            diagnosis, 
+            procedure, 
+            medication,
+            icd10_code: selectedICD10Code.code,
+            icd9_code: selectedICD9Code?.code || null
+          };
 
       // Call AI Analysis API
       const response = await apiService.analyzeClaimAI(requestData);
@@ -111,28 +164,28 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
       if (response.success) {
         // Update AI usage from response
         if (response.usage) {
-          console.log('[AdminRS] Received usage from API:', response.usage);
           setAiUsage({
             used: response.usage.used,
             remaining: response.usage.remaining,
             limit: response.usage.limit,
           });
-          console.log('[AdminRS] Updated aiUsage state');
-        } else {
-          console.warn('[AdminRS] No usage data in response');
         }
 
         // Transform API response to match AnalysisResult interface
         const aiResult = response.data;
-        console.log('[AdminRS] Full AI Result:', JSON.stringify(aiResult, null, 2));
         
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
         
-        // Extract ICD-9 codes from tindakan array
+        // Extract ICD-9 codes from tindakan array (NEW FORMAT)
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
         const icd9Codes = tindakanArray
           .map((t: any) => {
+            // New format: tindakan is array of objects with icd9 property
+            if (typeof t === 'object' && t.icd9 && t.icd9 !== '-') {
+              return t.icd9;
+            }
+            // Old format fallback: extract from string pattern
             if (typeof t === 'string') {
               const match = t.match(/\((\d{2}\.\d{2})\)/);
               return match ? match[1] : null;
@@ -152,14 +205,14 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           validationStatus = 'warning';
         }
 
-        // Extract severity from konsistensi.tingkat (percentage)
-        let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
-        const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
-        if (konsistensiTingkat >= 80) {
-          severityLevel = 'ringan';
-        } else if (konsistensiTingkat < 60) {
-          severityLevel = 'berat';
-        }
+        // // Extract severity from konsistensi.tingkat (percentage)
+        // let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
+        // const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
+        // if (konsistensiTingkat >= 80) {
+        //   severityLevel = 'ringan';
+        // } else if (konsistensiTingkat < 60) {
+        //   severityLevel = 'berat';
+        // }
 
         // Map Fornas status from fornas_summary
         let fornasStatus: 'sesuai' | 'tidak-sesuai' | 'perlu-review' = 'sesuai';
@@ -175,12 +228,18 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
         }
         
         // Format CP Ringkas
-        const cpRingkasText = Array.isArray(aiResult.cp_ringkas) 
+        const cpRingkasList = Array.isArray(aiResult.cp_ringkas)
           ? aiResult.cp_ringkas.map((item: any) => {
-              if (typeof item === 'string') return item;
-              return `${item.tahap || item.stage_name || ''}: ${item.keterangan || item.description || ''}`;
-            }).join(' • ')
-          : (typeof aiResult.cp_ringkas === 'string' ? aiResult.cp_ringkas : '-');
+              if (typeof item === 'string') {
+                return { tahap: '', keterangan: item };
+              }
+              return {
+                tahap: item.tahap || item.stage_name || '',
+                keterangan: item.keterangan || item.description || '',
+              };
+            })
+          : [];
+
         
         // Format Required Docs
         const requiredDocs = Array.isArray(aiResult.checklist_dokumen)
@@ -200,15 +259,24 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             message: aiResult.validasi_klinis?.catatan || 
                     `CP: ${sesuaiCP ? '✓ Sesuai' : '✗ Tidak sesuai'}, Fornas: ${sesuaiFornas ? '✓ Sesuai' : '✗ Tidak sesuai'}`,
           },
-          severity: severityLevel,
-          cpNasional: cpRingkasText,
+          // severity: severityLevel,
+          cpNasional: cpRingkasList,
           requiredDocs: requiredDocs,
           fornas: {
             status: fornasStatus,
             message: `${sesuaiCount}/${totalObat} obat sesuai Fornas (${Math.round(fornasPercentage)}%)`,
           },
+          // ⬇️ TAMBAHKAN INI
+          fornasList: aiResult.fornas_validation || [],
+          fornasSummary: aiResult.fornas_summary || {},
           aiInsight: aiResult.insight_ai || 'Analisis berhasil dilakukan.',
-          consistency: aiResult.konsistensi?.tingkat || 85,
+          consistency: {
+            dx_tx: aiResult.konsistensi?.dx_tx || {},
+            dx_drug: aiResult.konsistensi?.dx_drug || {},
+            tx_drug: aiResult.konsistensi?.tx_drug || {},
+            tingkat: aiResult.konsistensi?.tingkat_konsistensi || "-",
+            score: Number(aiResult.konsistensi?._score) || 0
+          },
         };
 
         setResult(analysisResult);
@@ -229,12 +297,17 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     } catch (error: any) {
       console.error('Analysis failed:', error);
       const errorMessage = error.response?.data?.message || error.message || 'Gagal melakukan analisis';
+      const errorType = error.response?.data?.error_type;
       
       // Check if it's a limit exceeded error
       if (error.response?.status === 429) {
         alert(`Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
+      } else if (errorType === 'timeout') {
+        alert(`Timeout: Analisis memakan waktu terlalu lama (>5 menit).\n\nCoba lagi atau hubungi admin jika masalah berlanjut.`);
+      } else if (errorType === 'connection_refused') {
+        alert(`Error: ${errorMessage}\n\nCore engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.`);
       } else {
-        alert(`Error: ${errorMessage}\n\nPastikan core_engine API sedang berjalan di port 8000.`);
+        alert(`Error: ${errorMessage}\n\n${error.response?.data?.detail || 'Silakan coba lagi atau hubungi admin.'}`);
       }
     } finally {
       setIsLoading(false);
@@ -245,6 +318,11 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
   const handleCodeSelection = (code: string, name: string) => {
     setSelectedICD10Code({ code, name });
     console.log(`[ICD-10] Selected: ${code} - ${name}`);
+  };
+
+  const handleProcedureCodeSelection = (code: string, name: string) => {
+    setSelectedICD9Code({ code, name });
+    console.log(`[ICD-9] Selected: ${code} - ${name}`);
   };
 
   return (
@@ -381,24 +459,106 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           
           {/* Scrollable Content */}
           <div className="flex-1 overflow-y-auto space-y-6">
-            {/* ICD-10 Explorer Section */}
-            {showICD10Explorer && correctedTerm ? (
+            {/* Debug Info */}
+            <div className="text-xs text-yellow-500 mb-2">
+              DEBUG: showICD10Explorer={String(showICD10Explorer)}, correctedTerm={correctedTerm || 'null'}, showICD9Explorer={String(showICD9Explorer)}, correctedProcedureTerm={correctedProcedureTerm || 'null'}
+            </div>
+            
+            {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
+            {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
               <div className="flex-shrink-0">
-                <ICD10Explorer
-                  searchTerm={originalSearchTerm}
-                  correctedTerm={correctedTerm}
-                  originalInput={{
-                    diagnosis,
-                    procedure,
-                    medication,
-                    freeText,
-                    mode: inputMode,
-                  }}
-                  isDark={isDark}
-                  isAnalyzing={isLoading}
-                  onCodeSelected={handleCodeSelection}
-                  onGenerateAnalysis={handleGenerateAnalysis}
-                />
+                <div className={`mb-4 px-4 py-3 rounded-lg ${
+                  isDark ? 'bg-gradient-to-r from-cyan-500/10 to-green-500/10 border border-cyan-500/30' : 'bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200'
+                }`}>
+                  <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+                    🏥 Mapping Kode ICD
+                  </h3>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                    {showICD10Explorer && showICD9Explorer 
+                      ? 'Pilih kode diagnosis (ICD-10) dan tindakan (ICD-9) yang sesuai'
+                      : showICD10Explorer 
+                        ? 'Pilih kode diagnosis (ICD-10) yang sesuai'
+                        : 'Pilih kode tindakan (ICD-9) yang sesuai'
+                    }
+                  </p>
+                </div>
+
+                {/* 2-Column Layout: Explorers (Left 65%) | Shared Mapping Preview (Right 35%) */}
+                <div className="grid grid-cols-12 gap-4">
+                  {/* Left Column: ICD-10 & ICD-9 Explorers (8 columns = ~66%) */}
+                  <div className="col-span-8 space-y-6">
+                    {/* ICD-10 Diagnosis Section */}
+                    {showICD10Explorer && correctedTerm && (
+                      <div>
+                        <div className={`mb-3 px-3 py-2 rounded-md ${
+                          isDark ? 'bg-cyan-500/5 border-l-2 border-cyan-500' : 'bg-blue-50 border-l-2 border-blue-500'
+                        }`}>
+                          <h4 className={`text-xs font-semibold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
+                            🩺 Diagnosis ICD-10
+                          </h4>
+                        </div>
+                        <ICD10Explorer
+                          searchTerm={originalSearchTerm}
+                          correctedTerm={correctedTerm}
+                          originalInput={{
+                            diagnosis,
+                            procedure,
+                            medication,
+                            freeText,
+                            mode: inputMode,
+                          }}
+                          isDark={isDark}
+                          isAnalyzing={isLoading}
+                          onCodeSelected={handleCodeSelection}
+                          hidePreview={true}
+                        />
+                      </div>
+                    )}
+
+                    {/* ICD-9 Tindakan Section */}
+                    {showICD9Explorer && correctedProcedureTerm && (
+                      <div>
+                        <div className={`mb-3 px-3 py-2 rounded-md ${
+                          isDark ? 'bg-green-500/5 border-l-2 border-green-500' : 'bg-green-50 border-l-2 border-green-500'
+                        }`}>
+                          <h4 className={`text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                            ⚕️ Tindakan ICD-9
+                          </h4>
+                        </div>
+                        <ICD9Explorer
+                          searchTerm={originalProcedureTerm}
+                          correctedTerm={correctedProcedureTerm}
+                          synonyms={procedureSynonyms}
+                          originalInput={{
+                            diagnosis,
+                            procedure,
+                            medication,
+                            freeText,
+                            mode: inputMode,
+                          }}
+                          isDark={isDark}
+                          isAnalyzing={isLoading}
+                          onCodeSelected={handleProcedureCodeSelection}
+                          hidePreview={true}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Shared Mapping Preview (4 columns = ~33%, Sticky) */}
+                  <div className="col-span-4 sticky top-4">
+                    <SharedMappingPreview
+                      isDark={isDark}
+                      isAnalyzing={isLoading}
+                      icd10Code={selectedICD10Code}
+                      icd9Code={selectedICD9Code}
+                      originalDiagnosis={originalSearchTerm}
+                      originalProcedure={originalProcedureTerm}
+                      originalMedication={medication}
+                      onGenerateAnalysis={handleGenerateAnalysis}
+                    />
+                  </div>
+                </div>
               </div>
             ) : (
               <div className={`flex flex-col items-center justify-center py-20 ${
@@ -408,7 +568,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <p className="text-sm text-center px-4">
-                  Klik "Generate AI Insight" untuk melihat kategori ICD-10 yang sesuai dengan diagnosis
+                  Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
                 </p>
               </div>
             )}

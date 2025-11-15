@@ -15,6 +15,7 @@ interface ICD10ExplorerProps {
   };
   isDark: boolean;
   isAnalyzing?: boolean;
+  hidePreview?: boolean;
   onCodeSelected?: (code: string, name: string) => void;
   onGenerateAnalysis?: () => void;
 }
@@ -25,6 +26,7 @@ export default function ICD10Explorer({
   originalInput,
   isDark,
   isAnalyzing = false,
+  hidePreview = false,
   onCodeSelected,
   onGenerateAnalysis,
 }: ICD10ExplorerProps) {
@@ -46,7 +48,7 @@ export default function ICD10Explorer({
       const { apiService } = await import('../lib/api');
       const response = await apiService.getICD10Hierarchy(correctedTerm);
       
-      if (response.success && response.data.categories.length > 0) {
+      if (response.success && response.data.categories && response.data.categories.length > 0) {
         setIcd10Categories(response.data.categories);
         
         // Auto-select first category
@@ -61,7 +63,7 @@ export default function ICD10Explorer({
         }
       }
     } catch (error) {
-      console.error('Failed to load ICD-10 hierarchy:', error);
+      // Silent error handling
     } finally {
       setIsLoading(false);
     }
@@ -134,8 +136,8 @@ export default function ICD10Explorer({
         )}
       </div>
 
-      {/* 3-Column Layout: Categories | Details | Mapping Preview */}
-      <div className="grid grid-cols-3 gap-4 items-start">
+      {/* Layout: Categories | Details (or + Preview if not hidden) */}
+      <div className={hidePreview ? "grid grid-cols-2 gap-4 items-start" : "grid grid-cols-3 gap-4 items-start"}>
         {/* Column 1: ICD-10 Categories (Left) */}
         <div className={`rounded-lg p-4 ${
           isDark ? 'bg-slate-800/50 border border-slate-700/50' : 'bg-white/50 border border-gray-200'
@@ -163,7 +165,8 @@ export default function ICD10Explorer({
           />
         </div>
 
-        {/* Column 3: Mapping Preview (Right) */}
+        {/* Column 3: Mapping Preview (Right) - Only if not hidden */}
+        {!hidePreview && (
         <div className={`rounded-lg p-4 ${
           isDark ? 'bg-slate-800/50 border border-slate-700/50' : 'bg-white/50 border border-gray-200'
         }`}>
@@ -280,6 +283,7 @@ export default function ICD10Explorer({
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

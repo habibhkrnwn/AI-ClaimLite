@@ -1,6 +1,5 @@
 import { FileText } from 'lucide-react';
 import { ICD10Detail } from './ICD10CategoryPanel';
-import { getCommonTerm } from '../lib/icd10CommonTerms';
 
 interface ICD10DetailPanelProps {
   headCode: string | null;
@@ -52,8 +51,8 @@ export default function ICD10DetailPanel({
   }
 
   return (
-    <div className="flex flex-col space-y-4">
-      <div className={`pb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
+    <div className="flex flex-col">
+      <div className={`flex-shrink-0 pb-3 mb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
         <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
           Detail Sub-Kode: {headCode}
         </h3>
@@ -62,7 +61,14 @@ export default function ICD10DetailPanel({
         </p>
       </div>
 
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      {/* Details list - scroll if more than 6 items */}
+      <div className={`space-y-2 pr-2 ${
+        details.length > 6 ? 'max-h-[400px] overflow-y-auto' : ''
+      } ${
+        isDark 
+          ? 'scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-slate-800/20' 
+          : 'scrollbar-thin scrollbar-thumb-blue-400/40 scrollbar-track-gray-200/40'
+      } hover:scrollbar-thumb-cyan-500/50`}>
         {details.map((detail, index) => (
           <button
             key={detail.code}
@@ -86,9 +92,9 @@ export default function ICD10DetailPanel({
                 {index + 1}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-start gap-2 mb-1 flex-wrap">
+                <div className="flex items-center gap-3 mb-1">
                   <span
-                    className={`text-sm font-bold ${
+                    className={`text-lg font-bold flex-shrink-0 ${
                       selectedCode === detail.code
                         ? isDark ? 'text-cyan-300' : 'text-blue-700'
                         : isDark ? 'text-cyan-300' : 'text-blue-700'
@@ -96,9 +102,20 @@ export default function ICD10DetailPanel({
                   >
                     {detail.code}
                   </span>
+                  <p
+                    className={`text-sm font-medium flex-1 min-w-0 ${
+                      selectedCode === detail.code
+                        ? isDark ? 'text-slate-200' : 'text-gray-800'
+                        : isDark ? 'text-slate-300' : 'text-gray-700'
+                    }`}
+                  >
+                    {detail.name}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
                   {selectedCode === detail.code && (
                     <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
+                      className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
                         isDark
                           ? 'bg-cyan-500/30 text-cyan-200'
                           : 'bg-blue-100 text-blue-700'
@@ -109,7 +126,7 @@ export default function ICD10DetailPanel({
                   )}
                   {detail.code.endsWith('.9') && (
                     <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
+                      className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
                         isDark
                           ? 'bg-amber-500/20 text-amber-300'
                           : 'bg-amber-100 text-amber-700'
@@ -120,7 +137,7 @@ export default function ICD10DetailPanel({
                   )}
                   {detail.code.endsWith('.0') && (
                     <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
+                      className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
                         isDark
                           ? 'bg-green-500/20 text-green-300'
                           : 'bg-green-100 text-green-700'
@@ -130,17 +147,24 @@ export default function ICD10DetailPanel({
                     </span>
                   )}
                 </div>
-                <p
-                  className={`text-sm leading-relaxed font-medium ${
+                {/* Penjelasan spesifik dari AI */}
+                {detail.explanation && (
+                  <div className={`mt-2 px-3 py-2 rounded ${
                     selectedCode === detail.code
-                      ? isDark ? 'text-slate-200' : 'text-gray-800'
-                      : isDark ? 'text-slate-300' : 'text-gray-700'
-                  }`}
-                >
-                  {detail.name}
-                </p>
+                      ? isDark ? 'bg-blue-500/10 border-l-2 border-blue-400' : 'bg-blue-50 border-l-2 border-blue-500'
+                      : isDark ? 'bg-slate-700/20 border-l-2 border-slate-600' : 'bg-gray-50 border-l-2 border-gray-300'
+                  }`}>
+                    <p className={`text-xs italic ${
+                      selectedCode === detail.code
+                        ? isDark ? 'text-blue-300' : 'text-blue-700'
+                        : isDark ? 'text-slate-400' : 'text-gray-600'
+                    }`}>
+                      💡 {detail.explanation}
+                    </p>
+                  </div>
+                )}
                 {/* Common term (Istilah Umum) */}
-                {getCommonTerm(detail.code) && (
+                {detail.commonTerm && (
                   <div className={`mt-2 px-3 py-1.5 rounded ${
                     selectedCode === detail.code
                       ? isDark ? 'bg-cyan-500/10 border-l-2 border-cyan-400' : 'bg-blue-50 border-l-2 border-blue-500'
@@ -151,7 +175,7 @@ export default function ICD10DetailPanel({
                         ? isDark ? 'text-cyan-300' : 'text-blue-700'
                         : isDark ? 'text-slate-400' : 'text-gray-600'
                     }`}>
-                      {getCommonTerm(detail.code)}
+                      {detail.commonTerm}
                     </p>
                   </div>
                 )}

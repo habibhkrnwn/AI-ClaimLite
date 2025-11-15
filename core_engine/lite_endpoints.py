@@ -8,6 +8,107 @@ Simplified REST API untuk demo/trial version
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import os
+from sqlalchemy import text
+
+# OpenAI for generating explanations
+try:
+    from openai import OpenAI
+    import config
+    openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
+    OPENAI_AVAILABLE = True
+except Exception as e:
+    print(f"[OpenAI] Not available: {e}")
+    OPENAI_AVAILABLE = False
+    openai_client = None
+
+# Load ICD-10 common terms mapping
+ICD10_COMMON_TERMS = {}
+try:
+    common_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd10_common_terms.json')
+    with open(common_terms_path, 'r', encoding='utf-8') as f:
+        ICD10_COMMON_TERMS = json.load(f)
+    print(f"[ICD10] Loaded {len(ICD10_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD10] Warning: Could not load common terms: {e}")
+
+# Load ICD-9 common terms mapping
+ICD9_COMMON_TERMS = {}
+try:
+    icd9_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd9_common_terms.json')
+    with open(icd9_terms_path, 'r', encoding='utf-8') as f:
+        ICD9_COMMON_TERMS = json.load(f)
+    print(f"[ICD9] Loaded {len(ICD9_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD9] Warning: Could not load common terms: {e}")
+
+# ============================================================
+# 🤖 AI EXPLANATION GENERATOR
+# ============================================================
+def generate_medical_explanation(code: str, name: str, code_type: str = "ICD-10") -> str:
+    """
+    Generate penjelasan singkat berbahasa Indonesia untuk kode ICD
+    
+    Args:
+        code: Kode ICD (e.g., "A92.0" atau "88.76")
+        name: Nama diagnosis/prosedur
+        code_type: "ICD-10" atau "ICD-9"
+    
+    Returns:
+        Penjelasan singkat dalam bahasa Indonesia
+    """
+    if not OPENAI_AVAILABLE or not openai_client:
+        return ""
+    
+    try:
+        prompt = f"""Buatkan penjelasan singkat dalam bahasa Indonesia (maksimal 15 kata) untuk kode medis berikut:
+
+Kode: {code}
+Nama: {name}
+Tipe: {code_type}
+
+Penjelasan harus:
+- Singkat dan jelas (maksimal 15 kata)
+- Menjelaskan apa itu penyakit/prosedur tersebut
+- Menyebutkan penyebab, gejala, atau cara prosedur dilakukan
+- Menggunakan bahasa awam yang mudah dipahami
+- Tanpa prefix seperti "Penjelasan:" atau "Keterangan:"
+
+Contoh:
+- Chikungunya virus disease → Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam dan nyeri sendi
+- Appendectomy → Operasi pengangkatan usus buntu yang meradang atau terinfeksi
+
+Penjelasan:"""
+        
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Anda adalah ahli medis yang menjelaskan istilah medis dalam bahasa Indonesia yang mudah dipahami."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=100,
+            temperature=0.3
+        )
+        
+        explanation = response.choices[0].message.content.strip()
+        return explanation
+    
+    except Exception as e:
+        print(f"[AI_EXPLANATION] Error generating explanation for {code}: {e}")
+        return ""
+
+
+# Cache untuk explanation agar tidak perlu generate ulang
+_explanation_cache = {}
+
+def get_cached_explanation(code: str, name: str, code_type: str = "ICD-10") -> str:
+    """Get explanation from cache or generate new one"""
+    cache_key = f"{code_type}:{code}"
+    
+    if cache_key not in _explanation_cache:
+        _explanation_cache[cache_key] = generate_medical_explanation(code, name, code_type)
+    
+    return _explanation_cache[cache_key]
 
 # Import AI-CLAIM Lite service
 from services.lite_service import (
@@ -23,50 +124,112 @@ from services.lite_service import (
 # 🔹 IMPORT ALL SMART SERVICES (MERGED)
 # ============================================================
 from services.lite_service_optimized import analyze_lite_single_optimized
+from services.lite_service_ultra_fast import analyze_lite_single_ultra_fast, get_cache_stats, clear_analysis_cache
 from services.fornas_smart_service import validate_fornas
 from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
 from services.icd10_service import select_icd10_code, get_icd10_statistics
 from services.dokumen_wajib_service import get_dokumen_wajib_service
+
+# ============================================================
+# 📋 MEDICAL PROCEDURE SYNONYM MAPPING (OPTIMIZED - MODULE LEVEL)
+# ============================================================
+# Centralized synonym dictionary for medical procedures
+# Maps variations/synonyms to standardized database terms
+# Format: {synonym: [preferred_term, alternative1, alternative2]}
+PROCEDURE_SYNONYMS = {
+    # Ultrasound family
+    'usg': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasound': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonography': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonic': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'echo': ['ultrasound', 'ultrasonography', 'echocardiography'],
+    
+    # X-ray family
+    'rontgen': ['x-ray', 'radiography', 'radiograph'],
+    'x-ray': ['x-ray', 'radiography', 'radiograph'],
+    'xray': ['x-ray', 'radiography', 'radiograph'],
+    'radiography': ['x-ray', 'radiography', 'radiograph'],
+    'radiograph': ['x-ray', 'radiography', 'radiograph'],
+    
+    # CT Scan family
+    'ct scan': ['ct scan', 'computed tomography', 'cat scan'],
+    'ct': ['ct scan', 'computed tomography', 'cat scan'],
+    'cat scan': ['ct scan', 'computed tomography', 'cat scan'],
+    
+    # MRI family
+    'mri': ['mri', 'magnetic resonance imaging'],
+    
+    # Endoscopy family
+    'endoscopy': ['endoscopy', 'endoscopic examination'],
+    'scope': ['endoscopy', 'endoscopic examination'],
+    
+    # Surgery family
+    'operasi': ['surgery', 'operation', 'surgical procedure'],
+    'surgery': ['surgery', 'operation', 'surgical procedure'],
+    'operation': ['surgery', 'operation', 'surgical procedure'],
+    
+    # Biopsy family
+    'biopsy': ['biopsy', 'tissue sampling', 'histopathology'],
+    'biopsi': ['biopsy', 'tissue sampling', 'histopathology']
+}
 from services.pnpk_summary_service import PNPKSummaryService
 
 
 # ============================================================
-# 🔹 ASYNC WRAPPER for analyze_lite_single (with PNPK fetch)
+# 🔹 ASYNC WRAPPER for analyze_lite_single (with ULTRA FAST mode)
 # ============================================================
-async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None, progress_callback=None) -> Dict[str, Any]:
     """
-    Async wrapper untuk analyze_lite_single yang melakukan PNPK fetch terlebih dahulu
+    Async wrapper untuk analyze_lite_single dengan mode selection
+    
+    Modes:
+    - "ultra_fast": Parallel processing + caching (DEFAULT, 60-75% faster)
+    - "optimized": Sequential optimized (40-50% faster)
+    - "original": Original version (baseline)
     """
-    pnpk_data = None
     
-    # Pre-fetch PNPK data jika db_pool tersedia
-    if db_pool:
-        try:
-            # Extract diagnosis untuk pre-fetch
-            diagnosis_name = None
-            mode = request_data.get("mode", "text")
-            
-            if mode == "form" or mode == "excel":
-                diagnosis_name = request_data.get("diagnosis", "")
-            elif mode == "text":
-                # Untuk text mode, kita belum punya diagnosis, skip pre-fetch
-                pass
-            
-            if diagnosis_name:
-                pnpk_service = PNPKSummaryService(db_pool)
-                pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
-                print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
-        except Exception as e:
-            print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+    # Determine analysis mode
+    analysis_mode = request_data.get("analysis_mode", "ultra_fast")
     
-    # Inject pnpk_data ke request
-    request_data["_pnpk_data"] = pnpk_data
+    print(f"[ENDPOINT_ASYNC] Analysis mode: {analysis_mode}")
     
-    # Call synchronous analyzer
-    use_optimized = request_data.get("use_optimized", True)
-    if use_optimized:
+    if analysis_mode == "ultra_fast":
+        # 🚀 ULTRA FAST MODE: Parallel processing + caching
+        print("[ENDPOINT_ASYNC] Using ULTRA FAST mode (parallel + cache)")
+        result = await analyze_lite_single_ultra_fast(
+            request_data, 
+            db_pool=db_pool,
+            progress_callback=progress_callback
+        )
+        return result
+    
+    elif analysis_mode == "optimized":
+        # ⚡ OPTIMIZED MODE: Sequential with combined prompts
+        print("[ENDPOINT_ASYNC] Using OPTIMIZED mode (sequential combined)")
+        
+        # Pre-fetch PNPK data
+        pnpk_data = None
+        if db_pool:
+            try:
+                diagnosis_name = None
+                mode = request_data.get("mode", "text")
+                
+                if mode == "form" or mode == "excel":
+                    diagnosis_name = request_data.get("diagnosis", "")
+                
+                if diagnosis_name:
+                    pnpk_service = PNPKSummaryService(db_pool)
+                    pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                    print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
+            except Exception as e:
+                print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+        
+        request_data["_pnpk_data"] = pnpk_data
         return analyze_lite_single_optimized(request_data, db_pool=db_pool)
+    
     else:
+        # 📝 ORIGINAL MODE: Baseline
+        print("[ENDPOINT_ASYNC] Using ORIGINAL mode (baseline)")
         return analyze_lite_single(request_data, db_pool=db_pool)
 
 
@@ -864,45 +1027,8 @@ def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
-# 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
+# 📌 FORNAS VALIDATION ENDPOINT
 # ============================================================
-LITE_ENDPOINTS = {
-    "validate_form": endpoint_validate_form,
-    "parse_text": endpoint_parse_text,
-    "analyze_single": endpoint_analyze_single,
-    "analyze_batch": endpoint_analyze_batch,
-    "get_history": endpoint_get_history,
-    "load_history_detail": endpoint_load_history_detail,
-    "delete_history": endpoint_delete_history,
-    "export_results": endpoint_export_results,
-    # ICD-10 endpoints
-    "icd10_lookup": endpoint_icd10_lookup,
-    "icd10_select": endpoint_icd10_select,
-    "icd10_statistics": endpoint_icd10_statistics,
-    # ICD-9 endpoints
-    "icd9_lookup": endpoint_icd9_lookup,
-    # FORNAS validation endpoint
-    "validate_fornas": endpoint_validate_fornas,
-    # Dokumen Wajib endpoints
-    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
-    "get_all_diagnosis": endpoint_get_all_diagnosis,
-    "search_diagnosis": endpoint_search_diagnosis,
-    # Medical Translation endpoint
-    "translate_medical": endpoint_translate_medical
-}
-
-
-# ============================================================
-# 📌 MAIN HANDLER - untuk dipanggil dari FastAPI/Flask router
-# ============================================================
-def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Universal handler untuk semua AI-CLAIM Lite endpoints.
-    
-    Usage:
-        result = handle_lite_request("analyze_single", request_data)
-    """
-    
     if endpoint_name not in LITE_ENDPOINTS:
         return {
             "status": "error",
@@ -1276,85 +1402,803 @@ def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 "result": None
             }
         
-        # Get OpenAI API key from environment
         api_key = os.getenv("OPENAI_API_KEY")
         
         if not api_key:
             return {
                 "status": "error",
-                "message": "OpenAI API key not configured in environment",
+                "message": "OpenAI API key not configured",
                 "result": None
             }
         
-        # Initialize OpenAI client (v1.x syntax)
         client = OpenAI(api_key=api_key)
         
-        # Create prompt for medical term translation
-        prompt = f"""Translate the following Indonesian/colloquial medical term to standard English medical terminology.
-
-Input: "{term}"
-
-Instructions:
-- Translate to accurate medical terminology in English
-- Use standard medical vocabulary
-- If already medical terminology, return as is
-- Be concise and precise
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical diagnosis term in English: "{term}"
 
 Examples:
 - "paru2 basah" → "pneumonia"
 - "radang paru paru bakteri" → "bacterial pneumonia"
-- "pneumonia cacar air" → "varicella pneumonia"
 - "demam berdarah" → "dengue hemorrhagic fever"
 
-Respond with ONLY the translated medical term in English, nothing else."""
+Respond with ONLY the medical term, nothing else."""
         
-        # Call OpenAI API (v1.x syntax)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a medical terminology translator. Respond with ONLY the medical term."},
+                {"role": "system", "content": "Medical diagnosis translator. Output: medical term only."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
             max_tokens=50
         )
         
-        # Extract medical term from response
         medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
         
         return {
             "status": "success",
             "result": {
                 "medical_term": medical_term,
-                "confidence": "high"
+                "confidence": "high",
+                "source": "openai"
             }
         }
     
     except Exception as e:
         error_msg = str(e)
         
-        # Handle different error types
-        if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "Invalid OpenAI API key",
-                "result": None
-            }
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
         elif "rate limit" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API rate limit exceeded",
-                "result": None
-            }
+            msg = "API rate limit exceeded"
         elif "timeout" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "OpenAI API request timeout",
-                "result": None
-            }
+            msg = "API timeout"
         else:
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
+
+
+# ============================================================
+# 🔹 ENDPOINT: Translate Medical Procedure
+# ============================================================
+def endpoint_translate_procedure(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-procedure
+    
+    Translate colloquial/Indonesian procedure term to standard medical terminology.
+    Uses synonym mapping first (instant), then OpenAI if not found.
+    
+    Request:
+    {
+        "term": "usg"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "ultrasound",
+            "synonyms": ["ultrasound", "ultrasonography", "ultrasonic"],
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        term = request_data.get("term", "").strip()
+        
+        if not term:
             return {
                 "status": "error",
-                "message": f"Translation failed: {error_msg}",
+                "message": "Procedure term is required",
                 "result": None
             }
+        
+        term_lower = term.lower().strip()
+        
+        # FAST PATH: Check synonym dictionary first (no API call needed)
+        if term_lower in PROCEDURE_SYNONYMS:
+            synonyms = PROCEDURE_SYNONYMS[term_lower]
+            return {
+                "status": "success",
+                "result": {
+                    "medical_term": synonyms[0],  # Primary term
+                    "synonyms": synonyms,  # All related terms for broader search
+                    "confidence": "high",
+                    "source": "synonym_dictionary"
+                }
+            }
+        
+        # SLOW PATH: Use OpenAI for unknown terms (typos, new terms, etc.)
+        from openai import OpenAI
+        import os
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured",
+                "result": None
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical procedure term in English: "{term}"
+
+Examples:
+- "ultrason" → "ultrasonography"
+- "operasi usus buntu" → "appendectomy"
+- "rontgen dada" → "chest x-ray"
+
+Respond with ONLY the medical term, nothing else."""
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Medical procedure translator. Output: medical term only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high",
+                "source": "openai"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
+        elif "rate limit" in error_msg.lower():
+            msg = "API rate limit exceeded"
+        elif "timeout" in error_msg.lower():
+            msg = "API timeout"
+        else:
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
+
+
+# ============================================================
+# 🔹 ENDPOINT: ICD-9 Hierarchy (for Tindakan)
+# ============================================================
+
+
+# ============================================================
+# 🔍 ICD-10 HIERARCHY ENDPOINT
+# ============================================================
+def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]:
+    """
+    Get ICD-10 hierarchy for diagnosis with smart filtering
+    
+    - Single word: broad match (OR logic)
+    - Multiple words: specific match (AND logic)
+    
+    Groups results by HEAD code (e.g., I25 for I25.0, I25.1, etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD10_HIERARCHY] Searching for: '{search_term}'")
+        
+        # Split into words for smart filtering
+        words = [w.strip().lower() for w in search_term.split() if len(w.strip()) > 2]
+        
+        if len(words) == 0:
+            return {
+                "status": "error",
+                "message": "Search term too short (minimum 3 characters)",
+                "data": None
+            }
+        
+        # Build query based on word count
+        if len(words) == 1:
+            # Single word: OR logic (broad search)
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE LOWER(name) LIKE :pattern
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """)
+            params = {"pattern": f"%{words[0]}%"}
+            print(f"[ICD10_HIERARCHY] Single word search: {words[0]}")
+        elif len(words) == 2:
+            # Two words: OR logic on each word for broader results
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE (LOWER(name) LIKE :word0 OR LOWER(name) LIKE :word1)
+                  AND validation_status = 'official'
+                ORDER BY 
+                  CASE 
+                    WHEN LOWER(name) LIKE :word0 AND LOWER(name) LIKE :word1 THEN 1
+                    ELSE 2
+                  END,
+                  code
+                LIMIT 100
+            """)
+            params = {
+                "word0": f"%{words[0]}%",
+                "word1": f"%{words[1]}%"
+            }
+            print(f"[ICD10_HIERARCHY] Two-word search (OR): {words[0]} OR {words[1]}")
+        else:
+            # Multiple words (3+): Try OR first, then fallback to less restrictive
+            # Use OR logic but prefer results that match more words
+            word_conditions = " OR ".join([f"LOWER(name) LIKE :word{i}" for i in range(len(words))])
+            query_str = f"""
+                SELECT code, name
+                FROM icd10_master
+                WHERE ({word_conditions})
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """
+            query = text(query_str)
+            params = {f"word{i}": f"%{word}%" for i, word in enumerate(words)}
+            print(f"[ICD10_HIERARCHY] Multi-word search (OR): {' OR '.join(words)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD10_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (e.g., "I25" from "I25.1")
+        categories_dict = {}
+        
+        for code, name in rows:
+            # Extract HEAD code (first 3 characters: e.g., "I25" from "I25.1")
+            # ICD-10 format: A00-Z99 (3 chars) or A00.0-Z99.9 (5+ chars)
+            if len(code) > 3 and '.' in code:
+                # It's a detailed code like "I25.1" -> extract "I25"
+                head_code = code.split('.')[0]  # e.g., "I25"
+            else:
+                # Already a HEAD code (e.g., "I25") or short code
+                head_code = code[:3] if len(code) >= 3 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd10_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else name.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD10_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping (try both full code and HEAD code)
+                detail_common_term = ICD10_COMMON_TERMS.get(code) or ICD10_COMMON_TERMS.get(head_code)
+                
+                # Generate AI explanation
+                explanation = get_cached_explanation(code, name, "ICD-10")
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": name,
+                    "commonTerm": detail_common_term,
+                    "explanation": explanation
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD10_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD10_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-10 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 🔹 ICD-9 HIERARCHY ENDPOINT (untuk Tindakan/Prosedur)
+# ============================================================
+def endpoint_icd9_hierarchy(request_data: dict, db):
+    """
+    Get ICD-9 CM procedure codes grouped by HEAD category (2-digit).
+    
+    Returns hierarchical structure:
+    - Categories: List of HEAD codes (e.g., "47" for Appendectomy)
+    - Details: List of specific procedure codes under each category
+    
+    Search logic:
+    - Single word: broad match
+    - Multiple words/synonyms: OR logic for broader results
+    
+    Groups results by HEAD code (e.g., "47" for "47.0", "47.09", etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        synonyms = request_data.get("synonyms", [])
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD9_HIERARCHY] Searching for: '{search_term}'")
+        if synonyms:
+            print(f"[ICD9_HIERARCHY] With synonyms: {synonyms}")
+        
+        # Combine search_term with synonyms for comprehensive search
+        search_terms = [search_term.lower()]
+        if synonyms and isinstance(synonyms, list):
+            search_terms.extend([s.lower() for s in synonyms if s.lower() not in search_terms])
+        
+        # Build OR query for all search terms
+        word_conditions = " OR ".join([f"LOWER(name) LIKE :term{i}" for i in range(len(search_terms))])
+        query_str = f"""
+            SELECT code, name
+            FROM icd9cm_master
+            WHERE ({word_conditions})
+            ORDER BY code
+            LIMIT 100
+        """
+        query = text(query_str)
+        params = {f"term{i}": f"%{term}%" for i, term in enumerate(search_terms)}
+        
+        print(f"[ICD9_HIERARCHY] Multi-term search (OR): {' OR '.join(search_terms)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD9_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (2-digit: e.g., "47" from "47.09")
+        categories_dict = {}
+        
+        for code, description in rows:
+            # Extract HEAD code (first 2 digits: e.g., "47" from "47.09")
+            # ICD-9 format: 00-99 (2 chars) or 00.0-99.99 (4-5 chars)
+            if '.' in code:
+                head_code = code.split('.')[0]  # e.g., "47"
+            else:
+                head_code = code[:2] if len(code) >= 2 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd9cm_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else description.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD9_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping
+                detail_common_term = ICD9_COMMON_TERMS.get(code) or ICD9_COMMON_TERMS.get(head_code)
+                
+                # Generate AI explanation
+                explanation = get_cached_explanation(code, description, "ICD-9")
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": description,
+                    "commonTerm": detail_common_term,
+                    "explanation": explanation
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD9_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD9_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 📌 NEW OPTIMIZED TRANSLATION ENDPOINTS (Using Translation Service)
+# ============================================================
+def endpoint_translate_diagnosis_v2(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-diagnosis-v2
+    
+    Optimized diagnosis translation using multi-layer dictionary + cached DB search.
+    ~1500x faster than OpenAI for known terms.
+    
+    Request:
+    {
+        "term": "jntung",
+        "use_openai": true,  // Optional, default true
+        "with_icd10": true   // Optional, include ICD-10 search, default true
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "original": "jntung",
+            "english": "heart",
+            "icd10_code": "I50.9",
+            "icd10_name": "Heart failure, unspecified",
+            "source": "id_en_autocorrect",
+            "confidence": 85,
+            "cache_hit": true,
+            "speed": "instant"
+        }
+    }
+    """
+    try:
+        term = request_data.get("term", "").strip()
+        use_openai = request_data.get("use_openai", True)
+        with_icd10 = request_data.get("with_icd10", True)
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Term is required",
+                "result": None
+            }
+        
+        # Use combined translation + optimized search
+        if with_icd10:
+            from services.db_search_optimizer import search_with_medical_translation
+            
+            result = search_with_medical_translation(term, use_openai=use_openai)
+            
+            if result.get("status") == "success":
+                # Combine translation + ICD-10 data
+                combined = {
+                    "original": term,
+                    "english": result["translation"]["english"],
+                    "icd10_code": result["icd10"]["code"],
+                    "icd10_name": result["icd10"]["name"],
+                    "source": result["translation"]["source"],
+                    "confidence": result["translation"]["confidence"],
+                    "cache_hit": result["icd10"].get("cache_hit", False),
+                    "speed": result["speed"]
+                }
+                
+                return {
+                    "status": "success",
+                    "result": combined
+                }
+            else:
+                # Return suggestions
+                return {
+                    "status": "suggestions",
+                    "result": {
+                        "original": term,
+                        "english": result["translation"]["english"],
+                        "suggestions": result.get("suggestions", []),
+                        "total": result.get("total", 0),
+                        "source": result["translation"]["source"],
+                        "confidence": result["translation"]["confidence"]
+                    }
+                }
+        else:
+            # Translation only (no ICD-10 search)
+            from services.medical_translation_service import translate_diagnosis
+            
+            result = translate_diagnosis(term, use_openai=use_openai)
+            
+            return {
+                "status": "success",
+                "result": result
+            }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Translation failed: {str(e)}",
+            "result": None
+        }
+
+
+def endpoint_translate_procedure_v2(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-procedure-v2
+    
+    Optimized procedure translation using multi-layer dictionary.
+    
+    Request:
+    {
+        "term": "cuci darah",
+        "use_openai": true
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "original": "cuci darah",
+            "english": "hemodialysis",
+            "source": "procedure_dictionary",
+            "confidence": 100
+        }
+    }
+    """
+    try:
+        from services.medical_translation_service import translate_procedure
+        
+        term = request_data.get("term", "").strip()
+        use_openai = request_data.get("use_openai", True)
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Term is required",
+                "result": None
+            }
+        
+        result = translate_procedure(term, use_openai=use_openai)
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Translation failed: {str(e)}",
+            "result": None
+        }
+
+
+def endpoint_search_medical_terms(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/search-medical-terms
+    
+    Search medical terms by partial match.
+    Useful for autocomplete/suggestions.
+    
+    Request:
+    {
+        "query": "heart",
+        "limit": 10
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "matches": [
+                {"term": "heart failure", "icd10_code": "I50.9"},
+                {"term": "heart disease", "icd10_code": "I51.9"},
+                ...
+            ],
+            "total": 10
+        }
+    }
+    """
+    try:
+        from services.medical_translation_service import search_medical_terms
+        
+        query = request_data.get("query", "").strip()
+        limit = request_data.get("limit", 10)
+        
+        if not query:
+            return {
+                "status": "error",
+                "message": "Query is required",
+                "result": None
+            }
+        
+        matches = search_medical_terms(query, limit=limit)
+        
+        return {
+            "status": "success",
+            "result": {
+                "matches": matches,
+                "total": len(matches)
+            }
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Search failed: {str(e)}",
+            "result": None
+        }
+
+
+def endpoint_translation_stats(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/lite/translation-stats
+    
+    Get translation service statistics including cache performance.
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "translation": {
+                "indonesian_english_terms": 198,
+                "english_icd10_terms": 18480,
+                "procedure_synonyms": 62,
+                "total_coverage": 18740
+            },
+            "cache": {
+                "cache_hits": 150,
+                "cache_misses": 25,
+                "hit_rate_percent": 85.71,
+                "icd10_codes_cached": 18543,
+                "icd10_names_cached": 18480,
+                "search_results_cached": 45,
+                "cache_memory_kb": 4500
+            }
+        }
+    }
+    """
+    try:
+        from services.medical_translation_service import get_statistics as get_trans_stats
+        from services.db_search_optimizer import get_cache_statistics
+        
+        trans_stats = get_trans_stats()
+        cache_stats = get_cache_statistics()
+        
+        return {
+            "status": "success",
+            "result": {
+                "translation": trans_stats,
+                "cache": cache_stats
+            }
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to get statistics: {str(e)}",
+            "result": None
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
+# ============================================================
+# IMPORTANT: Dictionary ini HARUS di akhir file setelah semua fungsi didefinisikan
+LITE_ENDPOINTS = {
+    "validate_form": endpoint_validate_form,
+    "parse_text": endpoint_parse_text,
+    "analyze_single": endpoint_analyze_single,
+    "analyze_batch": endpoint_analyze_batch,
+    "get_history": endpoint_get_history,
+    "load_history_detail": endpoint_load_history_detail,
+    "delete_history": endpoint_delete_history,
+    "export_results": endpoint_export_results,
+    # ICD-10 endpoints
+    "icd10_lookup": endpoint_icd10_lookup,
+    "icd10_select": endpoint_icd10_select,
+    "icd10_statistics": endpoint_icd10_statistics,
+    # ICD-9 endpoints
+    "icd9_lookup": endpoint_icd9_lookup,
+    "icd9_hierarchy": endpoint_icd9_hierarchy,
+    # FORNAS validation endpoint
+    "validate_fornas": endpoint_validate_fornas,
+    # Dokumen Wajib endpoints
+    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
+    "get_all_diagnosis": endpoint_get_all_diagnosis,
+    "search_diagnosis": endpoint_search_diagnosis,
+    # Medical Translation endpoint (legacy - uses OpenAI)
+    "translate_medical": endpoint_translate_medical,
+    "translate_procedure": endpoint_translate_procedure,
+    # Optimized Translation endpoints (v2 - uses dictionary + OpenAI fallback)
+    "translate_diagnosis_v2": endpoint_translate_diagnosis_v2,
+    "translate_procedure_v2": endpoint_translate_procedure_v2,
+    "search_medical_terms": endpoint_search_medical_terms,
+    "translation_stats": endpoint_translation_stats
+}
+
+
+# ============================================================
+# 📌 MAIN HANDLER - untuk dipanggil dari FastAPI/Flask router
+# ============================================================
+def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any], db=None) -> Dict[str, Any]:
+    """
+    Universal handler untuk semua AI-CLAIM Lite endpoints.
+    
+    Usage:
+        result = handle_lite_request("analyze_single", request_data)
+    """
+    if endpoint_name not in LITE_ENDPOINTS:
+        return {
+            "status": "error",
+            "message": f"Unknown endpoint: {endpoint_name}"
+        }
+    
+    handler = LITE_ENDPOINTS[endpoint_name]
+    
+    # Check if endpoint needs db parameter
+    if endpoint_name in ["icd9_hierarchy"]:
+        return handler(request_data, db)
+    else:
+        return handler(request_data)
