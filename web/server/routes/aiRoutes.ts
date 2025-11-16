@@ -111,11 +111,17 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     console.log('[AI Analyze] Core engine response keys:', Object.keys(response.data));
 
     // Core engine returns {status: "success", result: {...}}
+<<<<<<< HEAD
     if (response.data.status !== 'success') {
       throw new Error(response.data.message || 'Core engine returned non-success status');
     }
 
     const result = response.data.result;
+=======
+    // Extract the actual result from the wrapper
+    const coreResponse = response.data;
+    const result = coreResponse.result || coreResponse; // Fallback for backward compatibility
+>>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
     
     // Check if result has required analysis data
     if (!result) {
@@ -204,6 +210,7 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       console.error('⏱️  Request timeout after', processingTime, 'ms');
       console.error('This usually means OpenAI API is slow or core_engine is processing heavy workload');
     }
+<<<<<<< HEAD
     
     if (error.code === 'ECONNREFUSED') {
       console.error('🔌 Connection refused - core_engine might not be running');
@@ -241,11 +248,35 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     } else if (error.response?.status === 500) {
       userMessage = 'Core Engine mengalami error internal.\n' +
                    'Detail: ' + (error.response?.data?.message || 'Unknown error');
+=======
+    if (error.request && !error.response) {
+      console.error('AI Analysis error - no response received (connection/timeout issue)');
+    }
+
+    // Distinguish different error types
+    let errorMessage = 'Failed to analyze claim';
+    let errorType = 'internal_error';
+    
+    if (error.code === 'ECONNREFUSED') {
+      errorMessage = 'Core engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.';
+      errorType = 'connection_refused';
+    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+      errorMessage = 'Analisis timeout (>5 menit). Coba lagi atau hubungi admin.';
+      errorType = 'timeout';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+      errorType = 'core_engine_error';
+>>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
     }
 
     res.status(statusCode).json({
       success: false,
+<<<<<<< HEAD
       message: userMessage,
+=======
+      message: errorMessage,
+      error_type: errorType,
+>>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
       detail: error.message,
       error_code: error.code,
       processing_time_ms: processingTime,

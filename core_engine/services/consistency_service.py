@@ -206,11 +206,11 @@ def validate_dx_tx(dx: str, tx_list: List[str]) -> Dict[str, str]:
             else:
                 expected_tx = dx_tx_map[base_code].get("tindakan", [])
     
-    # Jika tidak ada mapping, return sesuai (benefit of doubt)
+    # Jika tidak ada mapping, return status khusus
     if not expected_tx:
         logger.warning(f"[DX→TX] No mapping found for {dx_norm}")
         return {
-            "status": "✅ Sesuai",
+            "status": "⚠️ Parsial",
             "catatan": f"Tidak ada aturan khusus tindakan untuk diagnosis {dx}"
         }
     
@@ -289,7 +289,7 @@ def validate_dx_drug(dx: str, drug_list: List[str]) -> Dict[str, str]:
     if not expected_drugs:
         logger.warning(f"[DX→DRUG] No mapping found for {dx_norm}")
         return {
-            "status": "✅ Sesuai",
+            "status": "⚠️ Parsial",
             "catatan": f"Tidak ada aturan khusus obat untuk diagnosis {dx}"
         }
     
@@ -367,7 +367,7 @@ def validate_tx_drug(tx_list: List[str], drug_list: List[str]) -> Dict[str, str]
     if not expected_drugs:
         logger.warning(f"[TX→DRUG] No mapping found for procedures: {tx_list}")
         return {
-            "status": "✅ Sesuai",
+            "status": "⚠️ Parsial",
             "catatan": "Tidak ada aturan khusus obat untuk tindakan ini"
         }
     

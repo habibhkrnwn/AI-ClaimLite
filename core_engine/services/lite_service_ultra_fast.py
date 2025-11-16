@@ -36,6 +36,7 @@ from services.fast_diagnosis_translator import fast_translate_with_fallback
 from services.lite_diagnosis_service import analyze_diagnosis_lite
 from services.pnpk_summary_service import PNPKSummaryService
 from services.icd9_smart_service import lookup_icd9_procedure
+from services.consistency_service import analyze_clinical_consistency
 
 logger = logging.getLogger(__name__)
 
@@ -647,6 +648,7 @@ async def analyze_lite_single_ultra_fast(
         
         emit_progress("Menyusun hasil akhir...", 90)
         
+<<<<<<< HEAD
         # Generate comprehensive clinical validation
         validasi_klinis = _generate_validasi_klinis(
             diagnosis_name, 
@@ -654,6 +656,17 @@ async def analyze_lite_single_ultra_fast(
             tindakan_formatted, 
             obat_list,
             lite_diagnosis
+=======
+        # 🔍 EVALUATE CLINICAL CONSISTENCY
+        # Extract ICD-9 codes from tindakan
+        icd9_codes = [t.get("icd9", "") for t in tindakan_formatted if t.get("icd9") and t.get("icd9") != "-"]
+        
+        # Analyze consistency
+        consistency_result = analyze_clinical_consistency(
+            dx=icd10_code,
+            tx_list=icd9_codes,
+            drug_list=obat_list
+>>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
         )
         
         lite_result = {
@@ -673,10 +686,8 @@ async def analyze_lite_single_ultra_fast(
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
-            "konsistensi": {
-                "tingkat": lite_diagnosis.get("severity", "sedang").upper(),
-                "detail": f"Severity: {lite_diagnosis.get('severity', 'sedang')}, Faskes: {lite_diagnosis.get('tingkat_faskes', 'RS Tipe C')}"
-            },
+            # Use consistency service result
+            "konsistensi": consistency_result["konsistensi"],
             
             "metadata": {
                 "claim_id": claim_id,
