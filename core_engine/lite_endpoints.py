@@ -10,6 +10,8 @@ from datetime import datetime
 import json
 import os
 from sqlalchemy import text
+from collections import OrderedDict
+import time
 
 # OpenAI for generating explanations
 try:
@@ -143,6 +145,41 @@ from services.lite_service import (
     load_from_history,
     get_history_list
 )
+
+# ============================================================
+# 🚀 SIMPLE IN-MEMORY LRU CACHE FOR FAST HIERARCHY LOOKUPS
+# ============================================================
+class LRUCache:
+    def __init__(self, capacity: int = 512, ttl_seconds: int = 6 * 60 * 60):
+        self.capacity = capacity
+        self.ttl = ttl_seconds
+        self.store: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
+
+    def _now(self) -> float:
+        return time.time()
+
+    def get(self, key: str):
+        if key in self.store:
+            ts, val = self.store[key]
+            if self._now() - ts < self.ttl:
+                # move to end (most recently used)
+                self.store.move_to_end(key)
+                return val
+            # expired
+            del self.store[key]
+        return None
+
+    def set(self, key: str, value: Any):
+        self.store[key] = (self._now(), value)
+        self.store.move_to_end(key)
+        if len(self.store) > self.capacity:
+            # pop least recently used
+            self.store.popitem(last=False)
+
+
+# Caches for hierarchy endpoints
+ICD10_HIERARCHY_CACHE = LRUCache(capacity=512, ttl_seconds=12 * 60 * 60)
+ICD9_HIERARCHY_CACHE = LRUCache(capacity=512, ttl_seconds=12 * 60 * 60)
 
 # ============================================================
 # 🔹 IMPORT ALL SMART SERVICES (MERGED)
@@ -1875,7 +1912,30 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
         print(f"[ICD10_HIERARCHY] Searching for: '{search_term}'")
         
         # Split into words for smart filtering
-        words = [w.strip().lower() for w in search_term.split() if len(w.strip()) > 2]
+        raw_words = [w.strip().lower() for w in search_term.split() if len(w.strip()) > 2]
+        
+        # SMART KEYWORD FILTERING: Remove stop words that cause noise
+        # Keep only medically significant keywords
+        medical_stop_words = {
+            'unspecified', 'organism', 'site', 'other', 'specified', 
+            'disease', 'infection', 'disorder', 'syndrome', 'condition',
+            'the', 'and', 'with', 'without', 'due', 'to', 'of', 'in', 'by'
+        }
+        
+        # Filter to keep only meaningful medical terms
+        words = [w for w in raw_words if w not in medical_stop_words]
+        
+        # If all words are stop words (e.g., "unspecified organism"), use first word only
+        if len(words) == 0:
+            words = raw_words[:1] if len(raw_words) > 0 else []
+        
+        print(f"[ICD10_HIERARCHY] Filtered keywords: {words} (from: {raw_words})")
+
+        # Cache lookup (keyed by normalized search term)
+        cache_key = f"icd10:{' '.join(words)}"
+        cached = ICD10_HIERARCHY_CACHE.get(cache_key)
+        if cached is not None:
+            return {"status": "success", "data": cached, "cached": True}
         
         if len(words) == 0:
             return {
@@ -2027,23 +2087,107 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
         
         # Convert to list with relevance re-scoring based on match quality
         categories_with_score = []
+        search_keywords = " ".join(words)  # Combined search context
+        
         for cat in categories_dict.values():
             score = 0
             
             # Score based on category name matching search words
             cat_name_lower = cat["headName"].lower()
+            
+            # HIGHEST PRIORITY: Exact phrase match
+            phrase = " ".join(words)
+            if phrase in cat_name_lower or cat_name_lower in phrase:
+                score += 500
+            
+            # High priority: All keywords present (AND logic)
+            all_words_present = all(word in cat_name_lower for word in words)
+            if all_words_present:
+                score += 300
+            
+            # Medium priority: Individual word matches
             for word in words:
                 if word in cat_name_lower:
-                    score += 50  # High score for word in category name
+                    score += 50
             
             # Score based on number of details (more details = more comprehensive)
             score += cat["count"] * 10
             
-            # Bonus for specific important keywords in category name
-            important_keywords = ['coronary', 'ischaemic', 'ischemic', 'heart', 'cardiac']
-            for keyword in important_keywords:
-                if keyword in cat_name_lower:
-                    score += 30
+            # SMART FILTERING: Boost relevant conditions, penalize unrelated ones
+            # Pneumonia-specific boost and TB/syphilis penalty
+            if any(k in search_keywords for k in ['pneumonia', 'paru', 'basah']):
+                if 'pneumonia' in cat_name_lower:
+                    score += 400  # Strong boost for pneumonia categories
+                # STRONG PENALTY: Unrelated infections/diseases when looking for pneumonia
+                if any(term in cat_name_lower for term in ['tuberculosis', 'syphilis', 'sifilis', 'hiv', 'aids']):
+                    score -= 500  # Strong penalty for TB/syphilis/HIV
+                if any(term in cat_name_lower for term in ['meningococcal', 'sepsis', 'hepatitis', 'herpes']):
+                    score -= 500  # Strong penalty for other infections
+                if any(term in cat_name_lower for term in ['sexually transmitted', 'std', 'venereal']):
+                    score -= 500  # Strong penalty for STDs
+                # Penalize generic viral/bacterial infections that are NOT pneumonia
+                if ('viral' in cat_name_lower or 'bacterial' in cat_name_lower) and 'pneumonia' not in cat_name_lower:
+                    score -= 400
+                # Penalize "infection of unspecified site" - too generic
+                if 'infection' in cat_name_lower and 'unspecified site' in cat_name_lower:
+                    score -= 600
+            
+            # Coronary/cardiac-specific
+            if any(k in search_keywords for k in ['coronary', 'jantung', 'cardiac', 'heart', 'artery']):
+                # Strong boost for actual coronary/ischaemic heart disease
+                if any(term in cat_name_lower for term in ['coronary', 'ischaemic', 'ischemic']):
+                    score += 400  # Strong boost
+                elif any(term in cat_name_lower for term in ['heart', 'cardiac']):
+                    score += 150  # Medium boost for general heart/cardiac
+                
+                # Penalize implants/devices when looking for disease
+                if any(term in cat_name_lower for term in ['implant', 'graft', 'prosthetic', 'device']):
+                    score -= 400
+                # Penalize complications when looking for primary disease
+                if 'complication' in cat_name_lower:
+                    score -= 300
+                # Penalize cerebrovascular when looking for cardiac (but allow if "ischaemic" present)
+                if ('cerebral' in cat_name_lower or 'brain' in cat_name_lower) and 'coronary' in search_keywords:
+                    score -= 400
+                # Penalize musculoskeletal when looking for cardiac
+                if any(term in cat_name_lower for term in ['spondylosis', 'arthritis', 'joint', 'bone', 'muscle', 'spine']):
+                    score -= 500
+            
+            # Diabetes-specific
+            if 'diabetes' in search_keywords or 'dm' in search_keywords:
+                if 'diabetes' in cat_name_lower:
+                    score += 300
+            
+            # Fracture-specific
+            if any(k in search_keywords for k in ['fracture', 'patah', 'fraktur']):
+                if 'fracture' in cat_name_lower:
+                    score += 300
+                # Penalize non-fracture musculoskeletal conditions
+                if any(term in cat_name_lower for term in ['sprain', 'strain', 'arthritis']) and 'fracture' not in cat_name_lower:
+                    score -= 200
+            
+            # Appendicitis-specific
+            if any(k in search_keywords for k in ['appendicitis', 'apendisitis', 'usus buntu']):
+                if 'appendicitis' in cat_name_lower or 'appendix' in cat_name_lower:
+                    score += 400
+            
+            # PENALTY: Generic or unrelated categories
+            # Filter out very generic categories that matched only common words like "unspecified", "other"
+            
+            # Identify primary medical keywords (skip stop words)
+            stop_words = {'disease', 'other', 'disorder', 'syndrome', 'unspecified', 'organism', 'infection', 'site'}
+            primary_keywords = [w for w in words if w not in stop_words and len(w) > 3]
+            
+            # Check if category name contains ANY primary keyword
+            has_primary_match = any(keyword in cat_name_lower for keyword in primary_keywords)
+            
+            # Strong penalty for "unspecified" categories that DON'T match primary keywords
+            if 'unspecified' in cat_name_lower and not has_primary_match:
+                score -= 800  # Very strong penalty - almost always irrelevant
+            
+            # Additional penalty for generic catch-all categories
+            if any(term in cat_name_lower for term in ['other', 'not elsewhere classified']) and not has_primary_match:
+                score -= 300
             
             categories_with_score.append({
                 "category": cat,
@@ -2053,20 +2197,25 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
         # Sort by score (descending), then by headCode
         categories_with_score.sort(key=lambda x: (-x["score"], x["category"]["headCode"]))
         
+        # FILTER: Remove categories with negative or very low scores (irrelevant results)
+        # Set minimum threshold based on search specificity
+        min_threshold = 100 if len(words) > 1 else 50
+        categories_filtered = [item for item in categories_with_score if item["score"] >= min_threshold]
+        
         # Extract sorted categories and limit to top 30
-        categories = [item["category"] for item in categories_with_score[:30]]
+        categories = [item["category"] for item in categories_filtered[:30]]
         
-        print(f"[ICD10_HIERARCHY] Grouped into {len(categories)} categories (top 30 by relevance)")
-        if categories_with_score:
-            top = categories_with_score[0]
+        print(f"[ICD10_HIERARCHY] Grouped into {len(categories)} relevant categories (filtered from {len(categories_dict)}, top 30 by relevance, min_score: {min_threshold})")
+        if categories_filtered:
+            top = categories_filtered[0]
             print(f"[ICD10_HIERARCHY] Top result: [{top['category']['headCode']}] {top['category']['headName']} (score: {top['score']})")
+            if len(categories_filtered) > 1:
+                bottom = categories_filtered[-1]
+                print(f"[ICD10_HIERARCHY] Lowest score: [{bottom['category']['headCode']}] {bottom['category']['headName']} (score: {bottom['score']})")
         
-        return {
-            "status": "success",
-            "data": {
-                "categories": categories
-            }
-        }
+        data_obj = {"categories": categories}
+        ICD10_HIERARCHY_CACHE.set(cache_key, data_obj)
+        return {"status": "success", "data": data_obj, "cached": False}
     
     except Exception as e:
         print(f"[ICD10_HIERARCHY] Error: {str(e)}")
@@ -2114,6 +2263,15 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
         print(f"[ICD9_HIERARCHY] Searching for: '{search_term}'")
         if synonyms:
             print(f"[ICD9_HIERARCHY] With synonyms: {synonyms}")
+        
+        # Build cache key from normalized term + synonyms
+        norm_syn = []
+        if isinstance(synonyms, list):
+            norm_syn = sorted({s.lower().strip() for s in synonyms if isinstance(s, str) and s.strip()})
+        cache_key = f"icd9:{search_term.lower().strip()}|{'|'.join(norm_syn)}"
+        cached = ICD9_HIERARCHY_CACHE.get(cache_key)
+        if cached is not None:
+            return {"status": "success", "data": cached, "cached": True}
         
         # Combine search_term with synonyms for comprehensive search
         search_terms = [search_term.lower()]
@@ -2484,12 +2642,9 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
             print(f"[ICD9_HIERARCHY] Top result: [{top['category']['headCode']}] {top['category']['headName']}")
             print(f"[ICD9_HIERARCHY] Score: {top['score']}, Detail matches: {top['detail_matches']}")
         
-        return {
-            "status": "success",
-            "data": {
-                "categories": categories
-            }
-        }
+        data_obj = {"categories": categories}
+        ICD9_HIERARCHY_CACHE.set(cache_key, data_obj)
+        return {"status": "success", "data": data_obj, "cached": False}
     
     except Exception as e:
         print(f"[ICD9_HIERARCHY] Error: {str(e)}")

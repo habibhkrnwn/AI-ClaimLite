@@ -648,15 +648,6 @@ async def analyze_lite_single_ultra_fast(
         
         emit_progress("Menyusun hasil akhir...", 90)
         
-<<<<<<< HEAD
-        # Generate comprehensive clinical validation
-        validasi_klinis = _generate_validasi_klinis(
-            diagnosis_name, 
-            icd10_code, 
-            tindakan_formatted, 
-            obat_list,
-            lite_diagnosis
-=======
         # 🔍 EVALUATE CLINICAL CONSISTENCY
         # Extract ICD-9 codes from tindakan
         icd9_codes = [t.get("icd9", "") for t in tindakan_formatted if t.get("icd9") and t.get("icd9") != "-"]
@@ -666,7 +657,15 @@ async def analyze_lite_single_ultra_fast(
             dx=icd10_code,
             tx_list=icd9_codes,
             drug_list=obat_list
->>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
+        )
+        
+        # Generate comprehensive clinical validation
+        validasi_klinis = _generate_validasi_klinis(
+            diagnosis_name, 
+            icd10_code, 
+            tindakan_formatted, 
+            obat_list,
+            lite_diagnosis
         )
         
         lite_result = {

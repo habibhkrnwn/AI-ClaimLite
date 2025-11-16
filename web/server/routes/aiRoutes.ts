@@ -111,17 +111,12 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     console.log('[AI Analyze] Core engine response keys:', Object.keys(response.data));
 
     // Core engine returns {status: "success", result: {...}}
-<<<<<<< HEAD
-    if (response.data.status !== 'success') {
-      throw new Error(response.data.message || 'Core engine returned non-success status');
-    }
-
-    const result = response.data.result;
-=======
-    // Extract the actual result from the wrapper
+    // Extract the actual result from the wrapper (backward compatible)
     const coreResponse = response.data;
-    const result = coreResponse.result || coreResponse; // Fallback for backward compatibility
->>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
+    if (coreResponse.status !== 'success') {
+      throw new Error(coreResponse.message || 'Core engine returned non-success status');
+    }
+    const result = coreResponse.result || coreResponse;
     
     // Check if result has required analysis data
     if (!result) {
@@ -210,78 +205,63 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       console.error('⏱️  Request timeout after', processingTime, 'ms');
       console.error('This usually means OpenAI API is slow or core_engine is processing heavy workload');
     }
-<<<<<<< HEAD
     
-    if (error.code === 'ECONNREFUSED') {
-      console.error('🔌 Connection refused - core_engine might not be running');
-      console.error('Check if Python process is running on port 8000');
-    }
-    
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-    } else if (error.request) {
-      console.error('No response received from core_engine');
-      console.error('Request config:', {
-        url: error.config?.url,
-        method: error.config?.method,
-        timeout: error.config?.timeout,
-      });
-    }
-    console.error('========================');
+        if (error.code === 'ECONNREFUSED') {
+          console.error('🔌 Connection refused - core_engine might not be running');
+          console.error('Check if Python process is running on port 8000');
+        }
 
-    // User-friendly error messages
-    let userMessage = 'Failed to analyze claim';
-    let statusCode = 500;
-    
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-      userMessage = 'Analisis memakan waktu terlalu lama (timeout). Ini biasanya terjadi karena:\n' +
-                   '1. OpenAI API sedang lambat\n' +
-                   '2. Core engine sedang memproses banyak request\n' +
-                   '3. Data input terlalu kompleks\n\n' +
-                   'Silakan coba lagi dalam beberapa saat.';
-      statusCode = 504; // Gateway Timeout
-    } else if (error.code === 'ECONNREFUSED') {
-      userMessage = 'Tidak dapat terhubung ke Core Engine.\n' +
-                   'Pastikan Core Engine berjalan di port 8000.';
-      statusCode = 503; // Service Unavailable
-    } else if (error.response?.status === 500) {
-      userMessage = 'Core Engine mengalami error internal.\n' +
-                   'Detail: ' + (error.response?.data?.message || 'Unknown error');
-=======
-    if (error.request && !error.response) {
-      console.error('AI Analysis error - no response received (connection/timeout issue)');
-    }
+        if (error.response) {
+          console.error('Response status:', error.response.status);
+          console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+        } else if (error.request) {
+          console.error('No response received from core_engine');
+          console.error('Request config:', {
+            url: error.config?.url,
+            method: error.config?.method,
+            timeout: error.config?.timeout,
+          });
+        }
+        console.error('========================');
 
-    // Distinguish different error types
-    let errorMessage = 'Failed to analyze claim';
-    let errorType = 'internal_error';
+        // User-friendly error messages
+        let userMessage = 'Failed to analyze claim';
+        let statusCode = 500;
+        let errorType = 'internal_error';
     
-    if (error.code === 'ECONNREFUSED') {
-      errorMessage = 'Core engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.';
-      errorType = 'connection_refused';
-    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
-      errorMessage = 'Analisis timeout (>5 menit). Coba lagi atau hubungi admin.';
-      errorType = 'timeout';
-    } else if (error.response?.data?.message) {
-      errorMessage = error.response.data.message;
-      errorType = 'core_engine_error';
->>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
-    }
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout') || error.code === 'ETIMEDOUT') {
+          userMessage = 'Analisis memakan waktu terlalu lama (timeout). Ini biasanya terjadi karena:\n' +
+                       '1. OpenAI API sedang lambat\n' +
+                       '2. Core engine sedang memproses banyak request\n' +
+                       '3. Data input terlalu kompleks\n\n' +
+                       'Silakan coba lagi dalam beberapa saat.';
+          statusCode = 504; // Gateway Timeout
+          errorType = 'timeout';
+        } else if (error.code === 'ECONNREFUSED') {
+          userMessage = 'Tidak dapat terhubung ke Core Engine.\n' +
+                       'Pastikan Core Engine berjalan di port 8000.';
+          statusCode = 503; // Service Unavailable
+          errorType = 'connection_refused';
+        } else if (error.response?.status === 500) {
+          userMessage = 'Core Engine mengalami error internal.\n' +
+                       'Detail: ' + (error.response?.data?.message || 'Unknown error');
+          statusCode = 500;
+          errorType = 'core_engine_error';
+        } else if (error.response?.data?.message) {
+          userMessage = error.response.data.message;
+          errorType = 'core_engine_error';
+          statusCode = error.response.status || 500;
+        }
 
-    res.status(statusCode).json({
-      success: false,
-<<<<<<< HEAD
-      message: userMessage,
-=======
-      message: errorMessage,
-      error_type: errorType,
->>>>>>> 2effa4d688dbaa9efdd5b172c6008481b527cfdf
-      detail: error.message,
-      error_code: error.code,
-      processing_time_ms: processingTime,
-      error_data: error.response?.data || null,
-    });
+        res.status(statusCode).json({
+          success: false,
+          message: userMessage,
+          error_type: errorType,
+          detail: error.message,
+          error_code: error.code,
+          processing_time_ms: processingTime,
+          error_data: error.response?.data || null,
+        });
   }
 });
 

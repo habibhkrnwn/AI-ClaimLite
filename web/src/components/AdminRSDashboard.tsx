@@ -71,39 +71,47 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     setOriginalSearchTerm(inputTerm);
     
     try {
-      // Step 1: Translate diagnosis to medical term using OpenAI
-      if (inputTerm) {
-        const translationResponse = await apiService.translateMedicalTerm(inputTerm);
-        
-        if (translationResponse.success) {
-          const medicalTerm = translationResponse.data.translated;
-          setCorrectedTerm(medicalTerm);
-          setShowICD10Explorer(true);
-        } else {
-          // Fallback to original term
-          setCorrectedTerm(inputTerm);
-          setShowICD10Explorer(true);
-        }
-      }
-      
-      // Step 2: Translate procedure if provided
+      // Run translations in parallel for speed
       const procedureTerm = inputMode === 'text' ? '' : procedure;
+      setOriginalProcedureTerm(procedureTerm || '');
+
+      const promises: Promise<any>[] = [];
+      if (inputTerm) {
+        promises.push(apiService.translateMedicalTerm(inputTerm));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
       if (procedureTerm) {
-        setOriginalProcedureTerm(procedureTerm);
-        
-        const procedureTranslation = await apiService.translateProcedureTerm(procedureTerm);
-        
-        if (procedureTranslation.success) {
-          const medicalProcedureTerm = procedureTranslation.data.translated;
-          const synonyms = procedureTranslation.data.synonyms || [medicalProcedureTerm];
+        promises.push(apiService.translateProcedureTerm(procedureTerm));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
+
+      const [dxResp, pxResp] = await Promise.all(promises);
+
+      // Handle diagnosis translation
+      if (inputTerm) {
+        if (dxResp && dxResp.success) {
+          const medicalTerm = dxResp.data.translated;
+          setCorrectedTerm(medicalTerm);
+        } else {
+          setCorrectedTerm(inputTerm);
+        }
+        setShowICD10Explorer(true);
+      }
+
+      // Handle procedure translation
+      if (procedureTerm) {
+        if (pxResp && pxResp.success) {
+          const medicalProcedureTerm = pxResp.data.translated;
+          const synonyms = pxResp.data.synonyms || [medicalProcedureTerm];
           setCorrectedProcedureTerm(medicalProcedureTerm);
           setProcedureSynonyms(synonyms);
-          setShowICD9Explorer(true);
         } else {
           setCorrectedProcedureTerm(procedureTerm);
           setProcedureSynonyms([procedureTerm]);
-          setShowICD9Explorer(true);
         }
+        setShowICD9Explorer(true);
       }
       
     } catch (error: any) {
