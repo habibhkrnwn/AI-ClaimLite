@@ -1,0 +1,22 @@
+{
+  "A92.0": "Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam tinggi dan nyeri sendi parah",
+  "I25.0": "Penyakit jantung iskemik kronik karena penyempitan pembuluh darah koroner",
+  "I25.1": "Penyakit jantung koroner aterosklerotik (penumpukan plak di arteri jantung)",
+  "I25.10": "Penyakit jantung koroner aterosklerotik tanpa angina (nyeri dada)",
+  "I25.11": "Penyakit jantung koroner dengan angina pectoris (nyeri dada saat aktivitas)",
+  "E11": "Diabetes mellitus tipe 2 (kadar gula darah tinggi karena resistensi insulin)",
+  "E11.9": "Diabetes mellitus tipe 2 tanpa komplikasi",
+  "J18.9": "Pneumonia (radang paru-paru) dengan penyebab tidak spesifik",
+  "K35.8": "Appendicitis akut (radang usus buntu) dengan kondisi spesifik lainnya",
+  "K35.80": "Appendicitis akut tanpa perforasi atau abses",
+  "O80": "Persalinan normal spontan tanpa komplikasi",
+  "J06.9": "Infeksi saluran pernapasan atas akut tanpa lokasi spesifik",
+  "A09": "Diare dan gastroenteritis akibat infeksi (muntah dan BAB cair)",
+  "H66.9": "Otitis media (radang telinga tengah) tanpa spesifikasi",
+  "N39.0": "Infeksi saluran kemih tanpa lokasi spesifik",
+  "K29.7": "Gastritis kronik tanpa perdarahan",
+  "M79.3": "Panniculitis (peradangan jaringan lemak di bawah kulit)",
+  "I10": "Hipertensi esensial (tekanan darah tinggi tanpa penyebab jelas)",
+  "E78.5": "Hyperlipidemia (kadar lemak darah tinggi) tidak spesifik",
+  "J00": "Nasofaringitis akut (common cold/pilek biasa)"
+}

@@ -3,7 +3,7 @@ ICD-9 Smart Service - Standalone
 Database-first approach with AI normalization fallback
 
 Flow:
-1. Exact search di database icd9cm_master
+1. Smart keyword search di database icd9cm_master
 2. Jika tidak ada → AI normalization (GPT-4o-mini)
 3. Validate AI suggestions dengan database
 4. Return results
@@ -17,6 +17,14 @@ from typing import Dict, List, Optional
 import json
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Import smart matcher
+try:
+    from services.smart_icd_matcher import smart_search_icd9, auto_select_best_match
+    SMART_MATCHER_AVAILABLE = True
+except ImportError:
+    print("[ICD9] Warning: Smart matcher not available")
+    SMART_MATCHER_AVAILABLE = False
 
 
 def exact_search_icd9(procedure_input: str) -> Optional[Dict]:
@@ -442,14 +450,15 @@ def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
 
 def lookup_icd9_procedure(procedure_input: str) -> Dict:
     """
-    Main orchestrator - Enhanced 3-step flow.
+    Main orchestrator - Enhanced 4-step flow with SMART MATCHER.
     
     Flow:
         1. Exact search di database
-        2. Partial/fuzzy search di database
-        3. Jika tidak ada → AI normalization
-        4. Validate AI suggestions
-        5. Return results
+        2. Smart keyword search (NEW!)
+        3. Partial/fuzzy search di database
+        4. Jika tidak ada → AI normalization
+        5. Validate AI suggestions
+        6. Return results
     
     Args:
         procedure_input: Input dari user
@@ -483,8 +492,39 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
             "needs_selection": False
         }
     
-    # STEP 2: Partial/fuzzy search (NEW!)
-    print(f"[ICD9] 🔍 No exact match, trying partial search...")
+    # STEP 2: SMART KEYWORD SEARCH (NEW!)
+    if SMART_MATCHER_AVAILABLE:
+        try:
+            print(f"[ICD9] 🔍 No exact match, trying smart keyword search...")
+            smart_matches = smart_search_icd9(procedure_input, limit=10)
+            
+            if smart_matches:
+                # Try auto-select best match
+                best_match = auto_select_best_match(smart_matches)
+                
+                if best_match:
+                    print(f"[ICD9] ✅ Smart match (auto-selected): {best_match['name']} ({best_match['confidence']}%)")
+                    return {
+                        "status": "success",
+                        "result": best_match,
+                        "suggestions": [],
+                        "needs_selection": False
+                    }
+                else:
+                    # Multiple matches, high confidence but needs selection
+                    print(f"[ICD9] 🔍 Found {len(smart_matches)} smart matches, needs selection")
+                    return {
+                        "status": "suggestions",
+                        "result": None,
+                        "suggestions": smart_matches,
+                        "needs_selection": True,
+                        "message": f"Found {len(smart_matches)} possible matches. Please select:"
+                    }
+        except Exception as e:
+            print(f"[ICD9] ⚠️ Smart matcher failed: {e}")
+    
+    # STEP 3: Partial/fuzzy search (fallback)
+    print(f"[ICD9] 🔍 Trying partial search...")
     partial_matches = partial_search_icd9(procedure_input, limit=10)
     
     if partial_matches:
@@ -508,8 +548,8 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
                 "message": f"Found {len(partial_matches)} possible matches. Please select:"
             }
     
-    # STEP 3: AI normalization (fallback)
-    print(f"[ICD9] 🤖 No partial matches, using AI normalization...")
+    # STEP 4: AI normalization (last resort)
+    print(f"[ICD9] 🤖 No matches, using AI normalization...")
     ai_suggestions = normalize_procedure_with_ai(procedure_input)
     
     if not ai_suggestions:
@@ -522,7 +562,7 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
             "message": "AI could not normalize input. Please rephrase."
         }
     
-    # STEP 4: Validate AI suggestions
+    # STEP 5: Validate AI suggestions
     valid_matches = validate_ai_suggestions(ai_suggestions)
     
     if len(valid_matches) == 0:
