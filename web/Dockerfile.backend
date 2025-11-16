@@ -1,24 +1,38 @@
-# Use Node.js 20 LTS
-FROM node:20-alpine
+# syntax=docker/dockerfile:1
 
-# Set working directory
+############################
+# 1. Base deps (install node_modules)
+############################
+FROM node:20-alpine AS deps
+
 WORKDIR /app
 
-# Install curl for healthcheck
-RUN apk add --no-cache curl
-
-# Copy package files
+# Copy package definitions
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install hanya dependencies (pakai lockfile kalau ada)
+# npm ci lebih cepat & repeatable
+RUN npm ci --omit=dev
 
-# Copy server code
-COPY server ./server
-COPY tsconfig*.json ./
 
-# Expose port 3001
+############################
+# 2. Runtime backend
+############################
+FROM node:20-alpine AS backend
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# Copy node_modules dari stage deps
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy seluruh kode web (backend + config yang dibutuhkan)
+COPY . .
+
+# Port backend
 EXPOSE 3001
 
-# Run the backend server
-CMD ["npm", "run", "server"]
+# SESUAIKAN dengan script yang kamu pakai di package.json
+# misal kamu punya:  "start:api": "node server/index.js"
+CMD ["npm", "run", "start:api"]

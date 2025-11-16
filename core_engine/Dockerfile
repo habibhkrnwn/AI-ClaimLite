@@ -1,36 +1,35 @@
-# Dockerfile untuk AI-CLAIM Lite Core Engine
+# syntax=docker/dockerfile:1
+
 FROM python:3.11-slim
 
-# Set working directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies including curl for healthcheck
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
     gcc \
-    g++ \
-    libpq-dev \
-    pkg-config \
+    postgresql-client \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
+# Copy requirements and install dependencies
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy source code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/temp
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Expose port
+# Port API
 EXPOSE 8000
 
-# Run application
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Start server
 CMD ["python", "main.py"]

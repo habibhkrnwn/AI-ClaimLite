@@ -1,20 +1,18 @@
 services:
-  # Core Engine (Python FastAPI)
+  # ============================
+  # Core Engine (Python)
+  # ============================
   core_engine:
     build:
       context: ./core_engine
       dockerfile: Dockerfile
-    container_name: aiclaimlite-core-engine
-    ports:
-      - "8000:8000"
+    container_name: aiclaimlite-core-engine-prod
     env_file:
       - ./core_engine/.env
     environment:
       - PYTHONUNBUFFERED=1
-    volumes:
-      - ./core_engine:/app
-      - /app/__pycache__
-    command: python main.py
+    ports:
+      - "8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -23,24 +21,28 @@ services:
       start_period: 40s
     networks:
       - aiclaimlite-network
-    restart: unless-stopped
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Web Backend (Node.js + Express)
+  # ============================
+  # Web Backend (Node API)
+  # ============================
   web_backend:
     build:
       context: ./web
       dockerfile: server/Dockerfile
-    container_name: aiclaimlite-web-backend
-    ports:
-      - "3001:3001"
+    container_name: aiclaimlite-web-backend-prod
     env_file:
       - ./web/.env
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - CORE_ENGINE_URL=http://core_engine:8000
-    volumes:
-      - ./web:/app
-      - /app/node_modules
+    ports:
+      - "3001:3001"
     depends_on:
       core_engine:
         condition: service_healthy
@@ -52,24 +54,37 @@ services:
       start_period: 60s
     networks:
       - aiclaimlite-network
-    restart: unless-stopped
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Web Frontend (Vite)
+  # ============================
+  # Web Frontend (Vite build + NGINX)
+  # ============================
   web_frontend:
     build:
       context: ./web
       dockerfile: Dockerfile
-    container_name: aiclaimlite-web-frontend
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:3001}
+    container_name: aiclaimlite-web-frontend-prod
+    # NGINX listen di port 80, kita expose ke 80 atau 5173 publik
     ports:
-      - "5173:80"
-    environment:
-      - VITE_API_URL=http://localhost:3001
+      - "80:80"
     depends_on:
       web_backend:
         condition: service_healthy
     networks:
       - aiclaimlite-network
-    restart: unless-stopped
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   aiclaimlite-network:
