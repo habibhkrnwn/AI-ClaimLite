@@ -1,3 +1,0 @@
-@echo off
-echo Starting AI-CLAIM Lite Core Engine...
-python main.py

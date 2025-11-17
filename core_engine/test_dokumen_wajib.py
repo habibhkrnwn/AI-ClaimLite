@@ -108,8 +108,8 @@ def test_endpoint_get_dokumen_wajib():
                 print(f"   📊 Total Dokumen: {result['total_dokumen']}")
                 
                 # Tampilkan 3 dokumen pertama saja
-                print(f"   📋 Sample Dokumen (3 pertama):")
-                for dok in result['dokumen_list'][:3]:
+                print(f"   📋 List Dokumen:")
+                for dok in result['dokumen_list']:
                     # Icon berdasarkan status
                     if dok['status'].lower() == 'wajib':
                         icon = "☑"

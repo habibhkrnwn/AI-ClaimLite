@@ -27,7 +27,8 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from openai import OpenAI
-from fuzzywuzzy import fuzz
+# Note: fuzzywuzzy removed per new flow (we rely on exact DB match + AI normalization)
+import threading
 
 # Import database
 import sys
@@ -37,6 +38,26 @@ from database_connection import SessionLocal
 from models import FornasDrug
 
 logger = logging.getLogger(__name__)
+
+# Module-level, thread-safe cache for normalizer to be shared across instances/workers (in-process)
+_NORMALIZER_CACHE: Dict[str, Dict[str, Any]] = {}
+_NORMALIZER_LOCK = threading.Lock()
+
+
+def _normalize_text_for_matching(s: str) -> str:
+    """Normalize text for matching: lowercase, remove dosage/route tokens, punctuation, normalize whitespace."""
+    if not s:
+        return ""
+    x = s.lower()
+    # remove dosage tokens
+    x = re.sub(r'\d+\s*(mg|g|ml|mcg|iu|cc)\b', '', x, flags=re.IGNORECASE)
+    # remove route/administration words
+    x = re.sub(r'\b(iv|im|sc|po|oral|injeksi|infus|tablet|kapsul)\b', '', x, flags=re.IGNORECASE)
+    # remove punctuation
+    x = re.sub(r'[^a-z0-9\s]', ' ', x)
+    # collapse whitespace
+    x = re.sub(r'\s+', ' ', x).strip()
+    return x
 
 
 # ============================================================
@@ -64,65 +85,43 @@ def db_exact_match(drug_name: str) -> Optional[FornasDrug]:
     """Exact match dengan obat_name atau kode_fornas"""
     db = SessionLocal()
     try:
-        # Try obat_name first
+        # Try obat_name first (case-insensitive exact-ish)
         result = db.query(FornasDrug).filter(
             FornasDrug.obat_name.ilike(drug_name)
         ).first()
-        
+
         if result:
             return result
-        
-        # Try kode_fornas
+
+        # Try kode_fornas exact
         result = db.query(FornasDrug).filter(
             FornasDrug.kode_fornas.ilike(drug_name)
         ).first()
-        
-        return result
+
+        if result:
+            return result
+
+        # Fallback: normalized matching against candidates from keyword search
+        cleaned = _normalize_text_for_matching(drug_name)
+        if not cleaned:
+            return None
+
+        candidates = db.query(FornasDrug).filter(
+            FornasDrug.obat_name.ilike(f"%{cleaned}%")
+        ).limit(50).all()
+
+        for c in candidates:
+            if _normalize_text_for_matching(c.obat_name) == cleaned:
+                return c
+
+        return None
     finally:
         db.close()
 
 
 def db_fuzzy_match(drug_name: str, threshold: int = 85) -> Optional[Dict]:
-    """Fuzzy match dengan semua obat di database"""
-    db = SessionLocal()
-    try:
-        all_drugs = db.query(FornasDrug).all()
-        
-        best_match = None
-        best_score = 0
-        
-        normalized_input = drug_name.lower().strip()
-        
-        for drug in all_drugs:
-            # Compare with obat_name
-            score = fuzz.ratio(normalized_input, drug.obat_name.lower())
-            
-            if score > best_score and score >= threshold:
-                best_score = score
-                best_match = drug
-            
-            # Compare with aliases if exists
-            if drug.nama_obat_alias:
-                try:
-                    aliases = json.loads(drug.nama_obat_alias) if isinstance(drug.nama_obat_alias, str) else drug.nama_obat_alias
-                    for alias in aliases:
-                        alias_score = fuzz.ratio(normalized_input, alias.lower())
-                        if alias_score > best_score and alias_score >= threshold:
-                            best_score = alias_score
-                            best_match = drug
-                except:
-                    pass
-        
-        if best_match:
-            return {
-                "drug": best_match,
-                "confidence": best_score,
-                "strategy": "fuzzy"
-            }
-        
-        return None
-    finally:
-        db.close()
+    """Deprecated: fuzzy matching removed in new flow. Keep function for compatibility but it returns None."""
+    return None
 
 
 def db_search_by_keywords(keywords: str, limit: int = 20) -> List[FornasDrug]:
@@ -133,6 +132,36 @@ def db_search_by_keywords(keywords: str, limit: int = 20) -> List[FornasDrug]:
             FornasDrug.obat_name.ilike(f"%{keywords}%")
         ).limit(limit).all()
         
+        return results
+    finally:
+        db.close()
+
+
+def db_search_by_subkelas(subkelas: str, limit: int = 50) -> List[FornasDrug]:
+    """Search obat berdasarkan subkelas_terapi (preferensi untuk rekomendasi)"""
+    if not subkelas:
+        return []
+    db = SessionLocal()
+    try:
+        results = db.query(FornasDrug).filter(
+            FornasDrug.subkelas_terapi.ilike(f"%{subkelas}%")
+        ).limit(limit).all()
+
+        return results
+    finally:
+        db.close()
+
+
+def db_search_by_kelas(kelas: str, limit: int = 50) -> List[FornasDrug]:
+    """Search obat berdasarkan kelas_terapi (fallback jika subkelas tidak ada)"""
+    if not kelas:
+        return []
+    db = SessionLocal()
+    try:
+        results = db.query(FornasDrug).filter(
+            FornasDrug.kelas_terapi.ilike(f"%{kelas}%")
+        ).limit(limit).all()
+
         return results
     finally:
         db.close()
@@ -179,11 +208,27 @@ class FornasAINormalizer:
                 "method": "ai_rag"
             }
         """
-        # Check cache
-        cache_key = drug_name.lower().strip()
-        if cache_key in self._cache:
+        # Check module-level cache (thread-safe)
+        cache_key = _normalize_text_for_matching(drug_name)
+        with _NORMALIZER_LOCK:
+            cached = _NORMALIZER_CACHE.get(cache_key)
+        if cached:
             logger.info(f"[FORNAS_AI] Cache hit for: {drug_name}")
-            return self._cache[cache_key]
+            # reconstruct db_match object if possible
+            db_match = None
+            if cached.get("kode_fornas"):
+                db_match = db_exact_match(cached.get("kode_fornas"))
+            elif cached.get("normalized_name"):
+                db_match = db_exact_match(cached.get("normalized_name"))
+
+            return {
+                "original_input": drug_name,
+                "normalized_name": cached.get("normalized_name") or drug_name,
+                "found_in_db": cached.get("found_in_db", False),
+                "db_match": db_match,
+                "confidence": cached.get("confidence", 0),
+                "method": "ai_rag_cached"
+            }
         
         # Get database context if not provided
         if not db_context:
@@ -193,14 +238,14 @@ class FornasAINormalizer:
         # Build RAG prompt
         prompt = self._build_rag_prompt(drug_name, db_context)
         
-        # Call AI
+        # Call AI (robust parsing)
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "system",
-                        "content": "Anda adalah expert farmasi Indonesia. Tugas Anda: normalisasi nama obat ke terminologi Indonesia yang PASTI ADA di database FORNAS."
+                        "content": "Anda adalah expert farmasi Indonesia. Tugas Anda: normalisasi nama obat ke terminologi Indonesia yang PASTI ADA di database FORNAS. Kembalikan hanya objek JSON sesuai format yang diminta."
                     },
                     {
                         "role": "user",
@@ -211,40 +256,96 @@ class FornasAINormalizer:
                 max_tokens=150,
                 response_format={"type": "json_object"}
             )
-            
-            ai_result = json.loads(response.choices[0].message.content)
-            normalized_name = ai_result.get("normalized_name", "").strip()
-            
-            logger.info(f"[FORNAS_AI] AI normalized '{drug_name}' → '{normalized_name}'")
-            
-            # Validate dengan database
-            db_match = db_exact_match(normalized_name)
-            
-            if not db_match:
-                # Try fuzzy match dengan AI result
-                fuzzy_result = db_fuzzy_match(normalized_name, threshold=80)
-                if fuzzy_result:
-                    db_match = fuzzy_result["drug"]
-                    confidence = fuzzy_result["confidence"]
-                else:
-                    confidence = 0
+
+            # SDK may already return a parsed object or a JSON string
+            raw_content = None
+            try:
+                raw_content = response.choices[0].message.content
+            except Exception:
+                # Fallback if different shape
+                raw_content = getattr(response.choices[0].message, 'content', None) or response.choices[0].get('text')
+
+            if isinstance(raw_content, (dict, list)):
+                ai_result = raw_content
             else:
-                confidence = 100
-            
+                try:
+                    ai_result = json.loads(raw_content or "{}")
+                except Exception:
+                    ai_result = {}
+
+            normalized_name = (ai_result.get("normalized_name") or "").strip()
+
+            logger.info(f"[FORNAS_AI] AI normalized '{drug_name}' → '{normalized_name}'")
+
+            # Validate with exact DB match only (no fuzzy)
+            db_match = db_exact_match(normalized_name)
+            confidence = 100 if db_match else 0
+
+            # If AI returned a normalized_name but no DB match, attempt one retry with stricter prompt
+            if normalized_name and not db_match:
+                try:
+                    retry_prompt = (
+                        "Pilih SATU nama obat PERSIS dari konteks database di bawah yang paling sesuai dengan input. "
+                        "Kembalikan hanya JSON: {\"normalized_name\": \"...\", \"confidence\": 100}.\n\n"
+                        f"INPUT: {drug_name}\nDATABASE CONTEXT:\n" + "\n".join([f"- {n}" for n in (db_context or [])[:15]])
+                    )
+
+                    retry_resp = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "Anda adalah expert farmasi Indonesia. RETURN ONLY JSON."},
+                            {"role": "user", "content": retry_prompt}
+                        ],
+                        temperature=0.0,
+                        max_tokens=80,
+                        response_format={"type": "json_object"}
+                    )
+
+                    raw_retry = None
+                    try:
+                        raw_retry = retry_resp.choices[0].message.content
+                    except Exception:
+                        raw_retry = getattr(retry_resp.choices[0].message, 'content', None) or retry_resp.choices[0].get('text')
+
+                    if isinstance(raw_retry, (dict, list)):
+                        retry_ai = raw_retry
+                    else:
+                        try:
+                            retry_ai = json.loads(raw_retry or "{}")
+                        except Exception:
+                            retry_ai = {}
+
+                    retry_name = (retry_ai.get("normalized_name") or "").strip()
+                    if retry_name:
+                        db_match = db_exact_match(retry_name)
+                        if db_match:
+                            normalized_name = retry_name
+                            confidence = 100
+                except Exception:
+                    # swallow retry errors but keep original result
+                    pass
+
             result = {
                 "original_input": drug_name,
-                "normalized_name": normalized_name,
+                "normalized_name": normalized_name or drug_name,
                 "found_in_db": db_match is not None,
                 "db_match": db_match,
                 "confidence": confidence,
                 "method": "ai_rag"
             }
-            
-            # Cache result
-            self._cache[cache_key] = result
-            
+
+            # Cache minimal result (do not cache DB objects)
+            cache_value = {
+                "normalized_name": result["normalized_name"],
+                "found_in_db": result["found_in_db"],
+                "kode_fornas": result["db_match"].kode_fornas if result["db_match"] else None,
+                "confidence": result["confidence"]
+            }
+            with _NORMALIZER_LOCK:
+                _NORMALIZER_CACHE[cache_key] = cache_value
+
             return result
-            
+
         except Exception as e:
             logger.error(f"[FORNAS_AI] Normalization failed for '{drug_name}': {e}")
             return {
@@ -254,6 +355,177 @@ class FornasAINormalizer:
                 "db_match": None,
                 "confidence": 0,
                 "method": "failed",
+                "error": str(e)
+            }
+
+    def generate_recommendations(self, drug_name: str, max_recommend: int = 5) -> Dict[str, Any]:
+        """
+        Generate recommended alternative drugs based on input.
+
+        Flow:
+        1. Try DB exact match, if fails → normalize with AI first
+        2. Collect DB context with FALLBACK HIERARCHY:
+           - Priority 1: Same subkelas_terapi (most specific)
+           - Priority 2: Same kelas_terapi (broader category)
+           - Priority 3: Keyword-based search (least specific)
+        3. Ask AI to rank up to `max_recommend` recommended drugs from context with short reasons
+        4. Map recommendations to DB records and return structured list
+        """
+        # Prepare context from DB
+        # First try to find a DB match for the input to get subkelas_terapi
+        db_match_for_input = db_exact_match(drug_name)
+        
+        # If no match, try AI normalization first
+        normalized_name = drug_name
+        if not db_match_for_input:
+            try:
+                norm_result = self.normalize_to_indonesian(drug_name)
+                if norm_result.get('normalized_name'):
+                    normalized_name = norm_result['normalized_name']
+                    db_match_for_input = db_exact_match(normalized_name)
+                    logger.info(f"[FORNAS_AI] Normalized '{drug_name}' → '{normalized_name}' for recommendations")
+            except Exception as e:
+                logger.warning(f"[FORNAS_AI] Normalization failed for '{drug_name}': {e}")
+
+        # IMPROVED: Fallback hierarchy untuk build kandidat pool
+        similar = []
+        context_strategy = "unknown"
+        
+        if db_match_for_input:
+            # Priority 1: Subkelas terapi (paling spesifik)
+            subkelas = getattr(db_match_for_input, 'subkelas_terapi', None)
+            if subkelas and subkelas.strip():
+                similar = db_search_by_subkelas(subkelas, limit=50)
+                context_strategy = f"subkelas_terapi: {subkelas}"
+                logger.info(f"[FORNAS_AI] Found {len(similar)} drugs with same subkelas_terapi")
+            
+            # Priority 2: Kelas terapi (jika subkelas kosong atau hasil < 5)
+            if len(similar) < 5:
+                kelas = getattr(db_match_for_input, 'kelas_terapi', None)
+                if kelas and kelas.strip():
+                    kelas_results = db_search_by_kelas(kelas, limit=50)
+                    # Merge dengan hasil subkelas (jika ada) dan deduplicate
+                    existing_ids = {d.id for d in similar if hasattr(d, 'id')}
+                    for drug in kelas_results:
+                        if not hasattr(drug, 'id') or drug.id not in existing_ids:
+                            similar.append(drug)
+                    context_strategy = f"kelas_terapi: {kelas}"
+                    logger.info(f"[FORNAS_AI] Expanded to {len(similar)} drugs with same kelas_terapi")
+        
+        # Priority 3: Keyword search (jika masih < 10 atau tidak ada db_match)
+        if len(similar) < 10:
+            keyword_results = db_search_by_keywords(normalized_name, limit=30)
+            existing_ids = {d.id for d in similar if hasattr(d, 'id')}
+            for drug in keyword_results:
+                if not hasattr(drug, 'id') or drug.id not in existing_ids:
+                    similar.append(drug)
+            context_strategy = f"keyword: {normalized_name}"
+            logger.info(f"[FORNAS_AI] Expanded to {len(similar)} drugs with keyword search")
+
+        context_names = [d.obat_name for d in similar]
+
+        # Fallback: jika masih kosong, ambil sample dari DB
+        if not context_names:
+            all_names = db_get_all_drug_names()
+            context_names = [d["obat_name"] for d in all_names[:30]]
+            context_strategy = "random_sample"
+            logger.warning(f"[FORNAS_AI] No specific context found, using random sample")
+
+        # IMPROVED: Better prompt dengan instruksi lebih jelas
+        prompt = f"""Berikan maksimal {max_recommend} rekomendasi obat yang paling relevan sebagai alternatif atau yang berada di kelas terapi serupa untuk input: \"{drug_name}\".
+
+INSTRUKSI:
+- Pilih obat yang memiliki indikasi/mekanisme aksi SERUPA
+- Return HANYA nama generik obat (tanpa dosis, tanpa bentuk sediaan)
+- Berikan alasan farmakologis singkat untuk setiap rekomendasi
+
+DATABASE CONTEXT (obat yang tersedia):
+"""
+        prompt += "\n".join([f"- {n}" for n in context_names[:25]])
+        prompt += "\n\nOUTPUT FORMAT (JSON): {\n  \"recommendations\": [ {\"name\": \"nama generik saja\", \"reason\": \"alasan farmakologis\"} ]\n}"
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "Anda adalah expert farmasi Indonesia. Berikan rekomendasi obat berdasarkan context yang diberikan. Return HANYA nama generik tanpa dosis. Kembalikan hanya JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=800,
+                response_format={"type": "json_object"}
+            )
+
+            raw = None
+            try:
+                raw = response.choices[0].message.content
+            except Exception:
+                raw = getattr(response.choices[0].message, 'content', None) or response.choices[0].get('text')
+
+            if isinstance(raw, (dict, list)):
+                ai_res = raw
+            else:
+                try:
+                    ai_res = json.loads(raw or "{}")
+                except Exception:
+                    ai_res = {}
+
+            recs = ai_res.get("recommendations", []) if isinstance(ai_res, dict) else []
+
+            structured = []
+            for r in recs[:max_recommend]:
+                name = (r.get("name") or r.get("nama") or "").strip()
+                reason = (r.get("reason") or r.get("alasan") or "").strip()
+                if not name:
+                    continue
+
+                # IMPROVED: Clean AI output (hapus dosis jika ada)
+                name_cleaned = _normalize_text_for_matching(name)
+
+                # Map to DB
+                db_match = db_exact_match(name_cleaned)
+                if not db_match:
+                    # try partial search
+                    candidates = db_search_by_keywords(name_cleaned, limit=1)
+                    db_match = candidates[0] if candidates else None
+
+                structured.append({
+                    "recommended_name": name_cleaned,
+                    "reason": reason or "Direkomendasikan AI berdasarkan nama/kelas terapi",
+                    "db_match": db_match,
+                    "context_strategy": context_strategy  # Debug info
+                })
+
+            # Fallback: if AI gave nothing, return top candidates from DB
+            if not structured and similar:
+                logger.warning(f"[FORNAS_AI] AI returned no recommendations, using DB fallback")
+                for d in similar[:max_recommend]:
+                    structured.append({
+                        "recommended_name": d.obat_name,
+                        "reason": "Obat sejenis dari database (fallback)",
+                        "db_match": d,
+                        "context_strategy": context_strategy
+                    })
+
+            return {
+                "original_input": drug_name,
+                "recommendations": structured
+            }
+
+        except Exception as e:
+            logger.error(f"[FORNAS_AI] Recommendation generation failed for '{drug_name}': {e}")
+            # Fallback to DB-only suggestions
+            fallback = []
+            for d in similar[:max_recommend]:
+                fallback.append({
+                    "recommended_name": d.obat_name,
+                    "reason": "Similar name / keyword match",
+                    "db_match": d
+                })
+
+            return {
+                "original_input": drug_name,
+                "recommendations": fallback,
                 "error": str(e)
             }
     
@@ -358,20 +630,10 @@ class FornasSmartMatcher:
                 "matched_name": exact_result.obat_name
             }
         
-        # Strategy 2: Fuzzy match
-        fuzzy_result = db_fuzzy_match(cleaned_name, threshold=threshold)
-        if fuzzy_result:
-            logger.info(f"[FORNAS_MATCH] ✓ Fuzzy match found (score: {fuzzy_result['confidence']})")
-            return {
-                "found": True,
-                "drug": fuzzy_result["drug"],
-                "confidence": fuzzy_result["confidence"],
-                "strategy": "fuzzy",
-                "original_input": drug_name,
-                "matched_name": fuzzy_result["drug"].obat_name
-            }
+        # Note: fuzzy matching removed from flow. We rely on exact match first,
+        # then AI normalization if enabled.
         
-        # Strategy 3: AI normalization (jika enabled)
+        # Strategy 2: AI normalization (jika enabled)
         if use_ai:
             logger.info(f"[FORNAS_MATCH] Trying AI normalization...")
             ai_result = self.ai_normalizer.normalize_to_indonesian(cleaned_name)
@@ -387,7 +649,7 @@ class FornasSmartMatcher:
                     "matched_name": ai_result["normalized_name"]
                 }
         
-        # Not found
+    # Not found
         logger.warning(f"[FORNAS_MATCH] ✗ No match found for: {drug_name}")
         return self._not_found_result(drug_name)
     
@@ -473,35 +735,31 @@ class FornasBatchValidator:
         
         logger.info(f"[FORNAS_BATCH] Validating {len(drug_list)} drugs")
         
-        # Step 1: Match all drugs ke database
-        matched_drugs = []
-        for drug_name in drug_list:
-            if not drug_name or drug_name.strip() == "":
-                continue
-            
-            match_result = self.matcher.match(drug_name, use_ai=True)
-            matched_drugs.append(match_result)
-        
-        logger.info(f"[FORNAS_BATCH] Matched {sum(1 for m in matched_drugs if m['found'])} / {len(matched_drugs)} drugs")
-        
-        # Step 2: Separate found vs not found
+        # Step 1: For new flow, we assume input drug names are selected by user
+        # (either canonical names or raw input). Validation only runs for names
+        # that exist in the FORNAS DB. Do not call AI normalization here.
         fornas_drugs = []
         non_fornas_drugs = []
-        
-        for idx, match in enumerate(matched_drugs, 1):
-            if match["found"]:
-                drug = match["drug"]
+
+        for idx, drug_name in enumerate(drug_list, 1):
+            if not drug_name or drug_name.strip() == "":
+                continue
+
+            cleaned = self.matcher._clean_drug_name(drug_name)
+            db_match = db_exact_match(cleaned)
+
+            if db_match:
                 fornas_drugs.append({
                     "index": idx,
-                    "nama_obat": drug.obat_name,
-                    "kelas_terapi": drug.kelas_terapi or "Tidak tersedia",
-                    "sumber_regulasi": drug.sumber_regulasi or "-",
-                    "original_input": match["original_input"]
+                    "nama_obat": db_match.obat_name,
+                    "kelas_terapi": db_match.kelas_terapi or "Tidak tersedia",
+                    "sumber_regulasi": db_match.sumber_regulasi or "-",
+                    "original_input": drug_name
                 })
             else:
                 non_fornas_drugs.append({
                     "no": idx,
-                    "nama_obat": match["original_input"],
+                    "nama_obat": drug_name,
                     "kelas_terapi": "Tidak ditemukan di FORNAS",
                     "status_fornas": "❌ Non-Fornas",
                     "catatan_ai": "Obat tidak terdaftar dalam Formularium Nasional",
@@ -678,6 +936,20 @@ def match_drug(drug_name: str, use_ai: bool = True) -> Dict[str, Any]:
     """
     matcher = FornasSmartMatcher()
     return matcher.match(drug_name, use_ai=use_ai)
+
+
+def recommend_drug(drug_input: str, max_recommend: int = 5) -> Dict[str, Any]:
+    """
+    Generate AI-backed recommendations for a drug input (used when user clicks 'Generate AI').
+
+    Returns:
+        {
+            "original_input": str,
+            "recommendations": [ {"recommended_name": str, "reason": str, "db_match": FornasDrug|None}, ... ]
+        }
+    """
+    normalizer = FornasAINormalizer()
+    return normalizer.generate_recommendations(drug_input, max_recommend=max_recommend)
 
 
 def validate_fornas(

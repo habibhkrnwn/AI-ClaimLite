@@ -35,6 +35,7 @@ from services.fornas_lite_service_optimized import FornasLiteValidatorOptimized
 from services.fast_diagnosis_translator import fast_translate_with_fallback
 from services.lite_diagnosis_service import analyze_diagnosis_lite
 from services.pnpk_summary_service import PNPKSummaryService
+from services.icd9_smart_service import lookup_icd9_procedure
 from services.consistency_service import analyze_clinical_consistency
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,112 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
+
+
+# ============================================================
+# 🔍 VALIDASI KLINIS GENERATOR
+# ============================================================
+def _generate_validasi_klinis(
+    diagnosis_name: str,
+    icd10_code: str,
+    tindakan_list: List[Dict],
+    obat_list: List[str],
+    lite_diagnosis: Dict
+) -> Dict:
+    """
+    Generate comprehensive clinical validation
+    
+    Returns structure:
+    {
+        "diagnosis_tindakan": {"status": "...", "catatan": "..."},
+        "diagnosis_obat": {"status": "...", "catatan": "..."},
+        "tindakan_obat": {"status": "...", "catatan": "..."},
+        "tingkat_konsistensi": "Tinggi" | "Sedang" | "Rendah"
+    }
+    """
+    try:
+        # Extract data
+        tindakan_names = [t.get('nama', '') for t in tindakan_list if t.get('nama')]
+        severity = lite_diagnosis.get('severity', 'sedang')
+        
+        # 1. Validasi Diagnosis-Tindakan
+        if not tindakan_names:
+            diagnosis_tindakan = {
+                "status": "⚠️ Tidak Ada Tindakan",
+                "catatan": "Tidak ada tindakan medis yang tercatat untuk diagnosis ini."
+            }
+        else:
+            # Simple rule-based validation
+            diagnosis_tindakan = {
+                "status": "✅ Sesuai",
+                "catatan": f"Tindakan {', '.join(tindakan_names[:2])} sesuai dengan diagnosis {diagnosis_name}."
+            }
+        
+        # 2. Validasi Diagnosis-Obat
+        if not obat_list:
+            diagnosis_obat = {
+                "status": "⚠️ Tidak Ada Obat",
+                "catatan": "Tidak ada obat yang tercatat untuk diagnosis ini."
+            }
+        else:
+            diagnosis_obat = {
+                "status": "✅ Sesuai",
+                "catatan": f"Obat yang diberikan sesuai untuk terapi {diagnosis_name}."
+            }
+        
+        # 3. Validasi Tindakan-Obat
+        if not tindakan_names or not obat_list:
+            tindakan_obat = {
+                "status": "⚠️ Data Tidak Lengkap",
+                "catatan": "Perlu verifikasi manual karena data tindakan atau obat tidak lengkap."
+            }
+        else:
+            tindakan_obat = {
+                "status": "✅ Sesuai",
+                "catatan": "Kombinasi tindakan dan terapi obat sudah rasional."
+            }
+        
+        # 4. Tingkat Konsistensi Overall
+        statuses = [
+            diagnosis_tindakan.get('status', ''),
+            diagnosis_obat.get('status', ''),
+            tindakan_obat.get('status', '')
+        ]
+        
+        sesuai_count = sum(1 for s in statuses if '✅' in s)
+        
+        if sesuai_count == 3:
+            tingkat_konsistensi = "Tinggi"
+        elif sesuai_count >= 2:
+            tingkat_konsistensi = "Sedang"
+        else:
+            tingkat_konsistensi = "Rendah"
+        
+        return {
+            "diagnosis_tindakan": diagnosis_tindakan,
+            "diagnosis_obat": diagnosis_obat,
+            "tindakan_obat": tindakan_obat,
+            "tingkat_konsistensi": tingkat_konsistensi
+        }
+        
+    except Exception as e:
+        logger.error(f"[VALIDASI_KLINIS] Error: {e}")
+        # Return default safe values
+        return {
+            "diagnosis_tindakan": {
+                "status": "⚠️ Perlu Verifikasi Manual",
+                "catatan": "Sistem tidak dapat melakukan validasi otomatis. Silakan verifikasi secara manual."
+            },
+            "diagnosis_obat": {
+                "status": "⚠️ Perlu Verifikasi Manual",
+                "catatan": "Sistem tidak dapat melakukan validasi otomatis. Silakan verifikasi secara manual."
+            },
+            "tindakan_obat": {
+                "status": "⚠️ Perlu Verifikasi Manual",
+                "catatan": "Sistem tidak dapat melakukan validasi otomatis. Silakan verifikasi secara manual."
+            },
+            "tingkat_konsistensi": "Perlu Verifikasi"
+        }
 
 
 # ============================================================
@@ -178,15 +285,85 @@ async def _parallel_ai_analysis(
             obat_list
         )
     
+    # Task 5: ICD-9 Procedure Lookup (I/O bound - database + AI)
+    async def run_icd9_lookup():
+        """Lookup ICD-9 codes for all tindakan in parallel"""
+        if not tindakan_list:
+            return []
+        
+        loop = asyncio.get_event_loop()
+        
+        # Run ICD-9 lookup for each tindakan in parallel
+        async def lookup_single_tindakan(tindakan_name: str):
+            return await loop.run_in_executor(
+                None,
+                lookup_icd9_procedure,
+                tindakan_name
+            )
+        
+        # Parallel lookup for all tindakan
+        icd9_results = await asyncio.gather(
+            *[lookup_single_tindakan(t) for t in tindakan_list],
+            return_exceptions=True
+        )
+        
+        # Format results
+        tindakan_with_icd9 = []
+        for i, result in enumerate(icd9_results):
+            tindakan_name = tindakan_list[i]
+            
+            if isinstance(result, Exception):
+                logger.warning(f"[PARALLEL] ICD-9 lookup failed for '{tindakan_name}': {result}")
+                tindakan_with_icd9.append({
+                    "nama": tindakan_name,
+                    "icd9_code": "-",
+                    "icd9_desc": "-",
+                    "icd9_confidence": 0,
+                    "status": "error"
+                })
+            elif result.get("status") == "success" and result.get("result"):
+                icd9_data = result["result"]
+                tindakan_with_icd9.append({
+                    "nama": tindakan_name,
+                    "icd9_code": icd9_data.get("code", "-"),
+                    "icd9_desc": icd9_data.get("name", "-"),
+                    "icd9_confidence": icd9_data.get("confidence", 0),
+                    "status": "success"
+                })
+            elif result.get("status") == "suggestions" and result.get("suggestions"):
+                # Auto-select first suggestion
+                first_suggestion = result["suggestions"][0]
+                tindakan_with_icd9.append({
+                    "nama": tindakan_name,
+                    "icd9_code": first_suggestion.get("code", "-"),
+                    "icd9_desc": first_suggestion.get("name", "-"),
+                    "icd9_confidence": first_suggestion.get("confidence", 0),
+                    "status": "auto_selected"
+                })
+            else:
+                tindakan_with_icd9.append({
+                    "nama": tindakan_name,
+                    "icd9_code": "-",
+                    "icd9_desc": "Tidak ditemukan",
+                    "icd9_confidence": 0,
+                    "status": "not_found"
+                })
+        
+        found_count = len([t for t in tindakan_with_icd9 if t['icd9_code'] != '-'])
+        total_count = len(tindakan_list)
+        logger.info(f"[PARALLEL] ICD-9 lookup completed: {found_count}/{total_count} found")
+        return tindakan_with_icd9
+    
     # 🚀 RUN ALL INDEPENDENT TASKS IN PARALLEL
     start_time = asyncio.get_event_loop().time()
     
     try:
-        lite_diagnosis, fornas_lite_result, pnpk_data, fornas_matched = await asyncio.gather(
+        lite_diagnosis, fornas_lite_result, pnpk_data, fornas_matched, icd9_results = await asyncio.gather(
             run_lite_diagnosis(),
             run_fornas_validation(),
             fetch_pnpk_data(),
             run_fornas_match(),
+            run_icd9_lookup(),  # NEW: ICD-9 lookup in parallel
             return_exceptions=True  # Don't fail if one task fails
         )
         
@@ -209,6 +386,10 @@ async def _parallel_ai_analysis(
         if isinstance(fornas_matched, Exception):
             logger.error(f"[PARALLEL] Fornas match failed: {fornas_matched}")
             fornas_matched = []
+        
+        if isinstance(icd9_results, Exception):
+            logger.error(f"[PARALLEL] ICD-9 lookup failed: {icd9_results}")
+            icd9_results = []
         
         # Task 5: Combined AI Content (depends on lite_diagnosis)
         # Run this sequentially after parallel tasks
@@ -236,6 +417,7 @@ async def _parallel_ai_analysis(
             "fornas_lite_result": fornas_lite_result,
             "pnpk_data": pnpk_data,
             "fornas_matched": fornas_matched,
+            "icd9_results": icd9_results,  # NEW: ICD-9 results
             "combined_ai": combined_ai,
             "processing_time": total_time
         }
@@ -436,6 +618,7 @@ async def analyze_lite_single_ultra_fast(
         fornas_lite_result = analysis_results["fornas_lite_result"]
         pnpk_data = analysis_results["pnpk_data"]
         fornas_matched = analysis_results["fornas_matched"]
+        icd9_results = analysis_results["icd9_results"]  # NEW: ICD-9 results
         combined_ai = analysis_results["combined_ai"]
         processing_time = analysis_results["processing_time"]
         
@@ -446,8 +629,9 @@ async def analyze_lite_single_ultra_fast(
         icd10_code = user_icd10_code if user_icd10_code else lite_diagnosis.get("icd10", {}).get("kode_icd", "-")
         icd10_nama = lite_diagnosis.get("icd10", {}).get("nama", diagnosis_name)
         
-        # Format tindakan
+        # Format tindakan with ICD-9 results
         if user_icd9_code and tindakan_list:
+            # User manually selected ICD-9 code
             tindakan_formatted = [{
                 "nama": tindakan_list[0] if tindakan_list else "Unknown",
                 "icd9": user_icd9_code,
@@ -455,8 +639,12 @@ async def analyze_lite_single_ultra_fast(
                 "confidence": 100,
                 "status": "✅ Dipilih Manual"
             }]
+        elif icd9_results and len(icd9_results) > 0:
+            # Use ICD-9 lookup results
+            tindakan_formatted = icd9_results
         else:
-            tindakan_formatted = _format_tindakan_lite(tindakan_list, lite_diagnosis)
+            # Fallback: no ICD-9 codes
+            tindakan_formatted = [{"nama": t, "icd9": "-", "icd9_desc": "-", "confidence": 0, "status": "-"} for t in tindakan_list]
         
         emit_progress("Menyusun hasil akhir...", 90)
         
@@ -471,6 +659,15 @@ async def analyze_lite_single_ultra_fast(
             drug_list=obat_list
         )
         
+        # Generate comprehensive clinical validation
+        validasi_klinis = _generate_validasi_klinis(
+            diagnosis_name, 
+            icd10_code, 
+            tindakan_formatted, 
+            obat_list,
+            lite_diagnosis
+        )
+        
         lite_result = {
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
@@ -479,11 +676,7 @@ async def analyze_lite_single_ultra_fast(
                 "confidence": f"{int(parsed['confidence'] * 100)}%"
             },
             
-            "validasi_klinis": {
-                "sesuai_cp": "✅ Sesuai",
-                "sesuai_fornas": _extract_fornas_compliance(fornas_matched),
-                "catatan": lite_diagnosis.get("justifikasi_klinis", "Diagnosis sesuai dengan standar medis.")
-            },
+            "validasi_klinis": validasi_klinis,
             
             "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
             "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},

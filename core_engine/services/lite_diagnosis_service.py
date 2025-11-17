@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 # OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Import smart ICD matcher
+try:
+    from services.smart_icd_matcher import smart_search_icd10, auto_select_best_match
+    SMART_MATCHER_AVAILABLE = True
+except ImportError:
+    logger.warning("[LITE_DIAGNOSIS] Smart ICD matcher not available")
+    SMART_MATCHER_AVAILABLE = False
+
 
 class LiteDiagnosisAnalyzer:
     """
@@ -46,7 +54,12 @@ class LiteDiagnosisAnalyzer:
         obat_list: List[str] = None
     ) -> Dict[str, Any]:
         """
-        Fast single-call diagnosis analysis
+        Fast single-call diagnosis analysis with DATABASE-FIRST approach
+        
+        NEW FLOW:
+        1. Search ICD-10 in database dengan keyword matching
+        2. If found with high confidence → use database result
+        3. If not found or low confidence → AI fallback for additional info
         
         Args:
             diagnosis_name: Medical diagnosis (already translated if Indonesian)
@@ -69,7 +82,38 @@ class LiteDiagnosisAnalyzer:
             logger.info(f"[LITE_DIAGNOSIS] Cache hit for '{diagnosis_name}'")
             return self._icd10_cache[cache_key]
         
-        # Build context
+        # STEP 1: DATABASE-FIRST SEARCH
+        icd10_result = None
+        
+        if SMART_MATCHER_AVAILABLE:
+            try:
+                logger.info(f"[LITE_DIAGNOSIS] Searching database for '{diagnosis_name}'")
+                db_matches = smart_search_icd10(diagnosis_name, limit=10)
+                
+                if db_matches:
+                    # Try auto-select best match
+                    best_match = auto_select_best_match(db_matches)
+                    
+                    if best_match:
+                        logger.info(f"[LITE_DIAGNOSIS] ✅ Database match found: {best_match['code']} - {best_match['name']} ({best_match['confidence']}%)")
+                        icd10_result = {
+                            "kode_icd": best_match['code'],
+                            "nama": best_match['name']
+                        }
+                    else:
+                        # Multiple matches, use first (highest confidence)
+                        logger.info(f"[LITE_DIAGNOSIS] Multiple matches, using top result: {db_matches[0]['code']}")
+                        icd10_result = {
+                            "kode_icd": db_matches[0]['code'],
+                            "nama": db_matches[0]['name']
+                        }
+                else:
+                    logger.warning(f"[LITE_DIAGNOSIS] No database match for '{diagnosis_name}'")
+            
+            except Exception as e:
+                logger.error(f"[LITE_DIAGNOSIS] Database search failed: {e}")
+        
+        # STEP 2: Build context untuk AI (untuk severity, justifikasi, dll)
         context_parts = [f"Diagnosis: {diagnosis_name}"]
         if tindakan_list:
             context_parts.append(f"Tindakan: {', '.join(tindakan_list)}")
@@ -78,9 +122,16 @@ class LiteDiagnosisAnalyzer:
         
         context = "\n".join(context_parts)
         
-        # Single AI call for essential info
+        # STEP 3: AI call untuk additional info (severity, justifikasi, faskes)
+        # ONLY if we have ICD-10 from database, else full AI call
         try:
-            result = self._call_ai_analysis(context)
+            if icd10_result:
+                # We have ICD-10, just get severity & justifikasi
+                result = self._call_ai_for_metadata(context, icd10_result)
+            else:
+                # Full AI call (fallback)
+                logger.warning(f"[LITE_DIAGNOSIS] Using AI fallback for ICD-10 lookup")
+                result = self._call_ai_analysis(context)
             
             # Cache the result
             self._icd10_cache[cache_key] = result
@@ -91,7 +142,79 @@ class LiteDiagnosisAnalyzer:
         except Exception as e:
             logger.error(f"[LITE_DIAGNOSIS] ❌ Analysis failed: {e}")
             # Fallback to minimal data
-            return self._get_fallback_result(diagnosis_name)
+            if icd10_result:
+                # We have ICD-10, return minimal result
+                return {
+                    "icd10": icd10_result,
+                    "severity": "sedang",
+                    "justifikasi_klinis": "Memerlukan evaluasi medis sesuai standar.",
+                    "tingkat_faskes": "RS Tipe C",
+                    "lama_rawat_estimasi": "3-5 hari"
+                }
+            else:
+                return self._get_fallback_result(diagnosis_name)
+    
+    def _call_ai_for_metadata(self, context: str, icd10_data: Dict) -> Dict[str, Any]:
+        """
+        AI call untuk metadata saja (severity, justifikasi, faskes)
+        ICD-10 sudah didapat dari database
+        """
+        prompt = f"""Berikan metadata untuk diagnosis berikut (ICD-10 sudah diketahui):
+
+KONTEKS:
+{context}
+
+ICD-10 CODE: {icd10_data['kode_icd']} - {icd10_data['nama']}
+
+TUGAS:
+Berikan metadata tambahan dalam format JSON:
+
+1. Severity level (ringan/sedang/berat)
+2. Justifikasi klinis singkat (1-2 kalimat)
+3. Level faskes yang sesuai (Puskesmas/RS Tipe D/C/B/A)
+4. Estimasi lama rawat
+
+OUTPUT FORMAT (JSON):
+{{
+  "severity": "sedang",
+  "justifikasi_klinis": "Infeksi saluran napas yang memerlukan antibiotik dan monitoring.",
+  "tingkat_faskes": "RS Tipe C",
+  "lama_rawat_estimasi": "3-5 hari"
+}}
+
+PENTING:
+- Severity: ringan (rawat jalan), sedang (rawat inap RS kecil), berat (RS besar/ICU)
+- Tingkat faskes: Puskesmas (ringan), RS Tipe D/C (sedang), RS Tipe B/A (berat)
+- Jawab SINGKAT dan PADAT"""
+
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Anda adalah AI medical expert. Berikan metadata medis yang akurat dan ringkas."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.1,
+            max_tokens=300,
+            response_format={"type": "json_object"}
+        )
+        
+        content = response.choices[0].message.content
+        metadata = json.loads(content)
+        
+        # Combine dengan ICD-10 data
+        return {
+            "icd10": icd10_data,
+            "severity": metadata.get("severity", "sedang"),
+            "justifikasi_klinis": metadata.get("justifikasi_klinis", "Memerlukan evaluasi medis."),
+            "tingkat_faskes": metadata.get("tingkat_faskes", "RS Tipe C"),
+            "lama_rawat_estimasi": metadata.get("lama_rawat_estimasi", "3-5 hari")
+        }
     
     def _call_ai_analysis(self, context: str) -> Dict[str, Any]:
         """Single AI call to get essential diagnosis data"""
