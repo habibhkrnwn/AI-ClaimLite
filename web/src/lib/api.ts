@@ -1,5 +1,14 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
+// Debug log untuk melihat API URL yang digunakan
+console.log('🔧 API Configuration:', {
+  VITE_API_URL: import.meta.env.VITE_API_URL,
+  API_BASE_URL: API_BASE_URL,
+  mode: import.meta.env.MODE,
+  dev: import.meta.env.DEV,
+  prod: import.meta.env.PROD
+});
+
 export interface User {
   id: number;
   email: string;
@@ -61,6 +70,14 @@ class ApiService {
 
   async request(endpoint: string, options: RequestInit = {}) {
     const url = `${API_BASE_URL}${endpoint}`;
+    
+    console.log('🌐 API Request:', {
+      endpoint,
+      url,
+      method: options.method || 'GET',
+      hasAuth: !!this.accessToken
+    });
+    
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
@@ -93,10 +110,25 @@ class ApiService {
 
       return data;
     } catch (error: any) {
+      console.error('❌ API Request Failed:', {
+        url,
+        endpoint,
+        errorName: error.name,
+        errorMessage: error.message,
+        error
+      });
+      
       if (error.name === 'AbortError') {
         console.error('API request timeout after 5 minutes');
         throw new Error('Request timeout. Analisis memakan waktu terlalu lama.');
       }
+      
+      // Network errors
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        console.error('Network error - possibly CORS or connection issue');
+        throw new Error('Gagal terhubung ke server. Periksa koneksi internet Anda.');
+      }
+      
       console.error('API request error:', error);
       throw error;
     }
