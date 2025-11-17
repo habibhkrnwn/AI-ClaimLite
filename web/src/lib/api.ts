@@ -240,11 +240,16 @@ class ApiService {
     procedure?: string;
     medication?: string;
     input_text?: string;
+    icd10_code?: string;
+    icd9_code?: string | null;
+    use_optimized?: boolean;
+    save_history?: boolean;
   }): Promise<{ 
     success: boolean; 
     data: any;
     usage?: { used: number; remaining: number; limit: number };
   }> {
+    console.log('[API] Sending analysis request:', data);
     return this.request('/api/ai/analyze', {
       method: 'POST',
       body: JSON.stringify(data),

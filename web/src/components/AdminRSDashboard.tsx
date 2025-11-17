@@ -71,39 +71,47 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     setOriginalSearchTerm(inputTerm);
     
     try {
-      // Step 1: Translate diagnosis to medical term using OpenAI
-      if (inputTerm) {
-        const translationResponse = await apiService.translateMedicalTerm(inputTerm);
-        
-        if (translationResponse.success) {
-          const medicalTerm = translationResponse.data.translated;
-          setCorrectedTerm(medicalTerm);
-          setShowICD10Explorer(true);
-        } else {
-          // Fallback to original term
-          setCorrectedTerm(inputTerm);
-          setShowICD10Explorer(true);
-        }
-      }
-      
-      // Step 2: Translate procedure if provided
+      // Run translations in parallel for speed
       const procedureTerm = inputMode === 'text' ? '' : procedure;
+      setOriginalProcedureTerm(procedureTerm || '');
+
+      const promises: Promise<any>[] = [];
+      if (inputTerm) {
+        promises.push(apiService.translateMedicalTerm(inputTerm));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
       if (procedureTerm) {
-        setOriginalProcedureTerm(procedureTerm);
-        
-        const procedureTranslation = await apiService.translateProcedureTerm(procedureTerm);
-        
-        if (procedureTranslation.success) {
-          const medicalProcedureTerm = procedureTranslation.data.translated;
-          const synonyms = procedureTranslation.data.synonyms || [medicalProcedureTerm];
+        promises.push(apiService.translateProcedureTerm(procedureTerm));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
+
+      const [dxResp, pxResp] = await Promise.all(promises);
+
+      // Handle diagnosis translation
+      if (inputTerm) {
+        if (dxResp && dxResp.success) {
+          const medicalTerm = dxResp.data.translated;
+          setCorrectedTerm(medicalTerm);
+        } else {
+          setCorrectedTerm(inputTerm);
+        }
+        setShowICD10Explorer(true);
+      }
+
+      // Handle procedure translation
+      if (procedureTerm) {
+        if (pxResp && pxResp.success) {
+          const medicalProcedureTerm = pxResp.data.translated;
+          const synonyms = pxResp.data.synonyms || [medicalProcedureTerm];
           setCorrectedProcedureTerm(medicalProcedureTerm);
           setProcedureSynonyms(synonyms);
-          setShowICD9Explorer(true);
         } else {
           setCorrectedProcedureTerm(procedureTerm);
           setProcedureSynonyms([procedureTerm]);
-          setShowICD9Explorer(true);
         }
+        setShowICD9Explorer(true);
       }
       
     } catch (error: any) {
@@ -140,6 +148,8 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
     }
     
     setIsLoading(true);
+    const startTime = Date.now();
+    
     try {
       // Prepare request data based on input mode
       const requestData = inputMode === 'text' 
@@ -147,7 +157,9 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             mode: 'text' as const, 
             input_text: freeText,
             icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null
+            icd9_code: selectedICD9Code?.code || null,
+            use_optimized: true,
+            save_history: true
           }
         : { 
             mode: 'form' as const, 
@@ -155,11 +167,19 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             procedure, 
             medication,
             icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null
+            icd9_code: selectedICD9Code?.code || null,
+            use_optimized: true,
+            save_history: true
           };
+
+      console.log('[Generate Analysis] Request data:', requestData);
+      console.log('[Generate Analysis] Starting analysis at', new Date().toISOString());
 
       // Call AI Analysis API
       const response = await apiService.analyzeClaimAI(requestData);
+      
+      const processingTime = Date.now() - startTime;
+      console.log(`[Generate Analysis] Completed in ${processingTime}ms`);
 
       if (response.success) {
         // Update AI usage from response
@@ -286,19 +306,60 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
         throw new Error('Analysis failed');
       }
     } catch (error: any) {
-      console.error('Analysis failed:', error);
-      const errorMessage = error.response?.data?.message || error.message || 'Gagal melakukan analisis';
-      const errorType = error.response?.data?.error_type;
+      const processingTime = Date.now() - startTime;
       
-      // Check if it's a limit exceeded error
-      if (error.response?.status === 429) {
-        alert(`Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
-      } else if (errorType === 'timeout') {
-        alert(`Timeout: Analisis memakan waktu terlalu lama (>5 menit).\n\nCoba lagi atau hubungi admin jika masalah berlanjut.`);
-      } else if (errorType === 'connection_refused') {
-        alert(`Error: ${errorMessage}\n\nCore engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.`);
+      console.error('Analysis failed after', processingTime, 'ms');
+      console.error('Error object:', error);
+      console.error('Error response:', error.response);
+      console.error('Error data:', error.response?.data);
+      
+      const errorMessage = error.response?.data?.message || error.message || 'Gagal melakukan analisis';
+      const errorDetail = error.response?.data?.detail || '';
+      const errorCode = error.response?.data?.error_code || error.code;
+      const statusCode = error.response?.status;
+      
+      // Check specific error types
+      if (statusCode === 429) {
+        // Limit exceeded
+        alert(`⚠️ Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
+      } else if (statusCode === 504 || errorCode === 'ECONNABORTED') {
+        // Timeout error
+        alert(
+          `⏱️ Analisis Timeout (${Math.round(processingTime / 1000)} detik)\n\n` +
+          `Penyebab umum:\n` +
+          `• OpenAI API sedang lambat\n` +
+          `• Core engine sedang sibuk\n` +
+          `• Data terlalu kompleks\n\n` +
+          `💡 Solusi:\n` +
+          `• Tunggu 10-30 detik, lalu coba lagi\n` +
+          `• Pastikan koneksi internet stabil\n` +
+          `• Coba simplify input data\n\n` +
+          `Jika masih error, hubungi admin.`
+        );
+      } else if (statusCode === 503 || errorCode === 'ECONNREFUSED') {
+        // Core engine not running
+        alert(
+          `🔌 Tidak dapat terhubung ke Core Engine\n\n` +
+          `Core Engine tidak berjalan atau tidak dapat diakses.\n` +
+          `Pastikan Core Engine berjalan di port 8000.\n\n` +
+          `Hubungi administrator untuk memulai layanan.`
+        );
       } else {
-        alert(`Error: ${errorMessage}\n\n${error.response?.data?.detail || 'Silakan coba lagi atau hubungi admin.'}`);
+        // Generic error
+        let fullErrorMessage = `❌ Error: ${errorMessage}`;
+        
+        if (errorDetail) {
+          fullErrorMessage += `\n\n📝 Detail: ${errorDetail}`;
+        }
+        
+        if (errorCode) {
+          fullErrorMessage += `\n\n🔍 Error Code: ${errorCode}`;
+        }
+        
+        fullErrorMessage += `\n\n⏱️ Processing Time: ${Math.round(processingTime / 1000)} detik`;
+        fullErrorMessage += `\n\n💡 Tip: Pastikan Core Engine berjalan di port 8000`;
+        
+        alert(fullErrorMessage);
       }
     } finally {
       setIsLoading(false);
@@ -449,7 +510,8 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           </h2>
           
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto space-y-6">            
+          <div className="flex-1 overflow-y-auto space-y-6">
+            
             {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
             {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
               <div className="flex-shrink-0">
