@@ -205,15 +205,6 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           validationStatus = 'warning';
         }
 
-        // // Extract severity from konsistensi.tingkat (percentage)
-        // let severityLevel: 'ringan' | 'sedang' | 'berat' = 'sedang';
-        // const konsistensiTingkat = aiResult.konsistensi?.tingkat || 70;
-        // if (konsistensiTingkat >= 80) {
-        //   severityLevel = 'ringan';
-        // } else if (konsistensiTingkat < 60) {
-        //   severityLevel = 'berat';
-        // }
-
         // Map Fornas status from fornas_summary
         let fornasStatus: 'sesuai' | 'tidak-sesuai' | 'perlu-review' = 'sesuai';
         const fornasSummary = aiResult.fornas_summary || {};
@@ -458,12 +449,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           </h2>
           
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto space-y-6">
-            {/* Debug Info */}
-            <div className="text-xs text-yellow-500 mb-2">
-              DEBUG: showICD10Explorer={String(showICD10Explorer)}, correctedTerm={correctedTerm || 'null'}, showICD9Explorer={String(showICD9Explorer)}, correctedProcedureTerm={correctedProcedureTerm || 'null'}
-            </div>
-            
+          <div className="flex-1 overflow-y-auto space-y-6">            
             {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
             {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
               <div className="flex-shrink-0">
@@ -576,17 +562,86 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             {/* Results Section - Below Explorer */}
             {result && (
               <div className="flex-shrink-0">
-                <div className={`rounded-xl p-4 mb-4 ${
-                  isDark ? 'bg-cyan-500/10 border border-cyan-500/30' : 'bg-blue-50 border border-blue-200'
-                }`}>
-                  <h3 className={`text-base font-semibold mb-2 ${
-                    isDark ? 'text-cyan-300' : 'text-blue-700'
-                  }`}>
-                    📊 Hasil Analisis AI
-                  </h3>
-                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                    Analisis lengkap berdasarkan input dan kode ICD-10 yang dipilih
-                  </p>
+                {/* ================== Hasil Analisis AI ================== */}
+                <div
+                  className={`rounded-xl p-4 mb-4 ${
+                    isDark
+                      ? "bg-cyan-500/10 border border-cyan-500/30"
+                      : "bg-blue-50 border border-blue-200"
+                  }`}
+                >
+                  {/* HEADER: Judul + ICD di kanan */}
+                  <div className="flex items-center justify-between mb-2">
+
+                    {/* LEFT: Judul + Deskripsi */}
+                    <div>
+                      <h3
+                        className={`text-base font-semibold ${
+                          isDark ? "text-cyan-300" : "text-blue-700"
+                        }`}
+                      >
+                        📊 Hasil Analisis AI
+                      </h3>
+                      <p
+                        className={`text-xs ${
+                          isDark ? "text-slate-400" : "text-gray-600"
+                        }`}
+                      >
+                        Analisis lengkap berdasarkan input dan kode ICD-10 yang dipilih
+                      </p>
+                    </div>
+
+                    {/* RIGHT: ICD-10 & ICD-9 (Horizontal, Highlight) */}
+                    <div className="flex items-center gap-4">
+
+                      {/* ICD-10 */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs ${
+                            isDark ? "text-slate-400" : "text-gray-500"
+                          }`}
+                        >
+                          ICD-10
+                        </span>
+
+                        <span
+                          className={`
+                            text-lg font-bold font-mono tracking-wide
+                            px-3 py-1 rounded-lg
+                            ${isDark ? "bg-cyan-500/20 text-cyan-300" : "bg-blue-100 text-blue-700"}
+                          `}
+                        >
+                          {result?.classification?.icd10?.[0] ?? "-"}
+                        </span>
+                      </div>
+
+                      {/* Divider */}
+                      <span className={`${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                        |
+                      </span>
+
+                      {/* ICD-9 */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs ${
+                            isDark ? "text-slate-400" : "text-gray-500"
+                          }`}
+                        >
+                          ICD-9
+                        </span>
+
+                        <span
+                          className={`
+                            text-lg font-bold font-mono tracking-wide
+                            px-3 py-1 rounded-lg
+                            ${isDark ? "bg-blue-500/20 text-blue-300" : "bg-blue-100 text-blue-700"}
+                          `}
+                        >
+                          {result?.classification?.icd9?.[0] ?? "-"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <ResultsPanel result={result} isDark={isDark} />
               </div>

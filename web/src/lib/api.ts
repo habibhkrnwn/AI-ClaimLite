@@ -5,6 +5,7 @@ export interface User {
   email: string;
   full_name: string;
   role: string;
+  tipe_rs?: string;
   is_active: boolean;
   active_until?: string | null;
   created_at: string;
