@@ -11,8 +11,9 @@ services:
       - ./core_engine/.env
     environment:
       - PYTHONUNBUFFERED=1
-    ports:
-      - "8000:8000"
+    # Port 8000 TIDAK di-expose, hanya internal
+    # expose:
+    #   - "8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -40,9 +41,10 @@ services:
       - ./web/.env
     environment:
       - NODE_ENV=production
-      - CORE_ENGINE_URL=http://core_engine:8000
-    ports:
-      - "3001:3001"
+      - CORE_ENGINE_URL=http://aiclaimlite-core-engine-prod:8000
+    # Port 3001 TIDAK di-expose ke luar, hanya internal Docker network
+    # expose:
+    #   - "3001"
     depends_on:
       core_engine:
         condition: service_healthy
