@@ -1,21 +1,213 @@
 {
-  "93.96": [
-    "salbutamol",
-    "ipratropium",
-    "combivent"
-  ],
-  "93.94": [
-    "saline"
-  ],
-  "93.90": [
-    "salbutamol",
-    "ceftriaxone",
-    "levofloxacin"
-  ],
-  "96.70": [
-    "ceftriaxone",
-    "meropenem",
-    "midazolam",
-    "fentanyl"
-  ]
+  "31.1": [
+      "amikacin",
+      "ampicillin/sulbactam",
+      "aztreonam",
+      "cefepime",
+      "cefoperazone",
+      "ceftazidime",
+      "ceftazidime/avibactam",
+      "ceftolozane/tazobactam",
+      "ciprofloxacin",
+      "gentamicin",
+      "imipenem",
+      "imipenem/cilastatin",
+      "levofloxacin",
+      "linezolid",
+      "meropenem",
+      "piperacillin/tazobactam",
+      "polymyxin",
+      "polymyxin e (colistin)",
+      "tigecycline",
+      "tobramycin",
+      "vancomycin"
+    ],
+    "93.90": [
+      "ampicillin/sulbactam",
+      "azithromycin",
+      "cefotaxime",
+      "ceftaroline",
+      "ceftriaxone",
+      "clarithromycin",
+      "levofloxacin",
+      "moxifloxacin"
+    ],
+    "93.94": [
+      "mukolitik",
+      "ekspektoran"
+    ],
+    "93.96": [
+      "ampicillin/sulbactam",
+      "azithromycin",
+      "cefotaxime",
+      "ceftaroline",
+      "ceftriaxone",
+      "clarithromycin",
+      "levofloxacin",
+      "moxifloxacin"
+    ],
+    "96.04": [
+      "amikacin",
+      "ampicillin/sulbactam",
+      "aztreonam",
+      "cefepime",
+      "cefoperazone",
+      "ceftazidime",
+      "ceftazidime/avibactam",
+      "ceftolozane/tazobactam",
+      "ciprofloxacin",
+      "gentamicin",
+      "imipenem",
+      "imipenem/cilastatin",
+      "levofloxacin",
+      "linezolid",
+      "meropenem",
+      "piperacillin/tazobactam",
+      "polymyxin",
+      "polymyxin e (colistin)",
+      "tigecycline",
+      "tobramycin",
+      "vancomycin"
+    ],
+    "96.70": [
+      "amikacin",
+      "ampicillin/sulbactam",
+      "aztreonam",
+      "cefepime",
+      "cefoperazone",
+      "ceftazidime",
+      "ceftazidime/avibactam",
+      "ceftolozane/tazobactam",
+      "ciprofloxacin",
+      "gentamicin",
+      "imipenem",
+      "imipenem/cilastatin",
+      "levofloxacin",
+      "linezolid",
+      "meropenem",
+      "piperacillin/tazobactam",
+      "polymyxin",
+      "polymyxin e (colistin)",
+      "tigecycline",
+      "tobramycin",
+      "vancomycin"
+    ],
+    "99.18": [
+      "cairan rehidrasi",
+      "elektrolit"
+    ],
+    "99.29": [
+      "vasopresor"
+    ],
+    "99.52": [
+      "vaksin influenza"
+    ],
+    "99.55": [
+      "vaksin pneumokok"
+    ],
+     "99.25": [
+      "sisplatin",
+      "karboplatin",
+      "etoposid",
+      "gemsitabin",
+      "paklitaksel",
+      "vinorelbine",
+      "dosetaksel",
+      "pemetreksed",
+      "nab-paklitaksel",
+      "irinotecan",
+      "bleomycin"
+    ],
+    "00.18": [
+      "atezolizumab",
+      "pembrolizumab",
+      "durvalumab",
+      "serplulimab",
+      "cemiplimab",
+      "tremelimumab"
+    ],
+    "99.28": [
+      "bevacizumab",
+      "ramucirumab",
+      "amivantamab",
+      "trastuzumab deruxtecan",
+      "ado-trastuzumab emtansine",
+      "cetuximab",
+      "nimotuzumab",
+      "ondansetron",
+      "deksametason",
+      "metokloperamid"
+    ],
+    "34.92": [
+      "talc",
+      "bleomycin"
+    ],
+    "99.15": [
+      "asam lemak omega-3",
+      "branched-chain amino acids (bcaa)",
+      "glutamin"
+    ],
+    "96.6": [
+      "asam lemak omega-3",
+      "branched-chain amino acids (bcaa)",
+      "glutamin",
+      "metokloperamid"
+    ],
+    "43.11": [
+      "asam lemak omega-3",
+      "branched-chain amino acids (bcaa)",
+      "glutamin",
+      "metokloperamid"
+    ],
+    "87.41": [
+      "kontras media"
+    ],
+    "87.03": [
+      "kontras media"
+    ],
+    "88.91": [
+      "kontras media"
+    ],
+    "98.51": [
+      "antibiotik",
+      "tamsulosin"
+    ],
+    "55.04": [
+      "antibiotik"
+    ],
+    "56.0": [
+      "tamsulosin",
+      "antibiotik"
+    ],
+    "59.8": [
+      "tamsulosin"
+    ],
+    "55.03": [
+      "antibiotik"
+    ],
+    "96.48": [
+      "larutan suby's g",
+      "hemiacidrin",
+      "alkali sitrat",
+      "natrium bikarbonat",
+      "saline"
+    ],
+    "57.0": [
+      "antibiotik"
+    ],
+    "57.1": [
+      "antibiotik"
+    ],
+    "55.11": [
+      "antibiotik"
+    ],
+    "56.2": [
+      "antibiotik"
+    ],
+    "87.71": [
+      "kontras"
+    ],
+    "87.73": [
+      "kontras"
+    ]
 }
