@@ -90,25 +90,40 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     console.log('[AI Analyze] Payload with codes:', {
       mode,
       icd10_code: icd10_code || 'auto',
-      icd9_code: icd9_code || 'auto'
+      icd9_code: icd9_code || 'auto',
+      timestamp: new Date().toISOString()
     });
 
     // Call core_engine endpoint 1A with 5 minute timeout (for heavy OpenAI processing)
     const startTime = Date.now();
+    console.log(`[AI Analyze] Calling core_engine at ${CORE_ENGINE_URL}/api/lite/analyze/single`);
+    
     const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/analyze/single`, payload, {
-      timeout: 300000, // 5 minutes
+      timeout: 300000, // 5 minutes (increased from 3)
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
     const processingTime = Date.now() - startTime;
+    console.log(`[AI Analyze] Response received in ${processingTime}ms`);
 
-    console.log('[AI Analyze] Core engine response:', JSON.stringify(response.data, null, 2));
+    console.log('[AI Analyze] Core engine response status:', response.data.status);
+    console.log('[AI Analyze] Core engine response keys:', Object.keys(response.data));
 
     // Core engine returns {status: "success", result: {...}}
-    // Extract the actual result from the wrapper
+    // Extract the actual result from the wrapper (backward compatible)
     const coreResponse = response.data;
-    const result = coreResponse.result || coreResponse; // Fallback for backward compatibility
+    if (coreResponse.status !== 'success') {
+      throw new Error(coreResponse.message || 'Core engine returned non-success status');
+    }
+    const result = coreResponse.result || coreResponse;
     
     // Check if result has required analysis data
-    if (result && result.klasifikasi) {
+    if (!result) {
+      throw new Error('Core engine did not return result data');
+    }
+    
+    if (result.klasifikasi) {
       // Increment usage count AFTER successful analysis
       const updatedUsage = await authService.incrementAIUsage(userId);
       
@@ -178,38 +193,75 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     }
   } catch (error: any) {
     // Improved error logging for easier debugging
-    console.error('AI Analysis error - message:', error.message);
-    if (error.response) {
-      console.error('AI Analysis error - response status:', error.response.status);
-      console.error('AI Analysis error - response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    if (error.request && !error.response) {
-      console.error('AI Analysis error - no response received (connection/timeout issue)');
-    }
-
-    // Distinguish different error types
-    let errorMessage = 'Failed to analyze claim';
-    let errorType = 'internal_error';
+    const processingTime = Date.now() - (error.config?.startTime || Date.now());
     
-    if (error.code === 'ECONNREFUSED') {
-      errorMessage = 'Core engine tidak dapat dihubungi. Pastikan service berjalan di port 8000.';
-      errorType = 'connection_refused';
-    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
-      errorMessage = 'Analisis timeout (>5 menit). Coba lagi atau hubungi admin.';
-      errorType = 'timeout';
-    } else if (error.response?.data?.message) {
-      errorMessage = error.response.data.message;
-      errorType = 'core_engine_error';
+    console.error('=== AI Analysis Error ===');
+    console.error('Time elapsed:', processingTime, 'ms');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error code:', error.code);
+    
+    if (error.code === 'ECONNABORTED') {
+      console.error('⏱️  Request timeout after', processingTime, 'ms');
+      console.error('This usually means OpenAI API is slow or core_engine is processing heavy workload');
     }
+    
+        if (error.code === 'ECONNREFUSED') {
+          console.error('🔌 Connection refused - core_engine might not be running');
+          console.error('Check if Python process is running on port 8000');
+        }
 
-    res.status(500).json({
-      success: false,
-      message: errorMessage,
-      error_type: errorType,
-      detail: error.message,
-      // include response data when available to help frontend debug
-      error_data: error.response?.data || null,
-    });
+        if (error.response) {
+          console.error('Response status:', error.response.status);
+          console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+        } else if (error.request) {
+          console.error('No response received from core_engine');
+          console.error('Request config:', {
+            url: error.config?.url,
+            method: error.config?.method,
+            timeout: error.config?.timeout,
+          });
+        }
+        console.error('========================');
+
+        // User-friendly error messages
+        let userMessage = 'Failed to analyze claim';
+        let statusCode = 500;
+        let errorType = 'internal_error';
+    
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout') || error.code === 'ETIMEDOUT') {
+          userMessage = 'Analisis memakan waktu terlalu lama (timeout). Ini biasanya terjadi karena:\n' +
+                       '1. OpenAI API sedang lambat\n' +
+                       '2. Core engine sedang memproses banyak request\n' +
+                       '3. Data input terlalu kompleks\n\n' +
+                       'Silakan coba lagi dalam beberapa saat.';
+          statusCode = 504; // Gateway Timeout
+          errorType = 'timeout';
+        } else if (error.code === 'ECONNREFUSED') {
+          userMessage = 'Tidak dapat terhubung ke Core Engine.\n' +
+                       'Pastikan Core Engine berjalan di port 8000.';
+          statusCode = 503; // Service Unavailable
+          errorType = 'connection_refused';
+        } else if (error.response?.status === 500) {
+          userMessage = 'Core Engine mengalami error internal.\n' +
+                       'Detail: ' + (error.response?.data?.message || 'Unknown error');
+          statusCode = 500;
+          errorType = 'core_engine_error';
+        } else if (error.response?.data?.message) {
+          userMessage = error.response.data.message;
+          errorType = 'core_engine_error';
+          statusCode = error.response.status || 500;
+        }
+
+        res.status(statusCode).json({
+          success: false,
+          message: userMessage,
+          error_type: errorType,
+          detail: error.message,
+          error_code: error.code,
+          processing_time_ms: processingTime,
+          error_data: error.response?.data || null,
+        });
   }
 });
 
@@ -574,7 +626,7 @@ router.post('/translate-procedure-term', async (req: Request, res: Response): Pr
 // Get ICD-9 hierarchy for procedures (Tindakan)
 router.post('/icd9-hierarchy', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { search_term } = req.body;
+    const { search_term, synonyms } = req.body;
 
     if (!search_term || typeof search_term !== 'string' || search_term.trim() === '') {
       res.status(400).json({
@@ -584,9 +636,10 @@ router.post('/icd9-hierarchy', async (req: Request, res: Response): Promise<void
       return;
     }
 
-    // Call core_engine API for ICD-9 hierarchy
+    // Call core_engine API for ICD-9 hierarchy with synonyms
     const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/icd9-hierarchy`, {
       search_term: search_term.trim(),
+      synonyms: synonyms || []
     }, {
       timeout: 30000, // 30 seconds
     });

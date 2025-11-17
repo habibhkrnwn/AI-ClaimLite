@@ -12,7 +12,7 @@ router.use(authorize('Admin Meta'));
 // Create Admin RS account
 router.post('/admin-rs', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password, full_name, active_until, daily_ai_limit } = req.body;
+    const { email, password, full_name, tipe_rs, active_until, daily_ai_limit } = req.body;
 
     // Validation
     if (!email || !password || !full_name) {
@@ -49,6 +49,7 @@ router.post('/admin-rs', async (req: Request, res: Response): Promise<void> => {
       email,
       password,
       full_name,
+      tipe_rs,
       active_until: activeUntilDate,
       created_by,
       daily_ai_limit: daily_ai_limit || 100, // Default 100

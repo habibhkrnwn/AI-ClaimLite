@@ -7,6 +7,7 @@ export interface CreateAdminRSData {
   email: string;
   password: string;
   full_name: string;
+  tipe_rs: string;
   active_until?: Date | null;
   created_by: number;
   daily_ai_limit?: number;
@@ -22,6 +23,7 @@ export interface AdminRSUser {
   id: number;
   email: string;
   full_name: string;
+  tipe_rs: string;
   role: string;
   is_active: boolean;
   active_until: Date | null;
@@ -35,7 +37,7 @@ export interface AdminRSUser {
 export const adminService = {
   // Create Admin RS account (only accessible by Admin Meta)
   async createAdminRS(data: CreateAdminRSData): Promise<AdminRSUser> {
-    const { email, password, full_name, active_until, created_by, daily_ai_limit = 100 } = data;
+    const { email, password, full_name, tipe_rs, active_until, created_by, daily_ai_limit = 100 } = data;
 
     // Check if user already exists
     const existingUser = await query(

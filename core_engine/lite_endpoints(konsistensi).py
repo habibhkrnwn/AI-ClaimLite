@@ -1,0 +1,1835 @@
+# core_engine/ai_claim_lite_endpoints.py
+
+"""
+AI-CLAIM Lite Endpoints
+Simplified REST API untuk demo/trial version
+"""
+
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+import json
+import os
+from sqlalchemy import text
+
+# Load ICD-10 common terms mapping
+ICD10_COMMON_TERMS = {}
+try:
+    common_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd10_common_terms.json')
+    with open(common_terms_path, 'r', encoding='utf-8') as f:
+        ICD10_COMMON_TERMS = json.load(f)
+    print(f"[ICD10] Loaded {len(ICD10_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD10] Warning: Could not load common terms: {e}")
+
+# Load ICD-9 common terms mapping
+ICD9_COMMON_TERMS = {}
+try:
+    icd9_terms_path = os.path.join(os.path.dirname(__file__), 'rules', 'icd9_common_terms.json')
+    with open(icd9_terms_path, 'r', encoding='utf-8') as f:
+        ICD9_COMMON_TERMS = json.load(f)
+    print(f"[ICD9] Loaded {len(ICD9_COMMON_TERMS)} common terms")
+except Exception as e:
+    print(f"[ICD9] Warning: Could not load common terms: {e}")
+
+# Import AI-CLAIM Lite service
+from services.lite_service import (
+    analyze_lite_single,
+    analyze_lite_batch,
+    parse_free_text,
+    save_to_history,
+    load_from_history,
+    get_history_list
+)
+
+# ============================================================
+# 🔹 IMPORT ALL SMART SERVICES (MERGED)
+# ============================================================
+from services.lite_service_optimized import analyze_lite_single_optimized
+from services.fornas_smart_service import validate_fornas
+from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
+from services.icd10_service import select_icd10_code, get_icd10_statistics
+from services.dokumen_wajib_service import get_dokumen_wajib_service
+
+# ============================================================
+# 📋 MEDICAL PROCEDURE SYNONYM MAPPING (OPTIMIZED - MODULE LEVEL)
+# ============================================================
+# Centralized synonym dictionary for medical procedures
+# Maps variations/synonyms to standardized database terms
+# Format: {synonym: [preferred_term, alternative1, alternative2]}
+PROCEDURE_SYNONYMS = {
+    # Ultrasound family
+    'usg': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasound': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonography': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'ultrasonic': ['ultrasound', 'ultrasonography', 'ultrasonic'],
+    'echo': ['ultrasound', 'ultrasonography', 'echocardiography'],
+    
+    # X-ray family
+    'rontgen': ['x-ray', 'radiography', 'radiograph'],
+    'x-ray': ['x-ray', 'radiography', 'radiograph'],
+    'xray': ['x-ray', 'radiography', 'radiograph'],
+    'radiography': ['x-ray', 'radiography', 'radiograph'],
+    'radiograph': ['x-ray', 'radiography', 'radiograph'],
+    
+    # CT Scan family
+    'ct scan': ['ct scan', 'computed tomography', 'cat scan'],
+    'ct': ['ct scan', 'computed tomography', 'cat scan'],
+    'cat scan': ['ct scan', 'computed tomography', 'cat scan'],
+    
+    # MRI family
+    'mri': ['mri', 'magnetic resonance imaging'],
+    
+    # Endoscopy family
+    'endoscopy': ['endoscopy', 'endoscopic examination'],
+    'scope': ['endoscopy', 'endoscopic examination'],
+    
+    # Surgery family
+    'operasi': ['surgery', 'operation', 'surgical procedure'],
+    'surgery': ['surgery', 'operation', 'surgical procedure'],
+    'operation': ['surgery', 'operation', 'surgical procedure'],
+    
+    # Biopsy family
+    'biopsy': ['biopsy', 'tissue sampling', 'histopathology'],
+    'biopsi': ['biopsy', 'tissue sampling', 'histopathology']
+}
+from services.pnpk_summary_service import PNPKSummaryService
+
+
+# ============================================================
+# 🔹 ASYNC WRAPPER for analyze_lite_single (with PNPK fetch)
+# ============================================================
+async def endpoint_analyze_single_async(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+    """
+    Async wrapper untuk analyze_lite_single yang melakukan PNPK fetch terlebih dahulu
+    """
+    pnpk_data = None
+    
+    # Pre-fetch PNPK data jika db_pool tersedia
+    if db_pool:
+        try:
+            # Extract diagnosis untuk pre-fetch
+            diagnosis_name = None
+            mode = request_data.get("mode", "text")
+            
+            if mode == "form" or mode == "excel":
+                diagnosis_name = request_data.get("diagnosis", "")
+            elif mode == "text":
+                # Untuk text mode, kita belum punya diagnosis, skip pre-fetch
+                pass
+            
+            if diagnosis_name:
+                pnpk_service = PNPKSummaryService(db_pool)
+                pnpk_data = await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+                print(f"[ENDPOINT_ASYNC] ✓ PNPK pre-fetched for: {diagnosis_name}")
+        except Exception as e:
+            print(f"[ENDPOINT_ASYNC] ⚠️ PNPK pre-fetch failed: {e}")
+    
+    # Inject pnpk_data ke request
+    request_data["_pnpk_data"] = pnpk_data
+    
+    # Call synchronous analyzer
+    use_optimized = request_data.get("use_optimized", True)
+    if use_optimized:
+        return analyze_lite_single_optimized(request_data, db_pool=db_pool)
+    else:
+        return analyze_lite_single(request_data, db_pool=db_pool)
+
+
+# ============================================================
+# 📌 ENDPOINT 1A: Validate Form Input
+# ============================================================
+def endpoint_validate_form(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/validate/form
+    
+    Validasi input form 3 field sebelum analisis.
+    Untuk preview hasil parsing dan validasi format.
+    
+    Request:
+    {
+        "diagnosis": "Pneumonia berat (J18.9)",
+        "tindakan": "Nebulisasi (93.96), Rontgen Thorax",
+        "obat": "Ceftriaxone injeksi 1g, Paracetamol 500mg"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "validation": {
+            "diagnosis_valid": true,
+            "tindakan_valid": true,
+            "obat_valid": true,
+            "errors": []
+        },
+        "parsed": {
+            "diagnosis": "Pneumonia berat",
+            "diagnosis_icd": "J18.9",
+            "tindakan": ["Nebulisasi", "Rontgen Thorax"],
+            "tindakan_codes": {"Nebulisasi": "93.96"},
+            "obat": ["Ceftriaxone injeksi 1g", "Paracetamol 500mg"]
+        }
+    }
+    """
+    
+    try:
+        from services.lite_service import parse_form_input
+        
+        diagnosis = request_data.get("diagnosis", "")
+        tindakan = request_data.get("tindakan", "")
+        obat = request_data.get("obat", "")
+        
+        # Validasi input kosong
+        errors = []
+        if not diagnosis or diagnosis.strip() == "":
+            errors.append("Diagnosis tidak boleh kosong")
+        
+        if not tindakan or tindakan.strip() == "":
+            errors.append("Tindakan tidak boleh kosong (minimal 1 tindakan)")
+        
+        if not obat or obat.strip() == "":
+            errors.append("Obat tidak boleh kosong (minimal 1 obat)")
+        
+        if errors:
+            return {
+                "status": "error",
+                "validation": {
+                    "diagnosis_valid": bool(diagnosis),
+                    "tindakan_valid": bool(tindakan),
+                    "obat_valid": bool(obat),
+                    "errors": errors
+                }
+            }
+        
+        # Parse input
+        parsed = parse_form_input(diagnosis, tindakan, obat)
+        
+        # Additional validation
+        if len(parsed["tindakan"]) == 0:
+            errors.append("Format tindakan tidak valid")
+        
+        if len(parsed["obat"]) == 0:
+            errors.append("Format obat tidak valid")
+        
+        return {
+            "status": "success",
+            "validation": {
+                "diagnosis_valid": True,
+                "tindakan_valid": len(parsed["tindakan"]) > 0,
+                "obat_valid": len(parsed["obat"]) > 0,
+                "errors": errors
+            },
+            "parsed": parsed,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 1B: Parse Free Text Input (renamed from endpoint_parse_text)
+# ============================================================
+def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/parse
+    
+    Parse resume medis free text menjadi struktur terpisah.
+    Untuk preview sebelum analisis.
+    
+    Request:
+    {
+        "input_text": "Pneumonia berat, diberikan Ceftriaxone..."
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "parsed": {
+            "diagnosis": "Pneumonia berat",
+            "tindakan": ["Nebulisasi"],
+            "obat": ["Ceftriaxone injeksi"]
+        }
+    }
+    """
+    
+    try:
+        input_text = request_data.get("input_text", "")
+        
+        if not input_text or input_text.strip() == "":
+            return {
+                "status": "error",
+                "message": "Input text tidak boleh kosong"
+            }
+        
+        # Parse text
+        parsed = parse_free_text(input_text)
+        
+        return {
+            "status": "success",
+            "parsed": {
+                "diagnosis": parsed["diagnosis"],
+                "tindakan": parsed["tindakan"],
+                "obat": parsed["obat"]
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 2: Analyze Single Claim (ENHANCED untuk Form Mode)
+# ============================================================
+def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[str, Any]:
+    """
+    POST /api/lite/analyze/single
+    
+    Analisis klaim tunggal dengan 3 mode input.
+    
+    OPTIMIZED VERSION: Uses combined AI prompts for faster processing
+    - Original: 5 OpenAI calls, ~15-18 seconds
+    - Optimized: 3 OpenAI calls, ~8-12 seconds (40-50% faster)
+    
+    Args:
+        request_data: Request payload
+        db_pool: Optional AsyncPG database pool for PNPK data
+    
+    Request:
+    {
+        "mode": "text" | "form" | "excel",
+        
+        // Mode TEXT (free text input)
+        "input_text": "Pneumonia berat, diberikan Ceftriaxone...",
+        
+        // Mode FORM (3 field terpisah)
+        "diagnosis": "Pneumonia berat (J18.9)",
+        "tindakan": "Nebulisasi (93.96), Rontgen Thorax",
+        "obat": "Ceftriaxone injeksi 1g, Paracetamol 500mg",
+        
+        // Optional context
+        "rs_id": "RS001",
+        "region_id": "REG01",
+        "use_optimized": true  // NEW: use optimized version (default: true)
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "klasifikasi": {...},
+            "validasi_klinis": {...},
+            "cp_ringkas": [...],
+            "checklist_dokumen": [...],
+            "insight_ai": "...",
+            "konsistensi": {...},
+            "metadata": {
+                "ai_calls": 3,  // Optimized version
+                "optimization": "combined_prompts"
+            }
+        }
+    }
+    """
+    
+    try:
+        mode = request_data.get("mode", "text")
+        use_optimized = request_data.get("use_optimized", True)  # Default to optimized version
+        
+        # Validasi input berdasarkan mode
+        if mode == "text":
+            if not request_data.get("input_text"):
+                return {
+                    "status": "error",
+                    "message": "input_text required untuk mode text"
+                }
+        elif mode == "form":
+            # Validasi 3 field form
+            diagnosis = request_data.get("diagnosis", "")
+            tindakan = request_data.get("tindakan", "")
+            obat = request_data.get("obat", "")
+            
+            errors = []
+            if not diagnosis:
+                errors.append("diagnosis required untuk mode form")
+            if not tindakan:
+                errors.append("tindakan required untuk mode form")
+            if not obat:
+                errors.append("obat required untuk mode form")
+            
+            if errors:
+                return {
+                    "status": "error",
+                    "message": "; ".join(errors),
+                    "errors": errors
+                }
+        else:
+            # Excel mode (legacy)
+            if not request_data.get("diagnosis"):
+                return {
+                    "status": "error",
+                    "message": "diagnosis required"
+                }
+        
+        # Call analyzer (optimized or original)
+        if use_optimized:
+            print(f"[ENDPOINT] Using OPTIMIZED analyzer (3 AI calls)")
+            result = analyze_lite_single_optimized(request_data, db_pool=db_pool)
+        else:
+            print(f"[ENDPOINT] Using ORIGINAL analyzer (5 AI calls)")
+            result = analyze_lite_single(request_data, db_pool=db_pool)
+        
+        # Save to history (optional, based on config)
+        if request_data.get("save_history", False):
+            save_to_history(result)
+        
+        return {
+            "status": "success",
+            "result": result,
+            "mode": mode,
+            "optimized": use_optimized,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[AI-CLAIM LITE] Error in analyze_single: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "detail": "Terjadi kesalahan saat analisis. Silakan coba lagi."
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 3: Analyze Batch (Excel Import)
+# ============================================================
+def endpoint_analyze_batch(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/analyze/batch
+    
+    Analisis batch dari Excel data.
+    
+    Request:
+    {
+        "batch_data": [
+            {"Nama": "Ahmad S.", "Diagnosis": "Pneumonia", ...},
+            {"Nama": "Siti R.", "Diagnosis": "Tifoid", ...}
+        ],
+        "rs_id": "RS001",
+        "region_id": "REG01"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "summary": {
+            "total_klaim": 10,
+            "success": 9,
+            "failed": 1
+        },
+        "results": [
+            {
+                "no": 1,
+                "nama_pasien": "Ahmad S.",
+                "icd10": "J18.9",
+                "insight": "Perlu radiologi...",
+                ...
+            }
+        ]
+    }
+    """
+    
+    try:
+        batch_data = request_data.get("batch_data", [])
+        
+        if not batch_data or len(batch_data) == 0:
+            return {
+                "status": "error",
+                "message": "batch_data tidak boleh kosong"
+            }
+        
+        # Add context dari request
+        rs_id = request_data.get("rs_id")
+        region_id = request_data.get("region_id")
+        
+        # Inject rs_id dan region_id ke setiap row
+        for row in batch_data:
+            if rs_id:
+                row["rs_id"] = rs_id
+            if region_id:
+                row["region_id"] = region_id
+        
+        # Call batch analyzer
+        batch_result = analyze_lite_batch(batch_data)
+        
+        return {
+            "status": "success",
+            "summary": {
+                "total_klaim": batch_result["total_klaim"],
+                "success": batch_result["success"],
+                "failed": batch_result["failed"]
+            },
+            "results": batch_result["results"],
+            "timestamp": batch_result["timestamp"]
+        }
+        
+    except Exception as e:
+        print(f"[AI-CLAIM LITE] Error in analyze_batch: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "detail": "Terjadi kesalahan saat analisis batch. Periksa format data Excel."
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 4: Get History List
+# ============================================================
+def endpoint_get_history(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/lite/history
+    
+    Ambil list history 10 terakhir.
+    
+    Request:
+    {
+        "limit": 10,  // optional, default 10
+        "user_id": "..."  // optional, untuk filter per user
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "history": [
+            {
+                "claim_id": "LITE-20251108001",
+                "diagnosis": "Pneumonia berat",
+                "timestamp": "2025-11-08T10:15:00",
+                "mode": "text"
+            }
+        ]
+    }
+    """
+    
+    try:
+        limit = request_data.get("limit", 10)
+        
+        # Get history dari database/storage
+        history_list = get_history_list(limit=limit)
+        
+        return {
+            "status": "success",
+            "history": history_list,
+            "total": len(history_list)
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 5: Load History Detail
+# ============================================================
+def endpoint_load_history_detail(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/lite/history/{history_id}
+    
+    Load full detail dari history untuk ditampilkan ulang.
+    
+    Request:
+    {
+        "history_id": "LITE-20251108001"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "klasifikasi": {...},
+            "validasi_klinis": {...},
+            ...
+        }
+    }
+    """
+    
+    try:
+        history_id = request_data.get("history_id")
+        
+        if not history_id:
+            return {
+                "status": "error",
+                "message": "history_id required"
+            }
+        
+        # Load dari database
+        result = load_from_history(history_id)
+        
+        if not result:
+            return {
+                "status": "error",
+                "message": "History tidak ditemukan"
+            }
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 6: Delete History
+# ============================================================
+def endpoint_delete_history(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    DELETE /api/lite/history
+    
+    Hapus history (single atau semua).
+    
+    Request:
+    {
+        "history_id": "LITE-20251108001",  // optional, untuk delete single
+        "delete_all": true  // optional, untuk delete all
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "message": "History berhasil dihapus"
+    }
+    """
+    
+    try:
+        history_id = request_data.get("history_id")
+        delete_all = request_data.get("delete_all", False)
+        
+        # TODO: Implementasi delete dari database
+        # if delete_all:
+        #     delete_all_history()
+        # elif history_id:
+        #     delete_single_history(history_id)
+        
+        return {
+            "status": "success",
+            "message": "History berhasil dihapus"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 7: Export Results
+# ============================================================
+def endpoint_export_results(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/export
+    
+    Export hasil analisis ke Excel/PDF.
+    
+    Request:
+    {
+        "format": "excel" | "pdf",
+        "data": {...}  // result data untuk di-export
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "file_url": "https://...",
+        "filename": "ai-claim-lite-export.xlsx"
+    }
+    """
+    
+    try:
+        export_format = request_data.get("format", "excel")
+        data = request_data.get("data")
+        
+        if not data:
+            return {
+                "status": "error",
+                "message": "Data untuk export tidak boleh kosong"
+            }
+        
+        # TODO: Implementasi export
+        # if export_format == "excel":
+        #     file_bytes = export_to_excel(data)
+        # else:
+        #     file_bytes = export_to_pdf(data)
+        
+        # Sementara return placeholder
+        return {
+            "status": "success",
+            "message": "Export berhasil",
+            "filename": f"ai-claim-lite-export.{export_format}",
+            "note": "Implementasi export akan diselesaikan pada tahap berikutnya"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 7: ICD-10 Smart Lookup (NEW)
+# ============================================================
+def endpoint_icd10_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/lookup
+    
+    Smart ICD-10 lookup dengan AI (RAG approach).
+    Guarantee 100% match dengan database.
+    
+    Request:
+    {
+        "diagnosis_input": "paru2 basah"
+    }
+    
+    Response (Direct Flow):
+    {
+        "status": "success",
+        "flow": "direct",
+        "requires_modal": false,
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                {"code": "J18.1", "name": "Lobar pneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        },
+        "ai_used": true,
+        "ai_confidence": 95,
+        "ai_reasoning": "..."
+    }
+    
+    Response (Suggestion Flow):
+    {
+        "status": "success",
+        "flow": "suggestion",
+        "requires_modal": true,
+        "suggestions": [
+            {"code": "J18.9", "name": "Pneumonia, unspecified", "relevance": 1},
+            {"code": "J18.0", "name": "Bronchopneumonia, unspecified", "relevance": 2},
+            ...
+        ],
+        "total_suggestions": 5,
+        "message": "Silakan pilih diagnosis yang sesuai:"
+    }
+    """
+    try:
+        diagnosis_input = request_data.get("diagnosis_input", "")
+        
+        if not diagnosis_input or diagnosis_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "diagnosis_input required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Lookup: {diagnosis_input}")
+        
+        # Call smart lookup dengan RAG
+        result = lookup_icd10_smart_with_rag(diagnosis_input)
+        
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 8: ICD-10 Select Code (NEW)
+# ============================================================
+def endpoint_icd10_select(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/icd10/select
+    
+    Select ICD-10 code setelah user pilih dari modal suggestion.
+    Return subcategories dari code yang dipilih.
+    
+    Request:
+    {
+        "selected_code": "J18.9"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "source": "ICD10_2010",
+        "subcategories": {
+            "parent": {"code": "J18", "name": "Pneumonia, organism unspecified"},
+            "children": [
+                {"code": "J18.0", "name": "Bronchopneumonia, unspecified"},
+                ...
+            ],
+            "total_subcategories": 5
+        }
+    }
+    """
+    try:
+        selected_code = request_data.get("selected_code", "")
+        
+        if not selected_code:
+            return {
+                "status": "error",
+                "message": "selected_code required"
+            }
+        
+        print(f"[ENDPOINT_ICD10] Select: {selected_code}")
+        
+        # Call select function
+        result = select_icd10_code(selected_code)
+        
+        return {
+            **result,  # Already has "status" field
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 9: ICD-10 Statistics (NEW)
+# ============================================================
+def endpoint_icd10_statistics(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET /api/icd10/statistics
+    
+    Get statistik database ICD-10.
+    
+    Response:
+    {
+        "status": "success",
+        "statistics": {
+            "total_codes": 18543,
+            "total_categories": 2048,
+            "total_subcategories": 16495,
+            "database_source": "ICD10_2010",
+            "last_updated": "2025-11-14T..."
+        }
+    }
+    """
+    try:
+        print("[ENDPOINT_ICD10] Getting statistics...")
+        
+        stats = get_icd10_statistics()
+        
+        return {
+            "status": "success",
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 5: ICD-9 Smart Lookup (NEW - STANDALONE)
+# ============================================================
+def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd9/lookup
+    
+    Get ICD-9 procedure code dengan AI normalization fallback.
+    
+    Request:
+    {
+        "procedure_input": "x-ray thorax" atau "rontgen dada"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "status": "success" | "suggestions" | "not_found",
+            "result": {...} atau null,
+            "suggestions": [...],
+            "needs_selection": true/false
+        },
+        "timestamp": "2025-11-14T..."
+    }
+    """
+    from services.icd9_smart_service import lookup_icd9_procedure
+    
+    try:
+        procedure_input = request_data.get("procedure_input", "")
+        
+        if not procedure_input or procedure_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "procedure_input is required",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        print(f"[ENDPOINT_ICD9] Looking up: '{procedure_input}'")
+        
+        # Call ICD-9 smart service
+        result = lookup_icd9_procedure(procedure_input)
+        
+        return {
+            "status": "success",
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ENDPOINT_ICD9] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 FORNAS VALIDATION ENDPOINT
+# ============================================================
+    if endpoint_name not in LITE_ENDPOINTS:
+        return {
+            "status": "error",
+            "message": f"Unknown endpoint: {endpoint_name}",
+            "available_endpoints": list(LITE_ENDPOINTS.keys())
+        }
+    
+    handler_func = LITE_ENDPOINTS[endpoint_name]
+    
+    try:
+        return handler_func(request_data)
+    except Exception as e:
+        print(f"[AI-CLAIM LITE] Unhandled error in {endpoint_name}: {e}")
+        return {
+            "status": "error",
+            "message": "Internal server error",
+            "detail": str(e)
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 6: Validate FORNAS (Standalone)
+# ============================================================
+def endpoint_validate_fornas(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/validate/fornas
+    
+    Standalone FORNAS validation dengan AI reasoning.
+    Untuk validasi obat terhadap diagnosis tanpa full analisis.
+    
+    Request:
+    {
+        "diagnosis_icd10": "J18.9",
+        "diagnosis_name": "Pneumonia berat",
+        "obat": ["Ceftriaxone 1g IV", "Paracetamol 500mg", "Levofloxacin 500mg"]
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "fornas_validation": [
+            {
+                "no": 1,
+                "nama_obat": "Ceftriaxone",
+                "kelas_terapi": "Antibiotik – Sefalosporin",
+                "status_fornas": "✅ Sesuai (Fornas)",
+                "catatan_ai": "Lini pertama pneumonia berat rawat inap.",
+                "sumber_regulasi": "FORNAS 2023 • PNPK Pneumonia 2020"
+            },
+            ...
+        ],
+        "summary": {
+            "total_obat": 3,
+            "sesuai": 2,
+            "perlu_justifikasi": 1,
+            "non_fornas": 0,
+            "update_date": "2025-11-11",
+            "status_database": "Official Verified"
+        }
+    }
+    """
+    try:
+        # Extract request data
+        diagnosis_icd10 = request_data.get("diagnosis_icd10", "")
+        diagnosis_name = request_data.get("diagnosis_name", "")
+        obat_input = request_data.get("obat", [])
+        
+        # Validate required fields
+        if not diagnosis_icd10 or not diagnosis_name:
+            return {
+                "status": "error",
+                "message": "diagnosis_icd10 dan diagnosis_name required"
+            }
+        
+        if not obat_input or len(obat_input) == 0:
+            return {
+                "status": "error",
+                "message": "obat list required (minimal 1 obat)"
+            }
+        
+        # Convert obat to list if string
+        if isinstance(obat_input, str):
+            # Parse comma-separated string
+            obat_list = [o.strip() for o in obat_input.split(",") if o.strip()]
+        else:
+            obat_list = obat_input
+        
+        # Call FORNAS Smart validator (with English→Indonesian support)
+        result = validate_fornas(
+            drug_list=obat_list,
+            diagnosis_icd10=diagnosis_icd10,
+            diagnosis_name=diagnosis_name
+        )
+        
+        return {
+            "status": "success",
+            "fornas_validation": result.get("fornas_validation", []),
+            "summary": result.get("summary", {}),
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 TESTING HELPERS
+# ============================================================
+if __name__ == "__main__":
+    print("🧪 Testing AI-CLAIM Lite Endpoints\n")
+    
+    # Test 0: Validate Form Input
+    print("0️⃣ Testing validate_form:")
+    validate_result = endpoint_validate_form({
+        "diagnosis": "Pneumonia berat (J18.9)",
+        "tindakan": "Nebulisasi (93.96), Rontgen Thorax",
+        "obat": "Ceftriaxone injeksi 1g, Paracetamol 500mg"
+    })
+    print(json.dumps(validate_result, indent=2, ensure_ascii=False))
+    
+    # Test 1: Parse Text
+    print("\n1️⃣ Testing parse_text:")
+    parse_result = endpoint_parse_text({
+        "input_text": "Pneumonia berat, diberikan Ceftriaxone injeksi 1g/12 jam, Nebulisasi dengan Salbutamol"
+    })
+    print(json.dumps(parse_result, indent=2, ensure_ascii=False))
+    
+    # Test 2A: Analyze Single (Text Mode)
+    print("\n2️⃣A Testing analyze_single (text mode):")
+    analyze_text_result = endpoint_analyze_single({
+        "mode": "text",
+        "input_text": "Pneumonia berat dengan infiltrat bilateral, Nebulisasi 3x sehari, Ceftriaxone injeksi 1g/12jam",
+        "save_history": False
+    })
+    print(f"Status: {analyze_text_result['status']}")
+    if analyze_text_result['status'] == 'success':
+        print(f"Diagnosis: {analyze_text_result['result']['klasifikasi']['diagnosis']}")
+    
+    # Test 2B: Analyze Single (Form Mode) - NEW
+    print("\n2️⃣B Testing analyze_single (form mode):")
+    analyze_form_result = endpoint_analyze_single({
+        "mode": "form",
+        "diagnosis": "Pneumonia berat (J18.9)",
+        "tindakan": "Nebulisasi (93.96), Rontgen Thorax (87.44)",
+        "obat": "Ceftriaxone injeksi 1g/12jam, Paracetamol tablet 500mg",
+        "save_history": True
+    })
+    print(f"Status: {analyze_form_result['status']}")
+    if analyze_form_result['status'] == 'success':
+        result = analyze_form_result['result']
+        print(f"Klasifikasi:")
+        print(f"  - Diagnosis: {result['klasifikasi']['diagnosis']}")
+        print(f"  - Tindakan: {result['klasifikasi']['tindakan']}")
+        print(f"  - Obat: {result['klasifikasi']['obat']}")
+        print(f"Insight: {result['insight_ai']}")
+    
+    # Test 3: Batch Analysis
+    print("\n3️⃣ Testing analyze_batch:")
+    batch_result = endpoint_analyze_batch({
+        "batch_data": [
+            {"Nama": "Ahmad S.", "Diagnosis": "Pneumonia", "Tindakan": "Nebulisasi", "Obat": "Ceftriaxone"},
+            {"Nama": "Siti R.", "Diagnosis": "Tifoid", "Tindakan": "Infus", "Obat": "Ceftriaxone"}
+        ]
+    })
+    print(f"Total: {batch_result.get('summary', {}).get('total_klaim', 0)}")
+    print(f"Success: {batch_result.get('summary', {}).get('success', 0)}")
+    
+    print("\n✅ Testing completed!")
+
+
+# ============================================================
+# 📌 ENDPOINT 10: Dokumen Wajib (3 endpoints)
+# ============================================================
+
+def endpoint_get_dokumen_wajib(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    GET/POST /api/dokumen-wajib
+    
+    Mengambil list dokumen wajib berdasarkan diagnosis
+    
+    Request:
+    {
+        "diagnosis": "Pneumonia"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "diagnosis": "Pneumonia",
+        "total_dokumen": 7,
+        "dokumen_list": [
+            {
+                "id": 1,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Rekam Medis",
+                "status": "wajib",
+                "keterangan": "Dokumen utama klinis dan administratif."
+            },
+            {
+                "id": 6,
+                "diagnosis_name": "Pneumonia",
+                "nama_dokumen": "Prokalsitonin (PCT)",
+                "status": "opsional",
+                "keterangan": "Tidak rutin untuk memulai antibiotik..."
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Validasi input
+        diagnosis = request_data.get("diagnosis")
+        if not diagnosis:
+            return {
+                "status": "error",
+                "message": "Parameter 'diagnosis' wajib diisi",
+                "error_code": "MISSING_DIAGNOSIS"
+            }
+        
+        # Get service
+        service = get_dokumen_wajib_service()
+        
+        # Get dokumen wajib
+        result = service.get_dokumen_wajib_by_diagnosis(diagnosis)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            **result
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "DOKUMEN_WAJIB_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_get_all_diagnosis() -> Dict[str, Any]:
+    """
+    GET /api/dokumen-wajib/diagnosis-list
+    
+    Mengambil semua diagnosis yang tersedia di database
+    
+    Response:
+    {
+        "status": "success",
+        "total": 15,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)",
+            ...
+        ]
+    }
+    """
+    try:
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.get_all_diagnosis_list()
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "GET_DIAGNOSIS_LIST_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def endpoint_search_diagnosis(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/dokumen-wajib/search-diagnosis
+    
+    Search diagnosis berdasarkan keyword
+    
+    Request:
+    {
+        "keyword": "pneumo"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "keyword": "pneumo",
+        "total": 3,
+        "diagnosis_list": [
+            "Pneumonia",
+            "Hospital-Acquired Pneumonia (HAP)",
+            "Ventilator-Associated Pneumonia (VAP)"
+        ]
+    }
+    """
+    try:
+        keyword = request_data.get("keyword", "")
+        
+        if not keyword:
+            return {
+                "status": "error",
+                "message": "Parameter 'keyword' wajib diisi",
+                "error_code": "MISSING_KEYWORD"
+            }
+        
+        service = get_dokumen_wajib_service()
+        diagnosis_list = service.search_diagnosis(keyword)
+        
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "keyword": keyword,
+            "total": len(diagnosis_list),
+            "diagnosis_list": diagnosis_list
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_code": "SEARCH_DIAGNOSIS_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT 11: Translate Medical Term (OpenAI)
+# ============================================================
+def endpoint_translate_medical(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medical
+    
+    Translate colloquial/Indonesian medical term to standard medical terminology.
+    Uses OpenAI for intelligent translation.
+    
+    Request:
+    {
+        "term": "radang paru paru bakteri"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "bacterial pneumonia",
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        from openai import OpenAI
+        import os
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medical term is required",
+                "result": None
+            }
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured",
+                "result": None
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical diagnosis term in English: "{term}"
+
+Examples:
+- "paru2 basah" → "pneumonia"
+- "radang paru paru bakteri" → "bacterial pneumonia"
+- "demam berdarah" → "dengue hemorrhagic fever"
+
+Respond with ONLY the medical term, nothing else."""
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Medical diagnosis translator. Output: medical term only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high",
+                "source": "openai"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
+        elif "rate limit" in error_msg.lower():
+            msg = "API rate limit exceeded"
+        elif "timeout" in error_msg.lower():
+            msg = "API timeout"
+        else:
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
+
+
+# ============================================================
+# 🔹 ENDPOINT: Translate Medical Procedure
+# ============================================================
+def endpoint_translate_procedure(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-procedure
+    
+    Translate colloquial/Indonesian procedure term to standard medical terminology.
+    Uses synonym mapping first (instant), then OpenAI if not found.
+    
+    Request:
+    {
+        "term": "usg"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "medical_term": "ultrasound",
+            "synonyms": ["ultrasound", "ultrasonography", "ultrasonic"],
+            "confidence": "high"
+        }
+    }
+    """
+    
+    try:
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Procedure term is required",
+                "result": None
+            }
+        
+        term_lower = term.lower().strip()
+        
+        # FAST PATH: Check synonym dictionary first (no API call needed)
+        if term_lower in PROCEDURE_SYNONYMS:
+            synonyms = PROCEDURE_SYNONYMS[term_lower]
+            return {
+                "status": "success",
+                "result": {
+                    "medical_term": synonyms[0],  # Primary term
+                    "synonyms": synonyms,  # All related terms for broader search
+                    "confidence": "high",
+                    "source": "synonym_dictionary"
+                }
+            }
+        
+        # SLOW PATH: Use OpenAI for unknown terms (typos, new terms, etc.)
+        from openai import OpenAI
+        import os
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OpenAI API key not configured",
+                "result": None
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Optimized prompt - shorter and more direct
+        prompt = f"""Translate to medical procedure term in English: "{term}"
+
+Examples:
+- "ultrason" → "ultrasonography"
+- "operasi usus buntu" → "appendectomy"
+- "rontgen dada" → "chest x-ray"
+
+Respond with ONLY the medical term, nothing else."""
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Medical procedure translator. Output: medical term only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=50
+        )
+        
+        medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        return {
+            "status": "success",
+            "result": {
+                "medical_term": medical_term,
+                "confidence": "high",
+                "source": "openai"
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Simplified error handling
+        if "api key" in error_msg.lower():
+            msg = "Invalid OpenAI API key"
+        elif "rate limit" in error_msg.lower():
+            msg = "API rate limit exceeded"
+        elif "timeout" in error_msg.lower():
+            msg = "API timeout"
+        else:
+            msg = f"Translation failed: {error_msg}"
+        
+        return {
+            "status": "error",
+            "message": msg,
+            "result": None
+        }
+
+
+# ============================================================
+# 🔹 ENDPOINT: ICD-9 Hierarchy (for Tindakan)
+# ============================================================
+
+
+# ============================================================
+# 🔍 ICD-10 HIERARCHY ENDPOINT
+# ============================================================
+def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]:
+    """
+    Get ICD-10 hierarchy for diagnosis with smart filtering
+    
+    - Single word: broad match (OR logic)
+    - Multiple words: specific match (AND logic)
+    
+    Groups results by HEAD code (e.g., I25 for I25.0, I25.1, etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD10_HIERARCHY] Searching for: '{search_term}'")
+        
+        # Split into words for smart filtering
+        words = [w.strip().lower() for w in search_term.split() if len(w.strip()) > 2]
+        
+        if len(words) == 0:
+            return {
+                "status": "error",
+                "message": "Search term too short (minimum 3 characters)",
+                "data": None
+            }
+        
+        # Build query based on word count
+        if len(words) == 1:
+            # Single word: OR logic (broad search)
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE LOWER(name) LIKE :pattern
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """)
+            params = {"pattern": f"%{words[0]}%"}
+            print(f"[ICD10_HIERARCHY] Single word search: {words[0]}")
+        elif len(words) == 2:
+            # Two words: OR logic on each word for broader results
+            query = text("""
+                SELECT code, name
+                FROM icd10_master
+                WHERE (LOWER(name) LIKE :word0 OR LOWER(name) LIKE :word1)
+                  AND validation_status = 'official'
+                ORDER BY 
+                  CASE 
+                    WHEN LOWER(name) LIKE :word0 AND LOWER(name) LIKE :word1 THEN 1
+                    ELSE 2
+                  END,
+                  code
+                LIMIT 100
+            """)
+            params = {
+                "word0": f"%{words[0]}%",
+                "word1": f"%{words[1]}%"
+            }
+            print(f"[ICD10_HIERARCHY] Two-word search (OR): {words[0]} OR {words[1]}")
+        else:
+            # Multiple words (3+): Try OR first, then fallback to less restrictive
+            # Use OR logic but prefer results that match more words
+            word_conditions = " OR ".join([f"LOWER(name) LIKE :word{i}" for i in range(len(words))])
+            query_str = f"""
+                SELECT code, name
+                FROM icd10_master
+                WHERE ({word_conditions})
+                  AND validation_status = 'official'
+                ORDER BY code
+                LIMIT 100
+            """
+            query = text(query_str)
+            params = {f"word{i}": f"%{word}%" for i, word in enumerate(words)}
+            print(f"[ICD10_HIERARCHY] Multi-word search (OR): {' OR '.join(words)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD10_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (e.g., "I25" from "I25.1")
+        categories_dict = {}
+        
+        for code, name in rows:
+            # Extract HEAD code (first 3 characters: e.g., "I25" from "I25.1")
+            # ICD-10 format: A00-Z99 (3 chars) or A00.0-Z99.9 (5+ chars)
+            if len(code) > 3 and '.' in code:
+                # It's a detailed code like "I25.1" -> extract "I25"
+                head_code = code.split('.')[0]  # e.g., "I25"
+            else:
+                # Already a HEAD code (e.g., "I25") or short code
+                head_code = code[:3] if len(code) >= 3 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd10_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else name.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD10_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping (try both full code and HEAD code)
+                detail_common_term = ICD10_COMMON_TERMS.get(code) or ICD10_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": name,
+                    "commonTerm": detail_common_term
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD10_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD10_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-10 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 🔹 ICD-9 HIERARCHY ENDPOINT (untuk Tindakan/Prosedur)
+# ============================================================
+def endpoint_icd9_hierarchy(request_data: dict, db):
+    """
+    Get ICD-9 CM procedure codes grouped by HEAD category (2-digit).
+    
+    Returns hierarchical structure:
+    - Categories: List of HEAD codes (e.g., "47" for Appendectomy)
+    - Details: List of specific procedure codes under each category
+    
+    Search logic:
+    - Single word: broad match
+    - Multiple words/synonyms: OR logic for broader results
+    
+    Groups results by HEAD code (e.g., "47" for "47.0", "47.09", etc.)
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        synonyms = request_data.get("synonyms", [])
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required",
+                "data": None
+            }
+        
+        print(f"[ICD9_HIERARCHY] Searching for: '{search_term}'")
+        if synonyms:
+            print(f"[ICD9_HIERARCHY] With synonyms: {synonyms}")
+        
+        # Combine search_term with synonyms for comprehensive search
+        search_terms = [search_term.lower()]
+        if synonyms and isinstance(synonyms, list):
+            search_terms.extend([s.lower() for s in synonyms if s.lower() not in search_terms])
+        
+        # Build OR query for all search terms
+        word_conditions = " OR ".join([f"LOWER(name) LIKE :term{i}" for i in range(len(search_terms))])
+        query_str = f"""
+            SELECT code, name
+            FROM icd9cm_master
+            WHERE ({word_conditions})
+            ORDER BY code
+            LIMIT 100
+        """
+        query = text(query_str)
+        params = {f"term{i}": f"%{term}%" for i, term in enumerate(search_terms)}
+        
+        print(f"[ICD9_HIERARCHY] Multi-term search (OR): {' OR '.join(search_terms)}")
+        
+        # Execute query
+        result = db.execute(query, params)
+        rows = result.fetchall()
+        
+        print(f"[ICD9_HIERARCHY] Found {len(rows)} matching codes")
+        
+        # Group by HEAD code (2-digit: e.g., "47" from "47.09")
+        categories_dict = {}
+        
+        for code, description in rows:
+            # Extract HEAD code (first 2 digits: e.g., "47" from "47.09")
+            # ICD-9 format: 00-99 (2 chars) or 00.0-99.99 (4-5 chars)
+            if '.' in code:
+                head_code = code.split('.')[0]  # e.g., "47"
+            else:
+                head_code = code[:2] if len(code) >= 2 else code
+            
+            # Initialize category if not exists
+            if head_code not in categories_dict:
+                # Try to find HEAD code name
+                head_result = db.execute(
+                    text("SELECT name FROM icd9cm_master WHERE code = :code LIMIT 1"),
+                    {"code": head_code}
+                )
+                head_row = head_result.fetchone()
+                head_name = head_row[0] if head_row else description.split(',')[0]
+                
+                # Get common term from mapping
+                head_common_term = ICD9_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code] = {
+                    "headCode": head_code,
+                    "headName": head_name,
+                    "commonTerm": head_common_term,
+                    "count": 0,
+                    "details": []
+                }
+            
+            # Add to details if it's a sub-code
+            if code != head_code:
+                # Get common term from mapping
+                detail_common_term = ICD9_COMMON_TERMS.get(code) or ICD9_COMMON_TERMS.get(head_code)
+                
+                categories_dict[head_code]["details"].append({
+                    "code": code,
+                    "name": description,
+                    "commonTerm": detail_common_term
+                })
+                categories_dict[head_code]["count"] += 1
+        
+        # Convert to list and sort
+        categories = sorted(
+            categories_dict.values(),
+            key=lambda x: x["headCode"]
+        )
+        
+        print(f"[ICD9_HIERARCHY] Grouped into {len(categories)} categories")
+        
+        return {
+            "status": "success",
+            "data": {
+                "categories": categories
+            }
+        }
+    
+    except Exception as e:
+        print(f"[ICD9_HIERARCHY] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "message": f"Failed to get ICD-9 hierarchy: {str(e)}",
+            "data": None
+        }
+
+
+# ============================================================
+# 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
+# ============================================================
+# IMPORTANT: Dictionary ini HARUS di akhir file setelah semua fungsi didefinisikan
+LITE_ENDPOINTS = {
+    "validate_form": endpoint_validate_form,
+    "parse_text": endpoint_parse_text,
+    "analyze_single": endpoint_analyze_single,
+    "analyze_batch": endpoint_analyze_batch,
+    "get_history": endpoint_get_history,
+    "load_history_detail": endpoint_load_history_detail,
+    "delete_history": endpoint_delete_history,
+    "export_results": endpoint_export_results,
+    # ICD-10 endpoints
+    "icd10_lookup": endpoint_icd10_lookup,
+    "icd10_select": endpoint_icd10_select,
+    "icd10_statistics": endpoint_icd10_statistics,
+    # ICD-9 endpoints
+    "icd9_lookup": endpoint_icd9_lookup,
+    "icd9_hierarchy": endpoint_icd9_hierarchy,
+    # FORNAS validation endpoint
+    "validate_fornas": endpoint_validate_fornas,
+    # Dokumen Wajib endpoints
+    "get_dokumen_wajib": endpoint_get_dokumen_wajib,
+    "get_all_diagnosis": endpoint_get_all_diagnosis,
+    "search_diagnosis": endpoint_search_diagnosis,
+    # Medical Translation endpoint
+    "translate_medical": endpoint_translate_medical,
+    "translate_procedure": endpoint_translate_procedure
+}
+
+
+# ============================================================
+# 📌 MAIN HANDLER - untuk dipanggil dari FastAPI/Flask router
+# ============================================================
+def handle_lite_request(endpoint_name: str, request_data: Dict[str, Any], db=None) -> Dict[str, Any]:
+    """
+    Universal handler untuk semua AI-CLAIM Lite endpoints.
+    
+    Usage:
+        result = handle_lite_request("analyze_single", request_data)
+    """
+    if endpoint_name not in LITE_ENDPOINTS:
+        return {
+            "status": "error",
+            "message": f"Unknown endpoint: {endpoint_name}"
+        }
+    
+    handler = LITE_ENDPOINTS[endpoint_name]
+    
+    # Check if endpoint needs db parameter
+    if endpoint_name in ["icd9_hierarchy"]:
+        return handler(request_data, db)
+    else:
+        return handler(request_data)

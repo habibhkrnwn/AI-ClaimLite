@@ -6,6 +6,7 @@ interface UserStats {
   user_id: number;
   email: string;
   full_name: string;
+  tipe_rs: string;
   role: string;
   is_active: boolean;
   active_until: string | null;
@@ -42,6 +43,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
     email: '',
     password: '',
     full_name: '',
+    tipe_rs: '',
     active_until: '',
     daily_ai_limit: 100,
   });
@@ -90,7 +92,7 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
       };
       await apiService.createAdminRS(data);
       setShowCreateForm(false);
-      setFormData({ email: '', password: '', full_name: '', active_until: '', daily_ai_limit: 100 });
+      setFormData({ email: '', password: '', full_name: '',tipe_rs: '', active_until: '', daily_ai_limit: 100 });
       await loadAdminRSUsers();
       await loadStatistics();
       alert('Admin RS account created successfully');
@@ -443,6 +445,26 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                   <label className={`block text-sm font-medium mb-2 ${
                     isDark ? 'text-slate-300' : 'text-gray-700'
                   }`}>
+                    Tipe RS
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.tipe_rs}
+                    onChange={(e) => setFormData({ ...formData, tipe_rs: e.target.value })}
+                    className={`w-full px-4 py-2 rounded-lg focus:ring-2 focus:border-transparent ${
+                      isDark
+                        ? 'bg-slate-700 border border-slate-600 text-white focus:ring-cyan-500'
+                        : 'bg-white border border-gray-300 text-gray-900 focus:ring-blue-500'
+                    }`}
+                    placeholder="Contoh: RSUD, RS A, RS B, Klinik"
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDark ? 'text-slate-300' : 'text-gray-700'
+                  }`}>
                     Active Until
                   </label>
                   <input
@@ -565,6 +587,11 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                       }`}>
                         User Info
                       </th>
+                      <th className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${
+                        isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}>
+                        Tipe RS
+                      </th>
                       <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider ${
                         isDark ? 'text-slate-300' : 'text-gray-700'
                       }`}>
@@ -624,6 +651,15 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
                             </div>
                           </td>
 
+                          {/* Tipe RS */}
+                          <td className="px-4 py-4 text-center">
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              isDark ? 'bg-cyan-900/30 text-cyan-300 border border-cyan-500/50' : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
+                            }`}>
+                              {user.tipe_rs}
+                            </span>
+                          </td>
+                          
                           {/* Status */}
                           <td className="px-4 py-4 text-center">
                             <span
