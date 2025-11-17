@@ -54,10 +54,10 @@ export const adminService = {
 
     // Insert new Admin RS user with AI limit
     const result = await query(
-      `INSERT INTO users (email, password_hash, full_name, role, active_until, created_by, daily_ai_limit, ai_usage_count, ai_usage_date) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, CURRENT_DATE) 
-       RETURNING id, email, full_name, role, is_active, active_until, created_at, created_by`,
-      [email, password_hash, full_name, 'Admin RS', active_until, created_by, daily_ai_limit]
+      `INSERT INTO users (email, password_hash, full_name, tipe_rs, role, active_until, created_by, daily_ai_limit, ai_usage_count, ai_usage_date) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, CURRENT_DATE) 
+       RETURNING id, email, full_name, tipe_rs, role, is_active, active_until, created_at, created_by`,
+      [email, password_hash, full_name, tipe_rs, 'Admin RS', active_until, created_by, daily_ai_limit]
     );
 
     return result.rows[0];
@@ -66,7 +66,7 @@ export const adminService = {
   // Get all Admin RS accounts
   async getAllAdminRS(): Promise<AdminRSUser[]> {
     const result = await query(
-      `SELECT id, email, full_name, role, is_active, active_until, created_at, created_by,
+      `SELECT id, email, full_name, tipe_rs, role, is_active, active_until, created_at, created_by,
               daily_ai_limit, ai_usage_count, ai_usage_date
        FROM users 
        WHERE role = $1
@@ -108,7 +108,7 @@ export const adminService = {
       `UPDATE users 
        SET ${updates.join(', ')}
        WHERE id = $${paramIndex} AND role = 'Admin RS'
-       RETURNING id, email, full_name, role, is_active, active_until, created_at, created_by`,
+       RETURNING id, email, full_name, tipe_rs, role, is_active, active_until, created_at, created_by`,
       values
     );
 
