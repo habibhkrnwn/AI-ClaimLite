@@ -4,20 +4,20 @@ import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
 import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
-import AnalysisHistory from './AnalysisHistory';
+//import AnalysisHistory from './AnalysisHistory';
 import { AnalysisResult } from '../lib/supabase';
 import { apiService } from '../lib/api';
 
 type InputMode = 'form' | 'text';
-type TabMode = 'analysis' | 'history';
+//type TabMode = 'analysis' | 'history';
 
 interface AdminRSDashboardProps {
   isDark: boolean;
   user?: any;
 }
 
-export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps) {
-  const [tabMode, setTabMode] = useState<TabMode>('analysis');
+export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
+  //const [tabMode, setTabMode] = useState<TabMode>('analysis');
   const [inputMode, setInputMode] = useState<InputMode>('form');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');

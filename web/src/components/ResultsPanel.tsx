@@ -104,7 +104,7 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
         } backdrop-blur-md shadow-lg`}
       >
 
-        {/* HEADER BARU — sejajar */}
+        {/* HEADER — icon + title + badge + ringkasan */}
         <div className="flex items-center justify-between mb-4">
 
           {/* LEFT: Icon + Title */}
@@ -120,13 +120,13 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
             </h3>
           </div>
 
-          {/* RIGHT: Badge + Ringkasan */}
-          <div className="flex items-center gap-4">
+          {/* RIGHT: Badge + Summary */}
+          <div className="flex items-center gap-3">
 
             {/* BADGE */}
             <span
               className={`
-                px-3 py-1 rounded-full text-xs font-semibold
+                px-3 py-1 rounded-full text-xs font-semibold mt-[1px]
                 ${
                   result.fornasSummary.sesuai > 0
                     ? (isDark ? "bg-green-900 text-green-200" : "bg-green-100 text-green-700")
@@ -143,20 +143,17 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
                 : "TIDAK SESUAI"}
             </span>
 
-            {/* RINGKASAN */}
+            {/* Summary */}
             <p className={`text-sm ${isDark ? "text-slate-300" : "text-gray-600"}`}>
               {result.fornasSummary.sesuai}/{result.fornasSummary.total_obat} obat sesuai Fornas (
               {Math.round(
-                (result.fornasSummary.sesuai /
-                  result.fornasSummary.total_obat) *
-                  100
-              )}
-              %)
+                (result.fornasSummary.sesuai / result.fornasSummary.total_obat) * 100
+              )}%)
             </p>
           </div>
         </div>
 
-        {/* TABEL FORNAS (tetap seperti sebelumnya) */}
+        {/* TABEL FORNAS */}
         <div
           className={`
             overflow-x-auto rounded-xl border
@@ -196,9 +193,9 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
           </table>
         </div>
 
-        {/* SUMMARY BAWAH — sejajar horizontal */}
+        {/* SUMMARY BAWAH — sejajar rapi */}
         <div
-          className={`mt-4 flex flex-wrap items-center justify-between gap-4 text-sm ${
+          className={`mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-sm ${
             isDark ? "text-slate-300" : "text-gray-700"
           }`}
         >
@@ -218,6 +215,7 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
             📊 <strong>Status Data:</strong> {result.fornasSummary.status_database}
           </p>
         </div>
+
       </div>
 
       {/* ================== Konsistensi Klinis ================== */}
