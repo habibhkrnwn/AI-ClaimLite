@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
+import { FileText } from 'lucide-react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
+import MedicationCategoryPanel from './MedicationCategoryPanel';
+import MedicationDetailPanel from './MedicationDetailPanel';
 import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
 //import AnalysisHistory from './AnalysisHistory';
@@ -18,7 +21,6 @@ interface AdminRSDashboardProps {
 
 export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   //const [tabMode, setTabMode] = useState<TabMode>('analysis');
-  const [inputMode, setInputMode] = useState<InputMode>('form');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');
   const [medication, setMedication] = useState('');
@@ -26,6 +28,78 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
+  const [isParsed, setIsParsed] = useState(false); // Track if free text was parsed
+  
+  // Input mode toggle: 'text' or 'form'
+  const [inputMode, setInputMode] = useState<InputMode>('form');
+
+  // === DUMMY PARSER FUNCTION (Temporary) ===
+  const parseDummyText = (text: string): { diagnosis: string; tindakan: string; obat: string } => {
+    const lowerText = text.toLowerCase();
+    
+    // Deteksi diagnosis berdasarkan kata kunci
+    let diagnosis = '';
+    if (lowerText.includes('pneumonia') || lowerText.includes('paru') || lowerText.includes('paru basah')) {
+      diagnosis = 'Pneumonia';
+    } else if (lowerText.includes('diabetes') || lowerText.includes('gula') || lowerText.includes('dm')) {
+      diagnosis = 'Diabetes Mellitus';
+    } else if (lowerText.includes('hipertensi') || lowerText.includes('darah tinggi') || lowerText.includes('tensi')) {
+      diagnosis = 'Hipertensi';
+    } else if (lowerText.includes('demam') || lowerText.includes('panas')) {
+      diagnosis = 'Demam';
+    } else if (lowerText.includes('diare') || lowerText.includes('mencret')) {
+      diagnosis = 'Diare Akut';
+    } else if (lowerText.includes('tbc') || lowerText.includes('tuberkulosis') || lowerText.includes('tb')) {
+      diagnosis = 'Tuberkulosis Paru';
+    } else {
+      diagnosis = 'Kondisi Umum';
+    }
+    
+    // Deteksi tindakan
+    const tindakanList: string[] = [];
+    if (lowerText.includes('rontgen') || lowerText.includes('xray') || lowerText.includes('x-ray') || lowerText.includes('foto thorax')) {
+      tindakanList.push('Foto Rontgen Thorax');
+    }
+    if (lowerText.includes('nebulisasi') || lowerText.includes('nebul')) {
+      tindakanList.push('Nebulisasi');
+    }
+    if (lowerText.includes('infus') || lowerText.includes('iv')) {
+      tindakanList.push('Pemasangan Infus');
+    }
+    if (lowerText.includes('ekg') || lowerText.includes('jantung')) {
+      tindakanList.push('Pemeriksaan EKG');
+    }
+    if (lowerText.includes('lab') || lowerText.includes('darah lengkap') || lowerText.includes('cek darah')) {
+      tindakanList.push('Pemeriksaan Laboratorium');
+    }
+    
+    // Deteksi obat
+    const obatList: string[] = [];
+    if (lowerText.includes('ceftriaxone') || lowerText.includes('antibiotik')) {
+      obatList.push('Ceftriaxone injeksi 1g');
+    }
+    if (lowerText.includes('paracetamol') || lowerText.includes('panadol') || lowerText.includes('penurun panas')) {
+      obatList.push('Paracetamol 500mg');
+    }
+    if (lowerText.includes('amoxicillin') || lowerText.includes('amoxilin')) {
+      obatList.push('Amoxicillin 500mg');
+    }
+    if (lowerText.includes('metformin')) {
+      obatList.push('Metformin 500mg');
+    }
+    if (lowerText.includes('amlodipine') || lowerText.includes('amlodipine')) {
+      obatList.push('Amlodipine 5mg');
+    }
+    if (lowerText.includes('omeprazole')) {
+      obatList.push('Omeprazole 20mg');
+    }
+    
+    return {
+      diagnosis,
+      tindakan: tindakanList.join(', ') || 'Pemeriksaan Umum',
+      obat: obatList.join(', ') || 'Simptomatik'
+    };
+  };
   
   // ICD-10 Explorer state (Diagnosis)
   const [showICD10Explorer, setShowICD10Explorer] = useState(false);
@@ -39,6 +113,76 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   const [procedureSynonyms, setProcedureSynonyms] = useState<string[]>([]);
   const [originalProcedureTerm, setOriginalProcedureTerm] = useState('');
   const [selectedICD9Code, setSelectedICD9Code] = useState<{code: string; name: string} | null>(null);
+
+  // Medication Explorer state (Obat) - ICD-like Hierarchy
+  const [showMedicationExplorer, setShowMedicationExplorer] = useState(false);
+  const [normalizedMedicationTerm, setNormalizedMedicationTerm] = useState('');
+  const [medicationCategories, setMedicationCategories] = useState<any[]>([]);
+  const [selectedMedicationCategory, setSelectedMedicationCategory] = useState<any>(null);
+  const [selectedMedicationDetails, setSelectedMedicationDetails] = useState<string[]>([]);
+  const [originalMedicationTerm, setOriginalMedicationTerm] = useState('');
+  const [isMedicationLoading, setIsMedicationLoading] = useState(false);
+
+  // Reset isParsed when freeText changes
+  const handleFreeTextChange = (value: string) => {
+    setFreeText(value);
+    if (isParsed) {
+      setIsParsed(false); // Reset parsed flag when user edits free text
+      // Clear form fields when user starts editing free text again after parsing
+      if (inputMode === 'text') {
+        setDiagnosis('');
+        setProcedure('');
+        setMedication('');
+        // Also clear ICD results
+        setShowICD10Explorer(false);
+        setShowICD9Explorer(false);
+        setResult(null);
+        setSelectedICD10Code(null);
+        setSelectedICD9Code(null);
+      }
+    }
+  };
+
+  // Also reset isParsed when user manually edits form fields
+  const handleDiagnosisChange = (value: string) => {
+    setDiagnosis(value);
+    // Reset parsed flag when user manually edits (any edit means it's no longer auto-filled)
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  const handleProcedureChange = (value: string) => {
+    setProcedure(value);
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  const handleMedicationChange = (value: string) => {
+    setMedication(value);
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  // Handle input mode switch
+  const handleInputModeChange = (mode: InputMode) => {
+    // If switching to Free Text mode and there was parsed data, clear everything for fresh start
+    if (mode === 'text' && isParsed) {
+      setDiagnosis('');
+      setProcedure('');
+      setMedication('');
+      setIsParsed(false);
+      // Clear ICD results too
+      setShowICD10Explorer(false);
+      setShowICD9Explorer(false);
+      setResult(null);
+      setSelectedICD10Code(null);
+      setSelectedICD9Code(null);
+    }
+    setInputMode(mode);
+  };
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -66,14 +210,57 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     setSelectedICD10Code(null);
     setSelectedICD9Code(null);
     
-    // Prepare AI correction for diagnosis
-    const inputTerm = inputMode === 'text' ? freeText : diagnosis;
-    setOriginalSearchTerm(inputTerm);
+    // Declare variables in outer scope for error handling
+    let diagnosisToUse = '';
+    let procedureToUse = '';
+    let inputTerm = '';
+    let procedureTerm = '';
     
     try {
-      // Run translations in parallel for speed
-      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      // === STEP 1: Check if using Free Text mode ===
+      if (inputMode === 'text' && freeText.trim()) {
+        console.log('🔍 Parsing free text untuk auto-fill form...');
+        
+        // Reset form fields first when parsing new free text
+        setDiagnosis('');
+        setProcedure('');
+        setMedication('');
+        
+        // DUMMY PARSING - Nanti diganti dengan API call
+        const dummyParsedData = parseDummyText(freeText);
+        
+        // Auto-fill form
+        setDiagnosis(String(dummyParsedData.diagnosis || ''));
+        setProcedure(String(dummyParsedData.tindakan || ''));
+        setMedication(String(dummyParsedData.obat || ''));
+        
+        setIsParsed(true);
+        console.log('✓ Form auto-filled:', dummyParsedData);
+        
+        // Switch to form input mode to show parsed results
+        setInputMode('form');
+        
+        // Wait a bit for state to update
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Use parsed data for ICD search
+        diagnosisToUse = dummyParsedData.diagnosis;
+        procedureToUse = dummyParsedData.tindakan;
+      } else {
+        // === STEP 2: Using Form Input mode - use form values directly ===
+        diagnosisToUse = diagnosis;
+        procedureToUse = procedure;
+      }
+    
+      // === STEP 3: Translate & Search ICD ===
+      inputTerm = diagnosisToUse;
+      setOriginalSearchTerm(inputTerm);
+      
+      procedureTerm = procedureToUse;
       setOriginalProcedureTerm(procedureTerm || '');
+      
+      const medicationToUse = inputMode === 'text' ? medication : medication;
+      setOriginalMedicationTerm(medicationToUse || '');
 
       const promises: Promise<any>[] = [];
       if (inputTerm) {
@@ -86,8 +273,13 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
       } else {
         promises.push(Promise.resolve(null));
       }
+      if (medicationToUse) {
+        promises.push(apiService.translateMedicationTerm(medicationToUse));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
 
-      const [dxResp, pxResp] = await Promise.all(promises);
+      const [dxResp, pxResp, medResp] = await Promise.all(promises);
 
       // Handle diagnosis translation
       if (inputTerm) {
@@ -114,6 +306,26 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         setShowICD9Explorer(true);
       }
       
+      // Handle medication translation (ICD-like hierarchy)
+      if (medicationToUse) {
+        setIsMedicationLoading(true);
+        if (medResp && medResp.success) {
+          const normalized = medResp.data.normalized_generic || medResp.data.normalized;
+          const categories = medResp.data.categories || [];
+          setNormalizedMedicationTerm(normalized);
+          setMedicationCategories(categories);
+          // Auto-select first category if available
+          if (categories.length > 0) {
+            setSelectedMedicationCategory(categories[0]);
+          }
+        } else {
+          setNormalizedMedicationTerm(medicationToUse);
+          setMedicationCategories([]);
+        }
+        setIsMedicationLoading(false);
+        setShowMedicationExplorer(true);
+      }
+      
     } catch (error: any) {
       console.error('[Translation] Error:', error);
       
@@ -129,9 +341,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         setCorrectedTerm(inputTerm);
         setShowICD10Explorer(true);
       }
-      const procedureTerm = inputMode === 'text' ? '' : procedure;
-      if (procedureTerm) {
-        setCorrectedProcedureTerm(procedureTerm);
+      if (procedureToUse) {
+        setCorrectedProcedureTerm(procedureToUse);
         setShowICD9Explorer(true);
       }
       console.log('[DEBUG] Error fallback - Setting explorers to TRUE');
@@ -151,6 +362,9 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     const startTime = Date.now();
     
     try {
+      // Determine input mode
+      const inputMode: InputMode = freeText.trim() ? 'text' : 'form';
+      
       // Prepare request data based on input mode
       const requestData = inputMode === 'text' 
         ? { 
@@ -377,6 +591,21 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     console.log(`[ICD-9] Selected: ${code} - ${name}`);
   };
 
+  const handleMedicationCategorySelection = (category: any) => {
+    setSelectedMedicationCategory(category);
+    console.log(`[FORNAS] Selected category: ${category.generic_name}`);
+  };
+
+  const handleMedicationDetailToggle = (kodeFornas: string) => {
+    setSelectedMedicationDetails(prev => {
+      if (prev.includes(kodeFornas)) {
+        return prev.filter(code => code !== kodeFornas);
+      } else {
+        return [...prev, kodeFornas];
+      }
+    });
+  };
+
   return (
     <div className="h-full flex gap-4">
       {/* Left Panel - Input (Fixed Width) */}
@@ -433,61 +662,104 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             </div>
           )}
 
-          <div className="flex gap-2 mb-4 flex-shrink-0">
+          {/* Input Mode Toggle */}
+          <div className="flex-shrink-0 flex gap-2 p-1 bg-slate-700/30 rounded-lg">
             <button
-              onClick={() => {
-                setInputMode('form');
-                setFreeText('');
-              }}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
+              onClick={() => handleInputModeChange('text')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
+                inputMode === 'text'
+                  ? isDark
+                    ? 'bg-cyan-500 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : isDark
+                  ? 'text-slate-300 hover:bg-slate-600/50'
+                  : 'text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <FileText className="w-4 h-4 inline mr-2" />
+              Free Text
+            </button>
+            <button
+              onClick={() => handleInputModeChange('form')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
                 inputMode === 'form'
                   ? isDark
-                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                    : 'bg-blue-200 text-blue-700 border border-blue-400'
+                    ? 'bg-cyan-500 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
                   : isDark
-                  ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                  : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
+                  ? 'text-slate-300 hover:bg-slate-600/50'
+                  : 'text-gray-600 hover:bg-gray-200'
               }`}
             >
               Form Input
             </button>
-            <button
-              onClick={() => {
-                setInputMode('text');
-                setDiagnosis('');
-                setProcedure('');
-                setMedication('');
-              }}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
-                inputMode === 'text'
-                  ? isDark
-                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                    : 'bg-blue-200 text-blue-700 border border-blue-400'
-                  : isDark
-                  ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                  : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
-              }`}
-            >
-              Free Text
-            </button>
           </div>
 
-          <div className="flex-1 min-h-0">
-            <SmartInputPanel
-              mode={inputMode}
-              diagnosis={diagnosis}
-              procedure={procedure}
-              medication={medication}
-              freeText={freeText}
-              onDiagnosisChange={setDiagnosis}
-              onProcedureChange={setProcedure}
-              onMedicationChange={setMedication}
-              onFreeTextChange={setFreeText}
-              onGenerate={handleGenerate}
-              isLoading={isLoading}
-              isDark={isDark}
-              aiUsage={aiUsage}
-            />
+          <div className="flex-1 min-h-0 flex flex-col gap-3">
+            {/* Conditional Rendering based on inputMode */}
+            {inputMode === 'text' ? (
+              /* Free Text Input */
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="flex-1 flex flex-col min-h-0">
+                  <label className={`flex items-center gap-2 text-sm font-medium mb-2 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+                    <FileText className="w-4 h-4" />
+                    Resume Medis (Free Text)
+                  </label>
+                  <textarea
+                    value={freeText}
+                    onChange={(e) => handleFreeTextChange(e.target.value)}
+                    placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah, dilakukan foto thorax dan pemberian antibiotik..."
+                    className={`w-full flex-1 px-4 py-3 rounded-lg border resize-none ${
+                      isDark
+                        ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
+                        : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
+                    } backdrop-blur-sm focus:outline-none focus:ring-2 ${
+                      isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
+                    } transition-all duration-300`}
+                  />
+                </div>
+                <button
+                  onClick={handleGenerate}
+                  disabled={isLoading || !freeText.trim() || (aiUsage ? aiUsage.remaining === 0 : false)}
+                  className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
+                    (aiUsage && aiUsage.remaining === 0)
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : isDark
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500'
+                      : 'bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800'
+                  } disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl`}
+                >
+                  {isLoading ? 'Menganalisis...' : '✨ Generate AI Insight'}
+                </button>
+              </div>
+            ) : (
+              /* Form Input */
+              <div className="flex-1 min-h-0 flex flex-col">
+                {isParsed && (diagnosis || procedure || medication) && (
+                  <div className={`mb-2 px-3 py-1.5 rounded-md text-xs flex items-center gap-2 ${
+                    isDark ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-green-50 border border-green-200 text-green-700'
+                  }`}>
+                    <span>✓</span>
+                    <span className="font-medium">Form auto-filled dari resume medis</span>
+                  </div>
+                )}
+                <SmartInputPanel
+                  mode={inputMode}
+                  diagnosis={diagnosis}
+                  procedure={procedure}
+                  medication={medication}
+                  freeText={freeText}
+                  onDiagnosisChange={handleDiagnosisChange}
+                  onProcedureChange={handleProcedureChange}
+                  onMedicationChange={handleMedicationChange}
+                  onFreeTextChange={handleFreeTextChange}
+                  onGenerate={handleGenerate}
+                  isLoading={isLoading}
+                  isDark={isDark}
+                  aiUsage={aiUsage}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -506,7 +778,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               isDark ? 'text-cyan-300' : 'text-blue-700'
             }`}
           >
-            Pilih Kode Spesifik ICD-10
+            Pilih Kode Spesifik
           </h2>
           
           {/* Scrollable Content */}
@@ -514,23 +786,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             
             {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
             {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
-              <div className="flex-shrink-0">
-                <div className={`mb-4 px-4 py-3 rounded-lg ${
-                  isDark ? 'bg-gradient-to-r from-cyan-500/10 to-green-500/10 border border-cyan-500/30' : 'bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200'
-                }`}>
-                  <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                    🏥 Mapping Kode ICD
-                  </h3>
-                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                    {showICD10Explorer && showICD9Explorer 
-                      ? 'Pilih kode diagnosis (ICD-10) dan tindakan (ICD-9) yang sesuai'
-                      : showICD10Explorer 
-                        ? 'Pilih kode diagnosis (ICD-10) yang sesuai'
-                        : 'Pilih kode tindakan (ICD-9) yang sesuai'
-                    }
-                  </p>
-                </div>
-
+              <div className="flex-shrink-0 relative">
                 {/* 2-Column Layout: Explorers (Left 65%) | Shared Mapping Preview (Right 35%) */}
                 <div className="grid grid-cols-12 gap-4">
                   {/* Left Column: ICD-10 & ICD-9 Explorers (8 columns = ~66%) */}
@@ -538,13 +794,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                     {/* ICD-10 Diagnosis Section */}
                     {showICD10Explorer && correctedTerm && (
                       <div>
-                        <div className={`mb-3 px-3 py-2 rounded-md ${
-                          isDark ? 'bg-cyan-500/5 border-l-2 border-cyan-500' : 'bg-blue-50 border-l-2 border-blue-500'
-                        }`}>
-                          <h4 className={`text-xs font-semibold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
-                            🩺 Diagnosis ICD-10
-                          </h4>
-                        </div>
                         <ICD10Explorer
                           searchTerm={originalSearchTerm}
                           correctedTerm={correctedTerm}
@@ -553,7 +802,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                             procedure,
                             medication,
                             freeText,
-                            mode: inputMode,
+                            mode: freeText.trim() ? 'text' as const : 'form' as const,
                           }}
                           isDark={isDark}
                           isAnalyzing={isLoading}
@@ -566,13 +815,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                     {/* ICD-9 Tindakan Section */}
                     {showICD9Explorer && correctedProcedureTerm && (
                       <div>
-                        <div className={`mb-3 px-3 py-2 rounded-md ${
-                          isDark ? 'bg-green-500/5 border-l-2 border-green-500' : 'bg-green-50 border-l-2 border-green-500'
-                        }`}>
-                          <h4 className={`text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                            ⚕️ Tindakan ICD-9
-                          </h4>
-                        </div>
                         <ICD9Explorer
                           searchTerm={originalProcedureTerm}
                           correctedTerm={correctedProcedureTerm}
@@ -582,12 +824,29 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                             procedure,
                             medication,
                             freeText,
-                            mode: inputMode,
+                            mode: freeText.trim() ? 'text' as const : 'form' as const,
                           }}
                           isDark={isDark}
                           isAnalyzing={isLoading}
                           onCodeSelected={handleProcedureCodeSelection}
                           hidePreview={true}
+                        />
+                      </div>
+                    )}
+
+                    {/* Medication FORNAS Section - ICD-like Hierarchy */}
+                    {showMedicationExplorer && normalizedMedicationTerm && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <MedicationCategoryPanel
+                          categories={medicationCategories}
+                          selectedCategory={selectedMedicationCategory}
+                          onSelectCategory={handleMedicationCategorySelection}
+                          isLoading={isMedicationLoading}
+                        />
+                        <MedicationDetailPanel
+                          category={selectedMedicationCategory}
+                          selectedDetails={selectedMedicationDetails}
+                          onToggleDetail={handleMedicationDetailToggle}
                         />
                       </div>
                     )}

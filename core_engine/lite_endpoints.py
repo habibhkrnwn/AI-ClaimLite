@@ -426,23 +426,23 @@ def endpoint_validate_form(request_data: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    POST /api/lite/parse
+    POST /api/lite/parse-text
     
-    Parse resume medis free text menjadi struktur terpisah.
-    Untuk preview sebelum analisis.
+    Parse resume medis free text menjadi struktur terpisah menggunakan AI.
+    Untuk ekstraksi diagnosis, tindakan, dan obat dari paragraf resume medis.
     
     Request:
     {
-        "input_text": "Pneumonia berat, diberikan Ceftriaxone..."
+        "input_text": "Pasien didiagnosa pneumonia berat, diberikan nebulisasi dan ceftriaxone injeksi..."
     }
     
     Response:
     {
         "status": "success",
-        "parsed": {
+        "result": {
             "diagnosis": "Pneumonia berat",
-            "tindakan": ["Nebulisasi"],
-            "obat": ["Ceftriaxone injeksi"]
+            "tindakan": "Nebulisasi",
+            "obat": "Ceftriaxone injeksi"
         }
     }
     """
@@ -456,15 +456,20 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 "message": "Input text tidak boleh kosong"
             }
         
-        # Parse text
+        # Parse text using AI
         parsed = parse_free_text(input_text)
+        
+        # Extract structured data
+        diagnosis = parsed.get("diagnosis", "")
+        tindakan = parsed.get("tindakan", "")
+        obat = parsed.get("obat", "")
         
         return {
             "status": "success",
-            "parsed": {
-                "diagnosis": parsed["diagnosis"],
-                "tindakan": parsed["tindakan"],
-                "obat": parsed["obat"]
+            "result": {
+                "diagnosis": diagnosis,
+                "tindakan": tindakan,
+                "obat": obat
             },
             "timestamp": datetime.now().isoformat()
         }
@@ -472,7 +477,7 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {
             "status": "error",
-            "message": str(e)
+            "message": f"Parsing error: {str(e)}"
         }
 
 
@@ -1880,6 +1885,171 @@ Respond with ONLY the medical term, nothing else."""
             "result": None
         }
 
+
+# ============================================================
+# 🔹 ENDPOINT: Translate Medication with AI Normalization
+# ============================================================
+def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medication
+    
+    Translate medication name to Indonesian using FORNAS AI normalization.
+    Returns suggestions from FORNAS database.
+    
+    Request:
+    {
+        "term": "ceftriaxone"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "original_term": "ceftriaxone",
+            "normalized_name": "Seftriakson",
+            "suggestions": [
+                {
+                    "kode_fornas": "A001",
+                    "obat_name": "Seftriakson 1 g Injeksi",
+                    "kelas_terapi": "Antibiotik",
+                    "confidence": 100
+                },
+                {
+                    "kode_fornas": "A002",
+                    "obat_name": "Seftriakson 500 mg Injeksi",
+                    "kelas_terapi": "Antibiotik",
+                    "confidence": 95
+                }
+            ],
+            "confidence": 100,
+            "found_in_db": true,
+            "source": "ai_fornas"
+        }
+    }
+    """
+    
+    try:
+        from services.fornas_smart_service import (
+            FornasDrugNormalizer, 
+            db_search_by_keywords,
+            db_exact_match
+        )
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medication term is required",
+                "result": None
+            }
+        
+        print(f"[TRANSLATE_MEDICATION] Processing: {term}")
+        
+        # Step 1: Search by keywords to get context
+        similar_drugs = db_search_by_keywords(term, limit=50)
+        db_context = [drug.obat_name for drug in similar_drugs]
+        
+        # Step 2: Use AI normalization to get generic name
+        normalizer = FornasDrugNormalizer()
+        ai_result = normalizer.normalize_to_indonesian(term, db_context=db_context)
+        
+        print(f"[TRANSLATE_MEDICATION] AI result: {ai_result}")
+        
+        # Step 3: Extract generic name from normalized result
+        normalized_name = ai_result.get("normalized_name", term)
+        
+        # Extract generic name (remove dosage/form info)
+        # Example: "Fentanil 50 mcg/ml Injeksi" -> "Fentanil"
+        import re
+        generic_name = re.split(r'\s+\d+', normalized_name)[0].strip()
+        
+        print(f"[TRANSLATE_MEDICATION] Generic name extracted: {generic_name}")
+        
+        # Step 4: Search all drugs with this generic name (like ICD hierarchy)
+        from models import FornasDrug
+        from database_connection import get_db_connection
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Search for all dosage forms of this generic drug
+        query = """
+            SELECT kode_fornas, obat_name, kelas_terapi, sub_kelas_terapi
+            FROM fornas_drugs
+            WHERE LOWER(obat_name) LIKE LOWER(%s)
+            ORDER BY obat_name
+            LIMIT 30
+        """
+        
+        cursor.execute(query, (f"{generic_name}%",))
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms")
+        
+        # Step 5: Group by generic name (like ICD categories)
+        categories = {}
+        
+        for row in results:
+            kode_fornas, obat_name, kelas_terapi, sub_kelas_terapi = row
+            
+            # Extract generic name from full name
+            generic = re.split(r'\s+\d+', obat_name)[0].strip()
+            
+            # Extract sediaan_kekuatan (dosage form)
+            # Example: "Fentanil 50 mcg/ml Injeksi" -> "50 mcg/ml Injeksi"
+            sediaan_match = re.search(r'(\d+.*)', obat_name)
+            sediaan_kekuatan = sediaan_match.group(1) if sediaan_match else obat_name
+            
+            if generic not in categories:
+                categories[generic] = {
+                    "generic_name": generic,
+                    "kelas_terapi": kelas_terapi or "",
+                    "sub_kelas_terapi": sub_kelas_terapi or "",
+                    "total_dosage_forms": 0,
+                    "confidence": 100,
+                    "details": []
+                }
+            
+            categories[generic]["details"].append({
+                "kode_fornas": kode_fornas,
+                "obat_name": obat_name,
+                "sediaan_kekuatan": sediaan_kekuatan
+            })
+            categories[generic]["total_dosage_forms"] += 1
+        
+        # Convert to list and sort by relevance
+        categories_list = list(categories.values())
+        
+        # Sort: exact match first, then by number of dosage forms
+        def category_sort_key(cat):
+            exact_match = cat["generic_name"].lower() == generic_name.lower()
+            return (not exact_match, -cat["total_dosage_forms"])
+        
+        categories_list.sort(key=category_sort_key)
+        
+        return {
+            "status": "success",
+            "result": {
+                "original_term": term,
+                "normalized_generic": generic_name,
+                "categories": categories_list,
+                "confidence": ai_result.get("confidence", 100),
+                "found_in_db": len(categories_list) > 0
+            }
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[TRANSLATE_MEDICATION] ❌ Error: {error_msg}")
+        
+        return {
+            "status": "error",
+            "message": f"Medication translation failed: {error_msg}",
+            "result": None
+        }
 
 
 # ============================================================
