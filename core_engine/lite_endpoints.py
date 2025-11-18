@@ -1930,7 +1930,7 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
     
     try:
         from services.fornas_smart_service import (
-            FornasDrugNormalizer, 
+            FornasAINormalizer, 
             db_search_by_keywords,
             db_exact_match
         )
@@ -1951,7 +1951,7 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
         db_context = [drug.obat_name for drug in similar_drugs]
         
         # Step 2: Use AI normalization to get generic name
-        normalizer = FornasDrugNormalizer()
+        normalizer = FornasAINormalizer()
         ai_result = normalizer.normalize_to_indonesian(term, db_context=db_context)
         
         print(f"[TRANSLATE_MEDICATION] AI result: {ai_result}")
@@ -1968,78 +1968,83 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
         
         # Step 4: Search all drugs with this generic name (like ICD hierarchy)
         from models import FornasDrug
-        from database_connection import get_db_connection
+        from database_connection import SessionLocal
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        db = SessionLocal()
         
-        # Search for all dosage forms of this generic drug
-        query = """
-            SELECT kode_fornas, obat_name, kelas_terapi, sub_kelas_terapi
-            FROM fornas_drugs
-            WHERE LOWER(obat_name) LIKE LOWER(%s)
-            ORDER BY obat_name
-            LIMIT 30
-        """
-        
-        cursor.execute(query, (f"{generic_name}%",))
-        results = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms")
-        
-        # Step 5: Group by generic name (like ICD categories)
-        categories = {}
-        
-        for row in results:
-            kode_fornas, obat_name, kelas_terapi, sub_kelas_terapi = row
+        try:
+            # Search for all dosage forms of this generic drug
+            results = db.query(FornasDrug).filter(
+                FornasDrug.obat_name.ilike(f"{generic_name}%")
+            ).order_by(FornasDrug.obat_name).limit(30).all()
             
-            # Extract generic name from full name
-            generic = re.split(r'\s+\d+', obat_name)[0].strip()
+            print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms")
             
-            # Extract sediaan_kekuatan (dosage form)
-            # Example: "Fentanil 50 mcg/ml Injeksi" -> "50 mcg/ml Injeksi"
-            sediaan_match = re.search(r'(\d+.*)', obat_name)
-            sediaan_kekuatan = sediaan_match.group(1) if sediaan_match else obat_name
+            # Step 5: Group by generic name (like ICD categories)
+            categories = {}
             
-            if generic not in categories:
-                categories[generic] = {
-                    "generic_name": generic,
-                    "kelas_terapi": kelas_terapi or "",
-                    "sub_kelas_terapi": sub_kelas_terapi or "",
-                    "total_dosage_forms": 0,
-                    "confidence": 100,
-                    "details": []
+            for drug in results:
+                # Extract generic name from full name
+                generic = re.split(r'\s+\d+', drug.obat_name)[0].strip()
+                
+                # Use sediaan_kekuatan from database (JSON or text)
+                # If it's JSON, extract the value; if text, use directly
+                sediaan_kekuatan = drug.sediaan_kekuatan
+                if isinstance(sediaan_kekuatan, (dict, list)):
+                    # If JSON, convert to string representation
+                    import json
+                    sediaan_kekuatan = json.dumps(sediaan_kekuatan, ensure_ascii=False)
+                elif not sediaan_kekuatan:
+                    # Fallback: extract from obat_name if sediaan_kekuatan is NULL
+                    sediaan_match = re.search(r'(\d+.*)', drug.obat_name)
+                    sediaan_kekuatan = sediaan_match.group(1) if sediaan_match else drug.obat_name
+                
+                # Generate unique ID: use kode_fornas if exists, else create from obat_name + sediaan
+                unique_id = drug.kode_fornas if drug.kode_fornas else f"{drug.obat_name}_{sediaan_kekuatan}".replace(" ", "_")
+                
+                # DEBUG: Print unique_id untuk setiap drug
+                print(f"[TRANSLATE_MEDICATION] Drug: {drug.obat_name} | UniqueID: {unique_id} | Sediaan: {sediaan_kekuatan}")
+                
+                if generic not in categories:
+                    categories[generic] = {
+                        "generic_name": generic,
+                        "kelas_terapi": drug.kelas_terapi or "",
+                        "subkelas_terapi": drug.subkelas_terapi or "",
+                        "total_dosage_forms": 0,
+                        "confidence": 100,
+                        "details": []
+                    }
+                
+                categories[generic]["details"].append({
+                    "kode_fornas": unique_id,  # Use unique_id instead
+                    "obat_name": drug.obat_name,
+                    "sediaan_kekuatan": str(sediaan_kekuatan),
+                    "restriksi_penggunaan": drug.restriksi_penggunaan or ""
+                })
+                categories[generic]["total_dosage_forms"] += 1
+            
+            # Convert to list and sort by relevance
+            categories_list = list(categories.values())
+            
+            # Sort: exact match first, then by number of dosage forms
+            def category_sort_key(cat):
+                exact_match = cat["generic_name"].lower() == generic_name.lower()
+                return (not exact_match, -cat["total_dosage_forms"])
+            
+            categories_list.sort(key=category_sort_key)
+            
+            return {
+                "status": "success",
+                "result": {
+                    "original_term": term,
+                    "normalized_generic": generic_name,
+                    "categories": categories_list,
+                    "confidence": ai_result.get("confidence", 100),
+                    "found_in_db": len(categories_list) > 0
                 }
-            
-            categories[generic]["details"].append({
-                "kode_fornas": kode_fornas,
-                "obat_name": obat_name,
-                "sediaan_kekuatan": sediaan_kekuatan
-            })
-            categories[generic]["total_dosage_forms"] += 1
-        
-        # Convert to list and sort by relevance
-        categories_list = list(categories.values())
-        
-        # Sort: exact match first, then by number of dosage forms
-        def category_sort_key(cat):
-            exact_match = cat["generic_name"].lower() == generic_name.lower()
-            return (not exact_match, -cat["total_dosage_forms"])
-        
-        categories_list.sort(key=category_sort_key)
-        
-        return {
-            "status": "success",
-            "result": {
-                "original_term": term,
-                "normalized_generic": generic_name,
-                "categories": categories_list,
-                "confidence": ai_result.get("confidence", 100),
-                "found_in_db": len(categories_list) > 0
             }
-        }
+        finally:
+            db.close()
     
     except Exception as e:
         error_msg = str(e)

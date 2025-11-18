@@ -1,5 +1,21 @@
 import { Sparkles } from 'lucide-react';
 
+interface MedicationDetail {
+  kode_fornas: string;
+  obat_name: string;
+  sediaan_kekuatan: string;
+  restriksi_penggunaan?: string;
+}
+
+interface MedicationCategory {
+  generic_name: string;
+  kelas_terapi: string;
+  subkelas_terapi: string;
+  total_dosage_forms: number;
+  confidence: number;
+  details: MedicationDetail[];
+}
+
 interface SharedMappingPreviewProps {
   isDark: boolean;
   isAnalyzing: boolean;
@@ -8,6 +24,8 @@ interface SharedMappingPreviewProps {
   originalDiagnosis?: string;
   originalProcedure?: string;
   originalMedication?: string;
+  selectedMedicationCategory?: MedicationCategory | null;
+  selectedMedicationDetails?: string[];
   onGenerateAnalysis?: () => void;
 }
 
@@ -19,9 +37,16 @@ export default function SharedMappingPreview({
   originalDiagnosis,
   originalProcedure,
   originalMedication,
+  selectedMedicationCategory,
+  selectedMedicationDetails = [],
   onGenerateAnalysis,
 }: SharedMappingPreviewProps) {
   const hasSelection = icd10Code || icd9Code;
+  
+  // Get selected medication detail object
+  const selectedMedicationDetail = selectedMedicationCategory && selectedMedicationDetails.length > 0
+    ? selectedMedicationCategory.details.find(d => d.kode_fornas === selectedMedicationDetails[0])
+    : null;
 
   return (
     <div className={`rounded-lg p-4 ${
@@ -89,14 +114,46 @@ export default function SharedMappingPreview({
             </div>
           )}
 
-          {/* Medication/Obat */}
-          {originalMedication && (
+          {/* Medication/Obat - Show selected detail */}
+          {selectedMedicationDetail ? (
+            <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-purple-50'}`}>
+              <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                💊 Obat (Original)
+              </label>
+              <p className={`text-sm mb-3 ${isDark ? 'text-slate-400 line-through' : 'text-gray-500 line-through'}`}>
+                {originalMedication || '-'}
+              </p>
+              <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                FORNAS Obat ✓
+              </label>
+              {/* Highlight dengan format: Generic Name - Sediaan */}
+              <div className={`p-4 rounded-lg border-2 ${
+                isDark 
+                  ? 'bg-gradient-to-br from-purple-500/20 to-pink-500/20 border-purple-400 shadow-lg shadow-purple-500/20' 
+                  : 'bg-gradient-to-br from-purple-100 to-pink-100 border-purple-400 shadow-lg shadow-purple-500/20'
+              }`}>
+                <div className={`font-bold text-xl mb-2 ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                  {selectedMedicationCategory?.generic_name} - {selectedMedicationDetail.sediaan_kekuatan}
+                </div>
+                {selectedMedicationDetail.restriksi_penggunaan && (
+                  <div className={`text-xs mt-2 p-2 rounded ${
+                    isDark ? 'bg-orange-500/20 text-orange-300' : 'bg-orange-100 text-orange-700'
+                  }`}>
+                    ⚠️ {selectedMedicationDetail.restriksi_penggunaan}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : originalMedication && (
             <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-700/50' : 'bg-purple-50'}`}>
               <label className={`text-xs font-medium block mb-2 ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
                 💊 Obat
               </label>
               <div className={`p-2 rounded border ${isDark ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'bg-purple-100 border-purple-300 text-purple-700'}`}>
-                <div className="text-sm">{originalMedication}</div>
+                <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                  {originalMedication}
+                  <span className="block text-xs mt-1 opacity-70">Pilih sediaan untuk mapping</span>
+                </div>
               </div>
             </div>
           )}

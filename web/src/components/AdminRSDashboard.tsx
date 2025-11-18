@@ -312,6 +312,16 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         if (medResp && medResp.success) {
           const normalized = medResp.data.normalized_generic || medResp.data.normalized;
           const categories = medResp.data.categories || [];
+          
+          // DEBUG: Log categories untuk check kode_fornas
+          console.log('[MEDICATION] Categories:', categories);
+          categories.forEach((cat: any, catIdx: number) => {
+            console.log(`[MEDICATION] Category ${catIdx}: ${cat.generic_name} (${cat.total_dosage_forms} sediaan)`);
+            cat.details?.forEach((detail: any, detailIdx: number) => {
+              console.log(`  [${detailIdx}] Kode: ${detail.kode_fornas} | Obat: ${detail.obat_name}`);
+            });
+          });
+          
           setNormalizedMedicationTerm(normalized);
           setMedicationCategories(categories);
           // Auto-select first category if available
@@ -597,11 +607,17 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   };
 
   const handleMedicationDetailToggle = (kodeFornas: string) => {
+    console.log(`[MEDICATION] Toggle kode_fornas: ${kodeFornas}`);
+    console.log(`[MEDICATION] Current selected:`, selectedMedicationDetails);
+    
+    // SINGLE SELECTION: Replace array with single item or clear if same item clicked
     setSelectedMedicationDetails(prev => {
       if (prev.includes(kodeFornas)) {
-        return prev.filter(code => code !== kodeFornas);
+        console.log(`[MEDICATION] Deselecting: ${kodeFornas}`);
+        return []; // Clear selection
       } else {
-        return [...prev, kodeFornas];
+        console.log(`[MEDICATION] Selecting (single): ${kodeFornas}`);
+        return [kodeFornas]; // Replace with single selection
       }
     });
   };
@@ -842,11 +858,13 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                           selectedCategory={selectedMedicationCategory}
                           onSelectCategory={handleMedicationCategorySelection}
                           isLoading={isMedicationLoading}
+                          isDark={isDark}
                         />
                         <MedicationDetailPanel
                           category={selectedMedicationCategory}
                           selectedDetails={selectedMedicationDetails}
                           onToggleDetail={handleMedicationDetailToggle}
+                          isDark={isDark}
                         />
                       </div>
                     )}
@@ -861,7 +879,9 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                       icd9Code={selectedICD9Code}
                       originalDiagnosis={originalSearchTerm}
                       originalProcedure={originalProcedureTerm}
-                      originalMedication={medication}
+                      originalMedication={originalMedicationTerm}
+                      selectedMedicationCategory={selectedMedicationCategory}
+                      selectedMedicationDetails={selectedMedicationDetails}
                       onGenerateAnalysis={handleGenerateAnalysis}
                     />
                   </div>
