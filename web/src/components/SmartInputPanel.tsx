@@ -43,7 +43,11 @@ export default function SmartInputPanel({
 }: SmartInputPanelProps) {
   const isLimitReached = aiUsage ? aiUsage.remaining === 0 : false;
 
-
+  // Safety: Ensure all props are strings (defensive programming)
+  const safeDiagnosis = String(diagnosis || '');
+  const safeProcedure = String(procedure || '');
+  const safeMedication = String(medication || '');
+  const safeFreeText = String(freeText || '');
 
   // Original Input Mode (Form or Text)
   if (mode === 'text') {
@@ -55,10 +59,10 @@ export default function SmartInputPanel({
             Resume Medis (Free Text)
           </label>
           <textarea
-            value={freeText}
+            value={safeFreeText}
             onChange={(e) => onFreeTextChange(e.target.value)}
-            placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah..."
-            className={`w-full px-4 py-3 rounded-lg border flex-1 resize-none ${
+            placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah, dilakukan foto thorax dan pemberian antibiotik..."
+            className={`w-full flex-1 px-4 py-3 rounded-lg border resize-none ${
               isDark
                 ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
                 : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
@@ -69,7 +73,7 @@ export default function SmartInputPanel({
         </div>
         <button
           onClick={onGenerate}
-          disabled={isLoading || !freeText.trim() || isLimitReached}
+          disabled={isLoading || !safeFreeText.trim() || isLimitReached}
           className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
             isLimitReached
               ? 'bg-gray-400 cursor-not-allowed'
@@ -95,7 +99,7 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={diagnosis}
+            value={safeDiagnosis}
             onChange={(e) => onDiagnosisChange(e.target.value)}
             placeholder="Masukkan diagnosis (mis: paru2 basah)..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
@@ -115,7 +119,7 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={procedure}
+            value={safeProcedure}
             onChange={(e) => onProcedureChange(e.target.value)}
             placeholder="Masukkan tindakan medis..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
@@ -135,7 +139,7 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={medication}
+            value={safeMedication}
             onChange={(e) => onMedicationChange(e.target.value)}
             placeholder="Masukkan daftar obat..."
             className={`w-full px-4 py-2.5 rounded-lg border ${

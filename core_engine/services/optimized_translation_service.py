@@ -328,12 +328,18 @@ def translate_hybrid(
         results.sort(key=lambda x: x.get("confidence", 0), reverse=True)
         return results[0]
     
-    # No results
+    # No results - return best effort with original text
+    print(f"⚠️  Translation not found for: '{diagnosis_text}'")
     return {
-        "error": "No translation available",
-        "source": "error",
+        "icd10": "",
+        "icd10_desc": diagnosis_text,  # Use original text as description
+        "icd9": procedure_text if procedure_text else "",
+        "icd9_desc": "",
         "confidence": 0.0,
-        "needs_review": True
+        "reasoning": "No translation found in dictionary. Original text returned.",
+        "needs_review": True,
+        "source": "not_found",
+        "processing_time_ms": 1
     }
 
 # =========================================

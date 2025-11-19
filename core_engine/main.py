@@ -71,6 +71,7 @@ from lite_endpoints import (
     endpoint_load_history_detail,
     endpoint_translate_medical,
     endpoint_translate_procedure,
+    endpoint_translate_medication,
     endpoint_icd10_hierarchy,
     endpoint_icd9_hierarchy
 )
@@ -359,7 +360,51 @@ async def translate_procedure_term(request: Request):
 
 
 # ============================================================
-# �🔍 ICD-10 HIERARCHY ENDPOINT (for Diagnosis)
+# 💊 TRANSLATE MEDICATION ENDPOINT
+# ============================================================
+@app.post("/api/lite/translate-medication")
+async def translate_medication_term(request: Request):
+    """
+    Translate medication name to Indonesian using FORNAS AI normalization
+    
+    Request body:
+    {
+        "term": "ceftriaxone"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "original_term": "ceftriaxone",
+            "normalized_name": "Seftriakson",
+            "suggestions": [
+                {
+                    "kode_fornas": "A001",
+                    "obat_name": "Seftriakson 1 g Injeksi",
+                    "kelas_terapi": "Antibiotik",
+                    "confidence": 100
+                }
+            ],
+            "confidence": 100,
+            "found_in_db": true
+        }
+    }
+    """
+    try:
+        data = await request.json()
+        result = endpoint_translate_medication(data)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in translate_medication_term: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+# ============================================================
+# 🔍 ICD-10 HIERARCHY ENDPOINT (for Diagnosis)
 # ============================================================
 @app.post("/api/lite/icd10-hierarchy")
 async def get_icd10_hierarchy(request: Request):
