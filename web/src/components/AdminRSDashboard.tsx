@@ -763,26 +763,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             >
               Form Input
             </button>
-            <button
-              onClick={() => {
-                setInputMode('text');
-                setDiagnosis('');
-                setProcedure('');
-                setMedication('');
-                setServiceType('');
-              }}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
-                inputMode === 'text'
-                  ? isDark
-                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                    : 'bg-blue-200 text-blue-700 border border-blue-400'
-                  : isDark
-                  ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                  : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
-              }`}
-            >
-              Free Text
-            </button>
           </div>
 
           <div className="flex-1 min-h-0">
@@ -794,82 +774,17 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               serviceType={serviceType}
               bpjsClass={bpjsClass}
               freeText={freeText}
-              onDiagnosisChange={setDiagnosis}
-              onProcedureChange={setProcedure}
-              onMedicationChange={setMedication}
+              onDiagnosisChange={handleDiagnosisChange}
+              onProcedureChange={handleProcedureChange}
+              onMedicationChange={handleMedicationChange}
               onServiceTypeChange={setServiceType}
               onBpjsClassChange={setBpjsClass}
-              onFreeTextChange={setFreeText}
+              onFreeTextChange={handleFreeTextChange}
               onGenerate={handleGenerate}
               isLoading={isLoading}
               isDark={isDark}
               aiUsage={aiUsage}
             />
-          <div className="flex-1 min-h-0 flex flex-col gap-3">
-            {/* Conditional Rendering based on inputMode */}
-            {inputMode === 'text' ? (
-              /* Free Text Input */
-              <div className="flex-1 flex flex-col gap-3">
-                <div className="flex-1 flex flex-col min-h-0">
-                  <label className={`flex items-center gap-2 text-sm font-medium mb-2 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                    <FileText className="w-4 h-4" />
-                    Resume Medis (Free Text)
-                  </label>
-                  <textarea
-                    value={freeText}
-                    onChange={(e) => handleFreeTextChange(e.target.value)}
-                    placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah, dilakukan foto thorax dan pemberian antibiotik..."
-                    className={`w-full flex-1 px-4 py-3 rounded-lg border resize-none ${
-                      isDark
-                        ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
-                        : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
-                    } backdrop-blur-sm focus:outline-none focus:ring-2 ${
-                      isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
-                    } transition-all duration-300`}
-                  />
-                </div>
-                <button
-                  onClick={handleGenerate}
-                  disabled={isLoading || !freeText.trim() || (aiUsage ? aiUsage.remaining === 0 : false)}
-                  className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
-                    (aiUsage && aiUsage.remaining === 0)
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : isDark
-                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500'
-                      : 'bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800'
-                  } disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl`}
-                >
-                  {isLoading ? 'Menganalisis...' : '✨ Generate AI Insight'}
-                </button>
-              </div>
-            ) : (
-              /* Form Input */
-              <div className="flex-1 min-h-0 flex flex-col">
-                {isParsed && (diagnosis || procedure || medication) && (
-                  <div className={`mb-2 px-3 py-1.5 rounded-md text-xs flex items-center gap-2 ${
-                    isDark ? 'bg-green-500/10 border border-green-500/30 text-green-300' : 'bg-green-50 border border-green-200 text-green-700'
-                  }`}>
-                    <span>✓</span>
-                    <span className="font-medium">Form auto-filled dari resume medis</span>
-                  </div>
-                )}
-                <SmartInputPanel
-                  mode={inputMode}
-                  diagnosis={diagnosis}
-                  procedure={procedure}
-                  medication={medication}
-                  freeText={freeText}
-                  onDiagnosisChange={handleDiagnosisChange}
-                  onProcedureChange={handleProcedureChange}
-                  onMedicationChange={handleMedicationChange}
-                  onFreeTextChange={handleFreeTextChange}
-                  onGenerate={handleGenerate}
-                  isLoading={isLoading}
-                  isDark={isDark}
-                  aiUsage={aiUsage}
-                />
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1122,6 +1037,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           </div>
         </div>
       </div>
+      {/* End Right Panel */}
     </div>
   );
 }
