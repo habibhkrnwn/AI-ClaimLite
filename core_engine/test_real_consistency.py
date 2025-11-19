@@ -9,6 +9,27 @@ sys.path.insert(0, os.path.dirname(__file__))
 from services.consistency_service import analyze_clinical_consistency
 import json
 
+def _print_dim(label: str, data: dict):
+    status = data.get("status")
+    score = data.get("score")
+    precision = data.get("precision")
+    recall = data.get("recall")
+    f1 = data.get("f1")
+    catatan = data.get("catatan")
+    matched = data.get("matched_items")
+    missing = data.get("missing_expected")
+    extra = data.get("extra_actual")
+    print(f"  [{label}] Status : {status}")
+    if score is not None:
+        print(f"           F1={f1:.4f} (P={precision:.4f}, R={recall:.4f})")
+        print(f"           Matched={len(matched)} Missing={len(missing)} Extra={len(extra)}")
+    else:
+        print("           (Tidak dinilai - referensi tidak tersedia)")
+        if extra:
+            print(f"           Extra input: {', '.join(extra[:5])}{'...' if len(extra)>5 else ''}")
+    if catatan:
+        print(f"           Catatan: {catatan[:140]}{'...' if len(catatan)>140 else ''}")
+
 print("=" * 80)
 print("TEST OUTPUT KONSISTENSI KLINIS - SKENARIO REAL")
 print("=" * 80)
@@ -17,22 +38,22 @@ print("=" * 80)
 print("\n[SKENARIO 1] Pneumonia dengan Penanganan Lengkap")
 print("-" * 80)
 print("Input:")
-print("  - Diagnosis: J18.9 (Pneumonia)")
-print("  - Tindakan: 87.44 (Chest X-ray), 93.96 (Inhalasi), 90.43 (Lab)")
-print("  - Obat: Ceftriaxone, Amoxicillin, Salbutamol")
+print("  - Diagnosis: Pneumonia")
+print("  - Tindakan: Chest X-ray")
+print("  - Obat: Ceftriaxone")
 print()
 
 result1 = analyze_clinical_consistency(
     dx="J18.9",
-    tx_list=["87.44", "93.96", "90.43"],
-    drug_list=["ceftriaxone", "amoxicillin", "salbutamol"]
+    tx_list=["87.44"],
+    drug_list=["ceftriaxone"]
 )
 
-print("Output:")
-print(json.dumps(result1, indent=2, ensure_ascii=False))
-print()
-print(f"✓ Tingkat Konsistensi: {result1['konsistensi']['tingkat_konsistensi']}")
-print(f"✓ Score: {result1['konsistensi']['_score']}/3.0")
+print("Output (ringkas):")
+_print_dim("DX→TX", result1['konsistensi']['dx_tx'])
+_print_dim("DX→DRUG", result1['konsistensi']['dx_drug'])
+_print_dim("TX→DRUG", result1['konsistensi']['tx_drug'])
+print(f"  Aggregate Level: {result1['konsistensi']['tingkat_konsistensi']}  Aggregate Score: {result1['konsistensi']['_score'] if result1['konsistensi']['_score'] is not None else 'N/A'}")
 
 # Skenario 2: Diabetes dengan komplikasi
 print("\n" + "=" * 80)
@@ -50,11 +71,11 @@ result2 = analyze_clinical_consistency(
     drug_list=["metformin", "insulin", "glibenclamide"]
 )
 
-print("Output:")
-print(json.dumps(result2, indent=2, ensure_ascii=False))
-print()
-print(f"✓ Tingkat Konsistensi: {result2['konsistensi']['tingkat_konsistensi']}")
-print(f"✓ Score: {result2['konsistensi']['_score']}/3.0")
+print("Output (ringkas):")
+_print_dim("DX→TX", result2['konsistensi']['dx_tx'])
+_print_dim("DX→DRUG", result2['konsistensi']['dx_drug'])
+_print_dim("TX→DRUG", result2['konsistensi']['tx_drug'])
+print(f"  Aggregate Level: {result2['konsistensi']['tingkat_konsistensi']}  Aggregate Score: {result2['konsistensi']['_score'] if result2['konsistensi']['_score'] is not None else 'N/A'}")
 
 # Skenario 3: Case dengan tindakan tidak sesuai (Error case)
 print("\n" + "=" * 80)
@@ -72,11 +93,11 @@ result3 = analyze_clinical_consistency(
     drug_list=["insulin", "metformin"]  # Obat diabetes (tidak cocok!)
 )
 
-print("Output:")
-print(json.dumps(result3, indent=2, ensure_ascii=False))
-print()
-print(f"✓ Tingkat Konsistensi: {result3['konsistensi']['tingkat_konsistensi']}")
-print(f"✓ Score: {result3['konsistensi']['_score']}/3.0")
+print("Output (ringkas):")
+_print_dim("DX→TX", result3['konsistensi']['dx_tx'])
+_print_dim("DX→DRUG", result3['konsistensi']['dx_drug'])
+_print_dim("TX→DRUG", result3['konsistensi']['tx_drug'])
+print(f"  Aggregate Level: {result3['konsistensi']['tingkat_konsistensi']}  Aggregate Score: {result3['konsistensi']['_score'] if result3['konsistensi']['_score'] is not None else 'N/A'}")
 
 # Skenario 4: Partial Match - Beberapa sesuai, beberapa tidak
 print("\n" + "=" * 80)
@@ -94,31 +115,36 @@ result4 = analyze_clinical_consistency(
     drug_list=["ceftriaxone", "metformin"]  # 1 benar, 1 salah
 )
 
-print("Output:")
-print(json.dumps(result4, indent=2, ensure_ascii=False))
-print()
-print(f"✓ Tingkat Konsistensi: {result4['konsistensi']['tingkat_konsistensi']}")
-print(f"✓ Score: {result4['konsistensi']['_score']}/3.0")
+print("Output (ringkas):")
+_print_dim("DX→TX", result4['konsistensi']['dx_tx'])
+_print_dim("DX→DRUG", result4['konsistensi']['dx_drug'])
+_print_dim("TX→DRUG", result4['konsistensi']['tx_drug'])
+print(f"  Aggregate Level: {result4['konsistensi']['tingkat_konsistensi']}  Aggregate Score: {result4['konsistensi']['_score'] if result4['konsistensi']['_score'] is not None else 'N/A'}")
 
 # Summary
 print("\n" + "=" * 80)
 print("RANGKUMAN HASIL TEST")
 print("=" * 80)
 print()
-print("Status Legend:")
-print("  ✅ Sesuai        = Semua sesuai protokol (score ≥ 80%)")
-print("  ⚠️ Parsial      = Sebagian sesuai (score 40-79%)")
-print("  ❌ Tidak Sesuai = Tidak sesuai protokol (score < 40%)")
+print("Status Legend (F1-based):")
+print("  ✅ Sesuai        = F1 ≥ 0.80")
+print("  🟡 Cukup Sesuai  = 0.60–0.79")
+print("  ⚠️ Perlu Perhatian = 0.40–0.59")
+print("  ❌ Tidak Sesuai  = < 0.40 (Dx/Drug) / <0.25 (Tx→Drug)")
+print("  ℹ️ Tidak Ada Referensi = Rule mapping tidak tersedia")
 print()
-print("Tingkat Konsistensi:")
-print("  Tinggi  = Total score ≥ 2.5/3.0")
-print("  Sedang  = Total score ≥ 1.5/3.0")
-print("  Rendah  = Total score < 1.5/3.0")
+print("Tingkat Konsistensi (Aggregate F1):")
+print("  Tinggi  = ≥ 0.75")
+print("  Sedang  = 0.50–0.74")
+print("  Rendah  = < 0.50")
+print("  Data Terbatas = Tidak ada dimensi berskor")
 print()
-print(f"Skenario 1 (Lengkap):      {result1['konsistensi']['tingkat_konsistensi']:6s} ({result1['konsistensi']['_score']:.1f}/3.0)")
-print(f"Skenario 2 (Diabetes):     {result2['konsistensi']['tingkat_konsistensi']:6s} ({result2['konsistensi']['_score']:.1f}/3.0)")
-print(f"Skenario 3 (Salah Total):  {result3['konsistensi']['tingkat_konsistensi']:6s} ({result3['konsistensi']['_score']:.1f}/3.0)")
-print(f"Skenario 4 (Partial):      {result4['konsistensi']['tingkat_konsistensi']:6s} ({result4['konsistensi']['_score']:.1f}/3.0)")
+def _fmt_score(v):
+    return f"{v:.3f}" if isinstance(v, (int, float)) else "N/A"
+print(f"Skenario 1 (Lengkap):      {result1['konsistensi']['tingkat_konsistensi']:12s} (Aggregate={_fmt_score(result1['konsistensi']['_score'])})")
+print(f"Skenario 2 (Diabetes):     {result2['konsistensi']['tingkat_konsistensi']:12s} (Aggregate={_fmt_score(result2['konsistensi']['_score'])})")
+print(f"Skenario 3 (Salah Total):  {result3['konsistensi']['tingkat_konsistensi']:12s} (Aggregate={_fmt_score(result3['konsistensi']['_score'])})")
+print(f"Skenario 4 (Partial):      {result4['konsistensi']['tingkat_konsistensi']:12s} (Aggregate={_fmt_score(result4['konsistensi']['_score'])})")
 print("=" * 80)
 
 print("\n✅ KESIMPULAN:")

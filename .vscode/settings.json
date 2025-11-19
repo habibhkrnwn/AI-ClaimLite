@@ -1,0 +1,12 @@
+{
+  "typescript.tsdk": "web/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "files.exclude": {
+    "**/node_modules": false
+  },
+  "search.exclude": {
+    "**/node_modules": true
+  },
+  "python.terminal.useEnvFile": true,
+  "python.envFile": "${workspaceFolder}/core_engine/.env"
+}

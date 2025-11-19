@@ -4,11 +4,13 @@ import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
 import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
+import INACBGPanel from './INACBGPanel';
 //import AnalysisHistory from './AnalysisHistory';
-import { AnalysisResult } from '../lib/supabase';
+import { AnalysisResult, INACBGResult } from '../lib/supabase';
 import { apiService } from '../lib/api';
 
 type InputMode = 'form' | 'text';
+type ResultViewMode = 'analysis' | 'inacbg';
 //type TabMode = 'analysis' | 'history';
 
 interface AdminRSDashboardProps {
@@ -19,11 +21,15 @@ interface AdminRSDashboardProps {
 export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   //const [tabMode, setTabMode] = useState<TabMode>('analysis');
   const [inputMode, setInputMode] = useState<InputMode>('form');
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('analysis');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');
   const [medication, setMedication] = useState('');
+  const [serviceType, setServiceType] = useState('');
+  const [bpjsClass, setBpjsClass] = useState('');
   const [freeText, setFreeText] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [inacbgResult, setInacbgResult] = useState<INACBGResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
   
@@ -166,6 +172,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             diagnosis, 
             procedure, 
             medication,
+            service_type: serviceType,
+            bpjs_class: bpjsClass,
             icd10_code: selectedICD10Code.code,
             icd9_code: selectedICD9Code?.code || null,
             use_optimized: true,
@@ -291,6 +299,52 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         };
 
         setResult(analysisResult);
+
+        // TODO: Set INACBG result from backend when available
+        // For now, set mock data untuk demo UI dengan dynamic kelas BPJS
+        const selectedClass = parseInt(bpjsClass) || 1;
+        const tarifByClass = {
+          1: 5770100.0,
+          2: 5054300.0,
+          3: 4338400.0
+        };
+        
+        const mockINACBG: INACBGResult = {
+          success: true,
+          cbg_code: "I-4-10-I",
+          description: "INFARK MYOKARD AKUT (RINGAN)",
+          tarif: tarifByClass[selectedClass as keyof typeof tarifByClass],
+          tarif_detail: {
+            tarif_kelas_1: 5770100.0,
+            tarif_kelas_2: 5054300.0,
+            tarif_kelas_3: 4338400.0,
+            kelas_bpjs_used: selectedClass
+          },
+          breakdown: {
+            cmg: "I",
+            cmg_description: "Cardiovascular system",
+            case_type: "4",
+            case_type_description: "Rawat Inap Bukan Prosedur",
+            specific_code: "10",
+            severity: "I"
+          },
+          matching_detail: {
+            strategy: "diagnosis_only_empirical",
+            confidence: 80,
+            case_count: 4,
+            note: "40.0% kasus I21.0 masuk CBG ini"
+          },
+          classification: {
+            regional: "1",
+            kelas_rs: "B",
+            tipe_rs: "Pemerintah",
+            layanan: "RI"
+          },
+          warnings: [
+            "Prosedur diabaikan, menggunakan CBG yang paling umum untuk diagnosis ini"        
+          ]
+        };
+        setInacbgResult(mockINACBG);
 
         // Log the analysis
         try {
@@ -457,6 +511,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                 setDiagnosis('');
                 setProcedure('');
                 setMedication('');
+                setServiceType('');
               }}
               className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
                 inputMode === 'text'
@@ -478,10 +533,14 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               diagnosis={diagnosis}
               procedure={procedure}
               medication={medication}
+              serviceType={serviceType}
+              bpjsClass={bpjsClass}
               freeText={freeText}
               onDiagnosisChange={setDiagnosis}
               onProcedureChange={setProcedure}
               onMedicationChange={setMedication}
+              onServiceTypeChange={setServiceType}
+              onBpjsClassChange={setBpjsClass}
               onFreeTextChange={setFreeText}
               onGenerate={handleGenerate}
               isLoading={isLoading}
@@ -633,7 +692,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                   }`}
                 >
                   {/* HEADER: Judul + ICD di kanan */}
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-3">
 
                     {/* LEFT: Judul + Deskripsi */}
                     <div>
@@ -704,8 +763,46 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                       </div>
                     </div>
                   </div>
+
+                  {/* Toggle Tabs untuk Analysis vs INACBG */}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => setResultViewMode('analysis')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${
+                        resultViewMode === 'analysis'
+                          ? isDark
+                            ? 'bg-cyan-500 text-white shadow-lg'
+                            : 'bg-blue-600 text-white shadow-lg'
+                          : isDark
+                            ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      📋 Analisis Klinis
+                    </button>
+                    <button
+                      onClick={() => setResultViewMode('inacbg')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${
+                        resultViewMode === 'inacbg'
+                          ? isDark
+                            ? 'bg-cyan-500 text-white shadow-lg'
+                            : 'bg-blue-600 text-white shadow-lg'
+                          : isDark
+                            ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      💰 INA-CBG
+                    </button>
+                  </div>
                 </div>
-                <ResultsPanel result={result} isDark={isDark} />
+
+                {/* Conditional Panel based on resultViewMode */}
+                {resultViewMode === 'analysis' ? (
+                  <ResultsPanel result={result} isDark={isDark} />
+                ) : (
+                  <INACBGPanel result={inacbgResult} isDark={isDark} />
+                )}
               </div>
             )}
           </div>

@@ -16,7 +16,7 @@ router.use(authenticate);
 // Analyze single claim with form or text input (endpoint 1A)
 router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { mode, diagnosis, procedure, medication, input_text } = req.body;
+    const { mode, diagnosis, procedure, medication, service_type, input_text } = req.body;
     const userId = req.user?.userId;
 
     if (!userId) {
@@ -54,10 +54,10 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       }
     } else {
       // Default to form mode
-      if (!diagnosis || !procedure || !medication) {
+      if (!diagnosis || !procedure || !medication || !service_type) {
         res.status(400).json({
           success: false,
-          message: 'Diagnosis, procedure, and medication are required for form mode',
+          message: 'Diagnosis, procedure, medication, and service type are required for form mode',
         });
         return;
       }
@@ -81,6 +81,7 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
           diagnosis: diagnosis,
           tindakan: procedure,
           obat: medication,
+          service_type: service_type,
           icd10_code: icd10_code || null,
           icd9_code: icd9_code || null,
           save_history: true,

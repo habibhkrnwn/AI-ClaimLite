@@ -1,4 +1,4 @@
-import { FileText, Activity, Pill } from 'lucide-react';
+import { FileText, Activity, Pill, Building2 } from 'lucide-react';
 
 type InputMode = 'form' | 'text';
 
@@ -7,10 +7,14 @@ interface SmartInputPanelProps {
   diagnosis: string;
   procedure: string;
   medication: string;
+  serviceType: string;
+  bpjsClass: string;
   freeText: string;
   onDiagnosisChange: (value: string) => void;
   onProcedureChange: (value: string) => void;
   onMedicationChange: (value: string) => void;
+  onServiceTypeChange: (value: string) => void;
+  onBpjsClassChange: (value: string) => void;
   onFreeTextChange: (value: string) => void;
   onGenerate: () => Promise<void>;
   isLoading: boolean;
@@ -23,10 +27,14 @@ export default function SmartInputPanel({
   diagnosis,
   procedure,
   medication,
+  serviceType,
+  bpjsClass,
   freeText,
   onDiagnosisChange,
   onProcedureChange,
   onMedicationChange,
+  onServiceTypeChange,
+  onBpjsClassChange,
   onFreeTextChange,
   onGenerate,
   isLoading,
@@ -139,11 +147,58 @@ export default function SmartInputPanel({
             } transition-all duration-300`}
           />
         </div>
+
+        <div className="space-y-2 flex-shrink-0">
+          <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+            <Building2 className="w-4 h-4" />
+            Jenis Pelayanan
+          </label>
+          <select
+            value={serviceType}
+            onChange={(e) => onServiceTypeChange(e.target.value)}
+            className={`w-full px-4 py-2.5 rounded-lg border ${
+              isDark
+                ? 'bg-slate-800/50 border-cyan-500/30 text-white'
+                : 'bg-white/70 border-blue-200 text-gray-900'
+            } backdrop-blur-sm focus:outline-none focus:ring-2 ${
+              isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
+            } transition-all duration-300`}
+          >
+            <option value="" disabled>Pilih jenis pelayanan...</option>
+            <option value="rawat-inap">Rawat Inap</option>
+            <option value="rawat-jalan">Rawat Jalan</option>
+            <option value="igd">IGD (Instalasi Gawat Darurat)</option>
+            <option value="one-day-care">One Day Care</option>
+          </select>
+        </div>
+
+        <div className="space-y-2 flex-shrink-0">
+          <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+            <Building2 className="w-4 h-4" />
+            Kelas BPJS
+          </label>
+          <select
+            value={bpjsClass}
+            onChange={(e) => onBpjsClassChange(e.target.value)}
+            className={`w-full px-4 py-2.5 rounded-lg border ${
+              isDark
+                ? 'bg-slate-800/50 border-cyan-500/30 text-white'
+                : 'bg-white/70 border-blue-200 text-gray-900'
+            } backdrop-blur-sm focus:outline-none focus:ring-2 ${
+              isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
+            } transition-all duration-300`}
+          >
+            <option value="" disabled>Pilih kelas BPJS...</option>
+            <option value="1">Kelas 1</option>
+            <option value="2">Kelas 2</option>
+            <option value="3">Kelas 3</option>
+          </select>
+        </div>
       </div>
 
       <button
         onClick={onGenerate}
-        disabled={isLoading || !diagnosis.trim() || !procedure.trim() || !medication.trim() || isLimitReached}
+        disabled={isLoading || !diagnosis.trim() || !procedure.trim() || !medication.trim() || !serviceType.trim() || !bpjsClass.trim() || isLimitReached}
         className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
           isLimitReached
             ? 'bg-gray-400 cursor-not-allowed'

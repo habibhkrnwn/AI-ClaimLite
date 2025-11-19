@@ -500,10 +500,11 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
         // Mode TEXT (free text input)
         "input_text": "Pneumonia berat, diberikan Ceftriaxone...",
         
-        // Mode FORM (3 field terpisah)
+        // Mode FORM (4 field terpisah)
         "diagnosis": "Pneumonia berat (J18.9)",
         "tindakan": "Nebulisasi (93.96), Rontgen Thorax",
         "obat": "Ceftriaxone injeksi 1g, Paracetamol 500mg",
+        "service_type": "rawat-inap",  // NEW: rawat-inap | rawat-jalan | igd | one-day-care
         
         // Optional context
         "rs_id": "RS001",
@@ -541,10 +542,11 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
                     "message": "input_text required untuk mode text"
                 }
         elif mode == "form":
-            # Validasi 3 field form
+            # Validasi 4 field form
             diagnosis = request_data.get("diagnosis", "")
             tindakan = request_data.get("tindakan", "")
             obat = request_data.get("obat", "")
+            service_type = request_data.get("service_type", "")
             
             errors = []
             if not diagnosis:
@@ -553,6 +555,8 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
                 errors.append("tindakan required untuk mode form")
             if not obat:
                 errors.append("obat required untuk mode form")
+            if not service_type:
+                errors.append("service_type required untuk mode form")
             
             if errors:
                 return {

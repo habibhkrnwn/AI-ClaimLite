@@ -649,8 +649,9 @@ async def analyze_lite_single_ultra_fast(
         emit_progress("Menyusun hasil akhir...", 90)
         
         # 🔍 EVALUATE CLINICAL CONSISTENCY
-        # Extract ICD-9 codes from tindakan
-        icd9_codes = [t.get("icd9", "") for t in tindakan_formatted if t.get("icd9") and t.get("icd9") != "-"]
+        # Extract ICD-9 codes from tindakan (fix: use icd9_code not icd9)
+        icd9_codes = [t.get("icd9_code", "") for t in tindakan_formatted if t.get("icd9_code") and t.get("icd9_code") != "-"]
+        logger.info(f"[CONSISTENCY] Extracted ICD-9 codes for validation: {icd9_codes}")
         
         # Analyze consistency
         consistency_result = analyze_clinical_consistency(
