@@ -421,22 +421,25 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
         
-        // Extract ICD-9 codes from tindakan array (NEW FORMAT)
+        // Extract ICD-9 codes (support BOTH new + old format)
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
+
         const icd9Codes = tindakanArray
           .map((t: any) => {
-            // New format: tindakan is array of objects with icd9 property
+            // NEW FORMAT: object { icd9: "87.09" }
             if (typeof t === 'object' && t.icd9 && t.icd9 !== '-') {
               return t.icd9;
             }
-            // Old format fallback: extract from string pattern
+
+            // OLD FORMAT: "Foto thorax (87.44)"
             if (typeof t === 'string') {
-              const match = t.match(/\((\d{2}\.\d{2})\)/);
+              const match = t.match(/\b(\d{2}\.\d{2}|\d{2}\.\d{1}|\d{2}\d{2})\b/);
               return match ? match[1] : null;
             }
+
             return null;
           })
-          .filter((code: any) => code !== null);
+          .filter((code: any) => code);
 
         // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';
@@ -487,7 +490,11 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         const analysisResult: AnalysisResult = {
           classification: {
             icd10: icd10Code ? [icd10Code] : [],
-            icd9: icd9Codes,
+            icd9: icd9Codes.length > 0 
+                  ? icd9Codes 
+                  : selectedICD9Code 
+                    ? [selectedICD9Code.code] 
+                    : [],
           },
           validation: {
             status: validationStatus,
@@ -682,7 +689,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           <div className="flex-shrink-0 flex gap-2 p-1 bg-slate-700/30 rounded-lg">
             <button
               onClick={() => handleInputModeChange('text')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-all duration-300 ${
                 inputMode === 'text'
                   ? isDark
                     ? 'bg-cyan-500 text-white shadow-lg'
