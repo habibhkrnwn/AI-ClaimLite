@@ -762,7 +762,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           >
             <button
               onClick={() => handleInputModeChange('text')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap whitespace-nowrap transition-all duration-300 ${
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
                 inputMode === 'text'
                   ? isDark
                     ? 'bg-cyan-500 text-slate-900 shadow-md'
