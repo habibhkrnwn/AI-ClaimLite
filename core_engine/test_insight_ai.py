@@ -1,7 +1,4 @@
-"""
-Test Insight AI Generation
-Menguji bagaimana insight AI di-generate dan hasilnya
-"""
+
 
 import sys
 import os

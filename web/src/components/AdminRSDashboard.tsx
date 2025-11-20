@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { FileText } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { FileText, Pill } from 'lucide-react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
@@ -29,6 +29,9 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
   const [isParsed, setIsParsed] = useState(false); // Track if free text was parsed
+  const [showResultAnimation, setShowResultAnimation] = useState(false);
+  const [showCategoryAnimation, setShowCategoryAnimation] = useState(false);
+  const resultsRef = useRef<HTMLDivElement | null>(null);
   
   // Input mode toggle: 'text' or 'form'
   const [inputMode, setInputMode] = useState<InputMode>('form');
@@ -207,6 +210,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     setShowICD10Explorer(false);
     setShowICD9Explorer(false);
     setResult(null);
+    setShowResultAnimation(false);
+    setShowCategoryAnimation(false);
     setSelectedICD10Code(null);
     setSelectedICD9Code(null);
     
@@ -360,6 +365,45 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
       setIsLoading(false);
     }
   };
+
+  // Animated reveal when category explorers (ICD-10, ICD-9, FORNAS) are ready
+  useEffect(() => {
+    const hasAnyExplorer =
+      (showICD10Explorer && !!correctedTerm) ||
+      (showICD9Explorer && !!correctedProcedureTerm) ||
+      (showMedicationExplorer && !!normalizedMedicationTerm);
+
+    if (!hasAnyExplorer) return;
+
+    setShowCategoryAnimation(false);
+
+    const timer = setTimeout(() => {
+      setShowCategoryAnimation(true);
+    }, 40);
+
+    return () => clearTimeout(timer);
+  }, [showICD10Explorer, correctedTerm, showICD9Explorer, correctedProcedureTerm, showMedicationExplorer, normalizedMedicationTerm]);
+
+  // Auto-scroll & animated reveal when analysis result is ready
+  useEffect(() => {
+    if (!result) return;
+
+    // Reset animation state first so transition can replay on subsequent analyses
+    setShowResultAnimation(false);
+
+    const timer = setTimeout(() => {
+      setShowResultAnimation(true);
+
+      if (resultsRef.current) {
+        resultsRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [result]);
 
   // Handle Generate AI Analysis after code selection
   const handleGenerateAnalysis = async () => {
@@ -659,8 +703,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         <div
           className={`rounded-2xl p-6 h-full ${
             isDark
-              ? 'bg-slate-800/40 border border-cyan-500/20'
-              : 'bg-white/60 border border-blue-100'
+              ? 'bg-slate-900/30 border border-cyan-500/25'
+              : 'bg-white/40 border border-blue-100/80'
           } backdrop-blur-xl shadow-2xl flex flex-col`}
         >
           <h2
@@ -709,34 +753,41 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           )}
 
           {/* Input Mode Toggle */}
-          <div className="flex-shrink-0 flex gap-2 p-1 bg-slate-700/30 rounded-lg">
+          <div
+            className={`flex-shrink-0 inline-flex items-center justify-center rounded-full p-1 mt-1 mb-3 border ${
+              isDark
+                ? 'bg-slate-900/70 border-cyan-500/30'
+                : 'bg-white/80 border-blue-100 shadow-sm'
+            }`}
+          >
             <button
               onClick={() => handleInputModeChange('text')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-all duration-300 ${
+              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap whitespace-nowrap transition-all duration-300 ${
                 inputMode === 'text'
                   ? isDark
-                    ? 'bg-cyan-500 text-white shadow-lg'
-                    : 'bg-blue-500 text-white shadow-lg'
+                    ? 'bg-cyan-500 text-slate-900 shadow-md'
+                    : 'bg-blue-500 text-white shadow-md'
                   : isDark
-                  ? 'text-slate-300 hover:bg-slate-600/50'
-                  : 'text-gray-600 hover:bg-gray-200'
+                  ? 'text-slate-300 hover:bg-slate-700/60'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <FileText className="w-4 h-4 inline mr-2" />
+              <FileText className="w-3 h-3 inline mr-1.5" />
               Free Text
             </button>
             <button
               onClick={() => handleInputModeChange('form')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-300 ${
+              className={`ml-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-300 ${
                 inputMode === 'form'
                   ? isDark
-                    ? 'bg-cyan-500 text-white shadow-lg'
-                    : 'bg-blue-500 text-white shadow-lg'
+                    ? 'bg-cyan-500 text-slate-900 shadow-md'
+                    : 'bg-blue-500 text-white shadow-md'
                   : isDark
-                  ? 'text-slate-300 hover:bg-slate-600/50'
-                  : 'text-gray-600 hover:bg-gray-200'
+                  ? 'text-slate-300 hover:bg-slate-700/60'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
+              <FileText className="w-3 h-3 inline mr-1.5" />
               Form Input
             </button>
           </div>
@@ -815,8 +866,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         <div
           className={`rounded-2xl p-6 h-full ${
             isDark
-              ? 'bg-slate-800/40 border border-cyan-500/20'
-              : 'bg-white/60 border border-blue-100'
+              ? 'bg-slate-900/30 border border-cyan-500/25'
+              : 'bg-white/40 border border-blue-100/80'
           } backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden`}
         >
           <h2
@@ -832,7 +883,11 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             
             {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
             {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
-              <div className="flex-shrink-0 relative">
+              <div
+                className={`flex-shrink-0 relative transform transition-all duration-500 ${
+                  showCategoryAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+                }`}
+              >
                 {/* 2-Column Layout: Explorers (Left 65%) | Shared Mapping Preview (Right 35%) */}
                 <div className="grid grid-cols-12 gap-4">
                   {/* Left Column: ICD-10 & ICD-9 Explorers (8 columns = ~66%) */}
@@ -880,22 +935,55 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                       </div>
                     )}
 
-                    {/* Medication FORNAS Section - ICD-like Hierarchy */}
+                    {/* Medication FORNAS Section - ICD-like Hierarchy + AI Translation (Obat) */}
                     {showMedicationExplorer && normalizedMedicationTerm && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <MedicationCategoryPanel
-                          categories={medicationCategories}
-                          selectedCategory={selectedMedicationCategory}
-                          onSelectCategory={handleMedicationCategorySelection}
-                          isLoading={isMedicationLoading}
-                          isDark={isDark}
-                        />
-                        <MedicationDetailPanel
-                          category={selectedMedicationCategory}
-                          selectedDetails={selectedMedicationDetails}
-                          onToggleDetail={handleMedicationDetailToggle}
-                          isDark={isDark}
-                        />
+                      <div className="space-y-3">
+                        <div
+                          className={`rounded-lg px-4 py-3 flex items-center justify-between ${
+                            isDark
+                              ? 'bg-emerald-500/10 border border-emerald-400/40'
+                              : 'bg-emerald-50 border border-emerald-200'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Pill className={`w-4 h-4 ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`} />
+                              <span
+                                className={`text-xs font-semibold tracking-wide uppercase ${
+                                  isDark ? 'text-emerald-200' : 'text-emerald-700'
+                                }`}
+                              >
+                                AI Translation (Obat)
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs md:text-sm">
+                              <span className={isDark ? 'text-slate-300' : 'text-gray-600'}>
+                                {originalMedicationTerm || '-'}
+                              </span>
+                              <span className="text-xs md:text-sm">→</span>
+                              <span className={`font-semibold ${
+                                isDark ? 'text-emerald-300' : 'text-emerald-700'
+                              }`}>
+                                {normalizedMedicationTerm}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <MedicationCategoryPanel
+                            categories={medicationCategories}
+                            selectedCategory={selectedMedicationCategory}
+                            onSelectCategory={handleMedicationCategorySelection}
+                            isLoading={isMedicationLoading}
+                            isDark={isDark}
+                          />
+                          <MedicationDetailPanel
+                            category={selectedMedicationCategory}
+                            selectedDetails={selectedMedicationDetails}
+                            onToggleDetail={handleMedicationDetailToggle}
+                            isDark={isDark}
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -921,18 +1009,43 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               <div className={`flex flex-col items-center justify-center py-20 ${
                 isDark ? 'text-slate-400' : 'text-gray-500'
               }`}>
-                <svg className="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <p className="text-sm text-center px-4">
-                  Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
-                </p>
+                {isLoading ? (
+                  <>
+                    <div
+                      className={`w-10 h-10 rounded-full border-4 mb-4 animate-spin ${
+                        isDark
+                          ? 'border-cyan-500/30 border-t-cyan-400'
+                          : 'border-blue-500/30 border-t-blue-500'
+                      }`}
+                    />
+                    <p className="text-sm text-center px-4 mb-1">
+                      AI sedang menyiapkan kategori ICD & FORNAS...
+                    </p>
+                    <p className="text-xs opacity-70 text-center px-4">
+                      Mohon tunggu sebentar, kami mencari kode yang paling relevan.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm text-center px-4">
+                      Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
             {/* Results Section - Below Explorer */}
             {result && (
-              <div className="flex-shrink-0">
+              <div
+                ref={resultsRef}
+                className={`flex-shrink-0 transform transition-all duration-500 ${
+                  showResultAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+                }`}
+              >
                 {/* ================== Hasil Analisis AI ================== */}
                 <div
                   className={`rounded-xl p-4 mb-4 ${
