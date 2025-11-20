@@ -370,31 +370,54 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     
     setIsLoading(true);
     const startTime = Date.now();
+
+    // ================================================
+    // 1) CONSTRUCT DRUG LIST
+    // ================================================
+    let drugList: string[] = [];
+
+    // ================================================
+    // FIX: Gunakan nama obat generik, bukan ID sediaan
+    // ================================================
+    if (selectedMedicationDetails.length > 0) {
+        drugList = [selectedMedicationCategory?.generic_name.toLowerCase()];
+    }
+    else if (medication) {
+        // User ketik manual → sudah generik
+        drugList = [medication.toLowerCase().split(" ")[0]];
+    }
+
+    // Jika free text → pakai hasil parsed "medication"
+    else if (freeText && medication) {
+      drugList = [medication];
+    }
     
     try {
       // Determine input mode
-      const inputMode: InputMode = freeText.trim() ? 'text' : 'form';
+      const modeToUse: InputMode = freeText.trim() ? 'text' : 'form';
       
       // Prepare request data based on input mode
-      const requestData = inputMode === 'text' 
-        ? { 
-            mode: 'text' as const, 
-            input_text: freeText,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          }
-        : { 
-            mode: 'form' as const, 
-            diagnosis, 
-            procedure, 
-            medication,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          };
+      const requestData: any = modeToUse === 'text'
+      ? {
+          mode: 'text',
+          input_text: freeText,
+          drug_list: drugList,   // ⬅ WAJIB
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        }
+      : {
+          mode: 'form',
+          diagnosis,
+          procedure,
+          medication,
+          drug_list: drugList,   // ⬅ WAJIB
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        };
 
       console.log('[Generate Analysis] Request data:', requestData);
       console.log('[Generate Analysis] Starting analysis at', new Date().toISOString());
@@ -416,7 +439,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         }
 
         // Transform API response to match AnalysisResult interface
-        const aiResult = response.data;
+        const aiResult = response.data?.data ?? response.data;
         
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
