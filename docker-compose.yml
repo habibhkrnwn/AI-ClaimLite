@@ -46,7 +46,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
+    networks: 
       - aiclaimlite-network
     restart: unless-stopped
 

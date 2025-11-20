@@ -79,49 +79,55 @@ def generate_medical_explanation(code: str, name: str, code_type: str = "ICD-10"
     Returns:
         Penjelasan singkat dalam bahasa Indonesia
     """
-    # Skip explanation generation to avoid errors
-    return ""
-    
-    # DISABLED: Uncomment below to enable AI explanation
-    # if not OPENAI_AVAILABLE or not openai_client:
-    #     return ""
-    # 
-    # try:
-    #     prompt = f"""Buatkan penjelasan singkat dalam bahasa Indonesia (maksimal 15 kata) untuk kode medis berikut:
-    # 
-    # Kode: {code}
-    # Nama: {name}
-    # Tipe: {code_type}
-    # 
-    # Penjelasan harus:
-    # - Singkat dan jelas (maksimal 15 kata)
-    # - Menjelaskan apa itu penyakit/prosedur tersebut
-    # - Menyebutkan penyebab, gejala, atau cara prosedur dilakukan
-    # - Menggunakan bahasa awam yang mudah dipahami
-    # - Tanpa prefix seperti "Penjelasan:" atau "Keterangan:"
-    # 
-    # Contoh:
-    # - Chikungunya virus disease → Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam dan nyeri sendi
-    # - Appendectomy → Operasi pengangkatan usus buntu yang meradang atau terinfeksi
-    # 
-    # Penjelasan:"""
-    #     
-    #     response = openai_client.chat.completions.create(
-    #         model="gpt-4o-mini",
-    #         messages=[
-    #             {"role": "system", "content": "Anda adalah ahli medis yang menjelaskan istilah medis dalam bahasa Indonesia yang mudah dipahami."},
-    #             {"role": "user", "content": prompt}
-    #         ],
-    #         max_tokens=100,
-    #         temperature=0.3
-    #     )
-    #     
-    #     explanation = response.choices[0].message.content.strip()
-    #     return explanation
-    # 
-    # except Exception as e:
-    #     print(f"[AI_EXPLANATION] Error generating explanation for {code}: {e}")
-    #     return ""
+    # Validasi input minimal
+    if not code or not name:
+        return ""
+
+    # Jika OpenAI tidak tersedia, langsung fallback
+    if not OPENAI_AVAILABLE or not openai_client:
+        return ""
+
+    try:
+        prompt = f"""Buatkan penjelasan singkat dalam bahasa Indonesia (maksimal 15 kata) untuk kode medis berikut:
+
+Kode: {code}
+Nama: {name}
+Tipe: {code_type}
+
+Penjelasan harus:
+- Singkat dan jelas (maksimal 15 kata)
+- Menjelaskan apa itu penyakit/prosedur tersebut
+- Menyebutkan penyebab, gejala, atau cara prosedur dilakukan
+- Menggunakan bahasa awam yang mudah dipahami
+- Tanpa prefix seperti "Penjelasan:" atau "Keterangan:"
+
+Contoh:
+- Chikungunya virus disease → Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam dan nyeri sendi
+- Appendectomy → Operasi pengangkatan usus buntu yang meradang atau terinfeksi
+
+Penjelasan:"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Anda adalah ahli medis yang menjelaskan istilah medis dalam bahasa Indonesia yang mudah dipahami.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=100,
+            temperature=0.3,
+        )
+
+        explanation = response.choices[0].message.content.strip()
+        # Bersihkan karakter pembuka/penutup yang tidak perlu
+        explanation = explanation.strip().strip('"').strip("'")
+        return explanation
+
+    except Exception as e:
+        print(f"[AI_EXPLANATION] Error generating explanation for {code}: {e}")
+        return ""
 
 
 # Cache untuk explanation agar tidak perlu generate ulang
@@ -1579,13 +1585,14 @@ Respond with ONLY the medical term, nothing else."""
         )
         
         medical_term = response.choices[0].message.content.strip().strip('"').strip("'")
+        confidence = "high"
         
         return {
             "status": "success",
             "result": {
+                "original": term,
                 "medical_term": medical_term,
-                "confidence": "high",
-                "source": "openai"
+                "confidence": confidence
             }
         }
     
@@ -2248,8 +2255,10 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
                 # Get common term from mapping (try both full code and HEAD code)
                 detail_common_term = ICD10_COMMON_TERMS.get(code) or ICD10_COMMON_TERMS.get(head_code)
                 
-                # Get explanation from static JSON file
+                # Get explanation from static JSON file, fallback ke AI (OpenAI)
                 explanation = ICD10_EXPLANATIONS.get(code, "")
+                if not explanation:
+                    explanation = get_cached_explanation(code, name, "ICD-10")
                 
                 detail_obj = {
                     "code": code,
@@ -2601,8 +2610,10 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
                 # Get common term from mapping
                 detail_common_term = ICD9_COMMON_TERMS.get(code) or ICD9_COMMON_TERMS.get(head_code)
                 
-                # Get explanation from static JSON file
+                # Get explanation from static JSON file, fallback ke AI (OpenAI)
                 explanation = ICD9_EXPLANATIONS.get(code, "")
+                if not explanation:
+                    explanation = get_cached_explanation(code, description, "ICD-9")
                 
                 detail_obj = {
                     "code": code,
@@ -2625,6 +2636,20 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
         
         for cat in categories_dict.values():
             score = 0
+
+            # Ensure details truly belong to this headCode (safety filter)
+            head_code_str = str(cat.get("headCode", "")).strip()
+            valid_details = []
+            for detail in cat.get("details", []):
+                d_code = str(detail.get("code", ""))
+                if "." in d_code:
+                    d_head = d_code.split(".")[0]
+                else:
+                    d_head = d_code[:2] if len(d_code) >= 2 else d_code
+                if d_head == head_code_str:
+                    valid_details.append(detail)
+            cat["details"] = valid_details
+            cat["count"] = len(valid_details)
             
             # Score based on category name matching search keywords
             cat_name_lower = cat["headName"].lower()

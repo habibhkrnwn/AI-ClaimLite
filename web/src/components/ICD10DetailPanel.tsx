@@ -18,6 +18,27 @@ export default function ICD10DetailPanel({
   selectedCode = null,
   onSelectCode,
 }: ICD10DetailPanelProps) {
+  const getFriendlyDescription = (detail: ICD10Detail): string => {
+    const explanation = detail.explanation?.trim();
+    if (explanation) {
+      return explanation;
+    }
+
+    const commonTerm = detail.commonTerm?.trim();
+    if (commonTerm) {
+      return commonTerm.charAt(0).toUpperCase() + commonTerm.slice(1);
+    }
+
+    const name = detail.name || '';
+    const key = name.toLowerCase();
+
+    if (key.includes('adenoviral pneumonia')) {
+      return 'Infeksi paru-paru yang disebabkan oleh virus adenovirus.';
+    }
+
+    return name;
+  };
+
   // Show empty state if no head selected
   if (!headCode) {
     return (
@@ -102,16 +123,25 @@ export default function ICD10DetailPanel({
                   >
                     {detail.code}
                   </span>
-                  <p
-                    className={`text-sm font-medium flex-1 min-w-0 line-clamp-1 ${
-                      selectedCode === detail.code
-                        ? isDark ? 'text-slate-200' : 'text-gray-800'
-                        : isDark ? 'text-slate-300' : 'text-gray-700'
-                    }`}
-                    title={detail.name}
-                  >
-                    {detail.name}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className={`text-sm font-medium line-clamp-1 ${
+                        selectedCode === detail.code
+                          ? isDark ? 'text-slate-200' : 'text-gray-800'
+                          : isDark ? 'text-slate-300' : 'text-gray-700'
+                      }`}
+                      title={detail.name}
+                    >
+                      {detail.name}
+                    </p>
+                    <p
+                      className={`text-xs mt-0.5 line-clamp-2 ${
+                        isDark ? 'text-slate-400' : 'text-gray-500'
+                      }`}
+                    >
+                      {getFriendlyDescription(detail)}
+                    </p>
+                  </div>
                   {selectedCode === detail.code && (
                     <span
                       className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${
