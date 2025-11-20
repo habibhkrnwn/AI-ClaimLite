@@ -685,42 +685,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             Smart Input Hybrid
           </h2>
 
-          {/* AI Usage Indicator */}
-          {aiUsage && (
-            <div className={`mb-4 p-3 rounded-lg flex-shrink-0 ${
-              isDark ? 'bg-slate-700/50 border border-cyan-500/20' : 'bg-blue-50/80 border border-blue-200'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                  AI Usage Today
-                </span>
-                <span className={`text-xs font-bold ${
-                  aiUsage.remaining === 0 
-                    ? 'text-red-500' 
-                    : aiUsage.remaining < 10 
-                    ? 'text-yellow-500' 
-                    : isDark ? 'text-cyan-400' : 'text-blue-600'
-                }`}>
-                  {aiUsage.used}/{aiUsage.limit}
-                </span>
-              </div>
-              <div className={`w-full h-2 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-200'}`}>
-                <div 
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    aiUsage.remaining === 0 
-                      ? 'bg-red-500' 
-                      : aiUsage.remaining < 10 
-                      ? 'bg-yellow-500' 
-                      : 'bg-gradient-to-r from-cyan-500 to-blue-500'
-                  }`}
-                  style={{ width: `${(aiUsage.used / aiUsage.limit) * 100}%` }}
-                />
-              </div>
-              <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                {aiUsage.remaining} requests remaining
-              </p>
-            </div>
-          )}
+          {/* AI Usage Indicator (moved to navbar profile menu) */}
 
           {/* Input Mode Toggle */}
           <div
