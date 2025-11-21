@@ -1,14 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { FileText, Pill } from 'lucide-react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
+import MedicationCategoryPanel from './MedicationCategoryPanel';
+import MedicationDetailPanel from './MedicationDetailPanel';
 import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
+import INACBGPanel from './INACBGPanel';
 //import AnalysisHistory from './AnalysisHistory';
-import { AnalysisResult } from '../lib/supabase';
+import { AnalysisResult, INACBGResult } from '../lib/supabase';
 import { apiService } from '../lib/api';
 
 type InputMode = 'form' | 'text';
+type ResultViewMode = 'analysis' | 'inacbg';
 //type TabMode = 'analysis' | 'history';
 
 interface AdminRSDashboardProps {
@@ -18,15 +23,92 @@ interface AdminRSDashboardProps {
 
 export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   //const [tabMode, setTabMode] = useState<TabMode>('analysis');
-  const [inputMode, setInputMode] = useState<InputMode>('form');
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('analysis');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');
   const [medication, setMedication] = useState('');
   const [serviceType, setServiceType] = useState('');
+  const [bpjsClass, setBpjsClass] = useState('');
   const [freeText, setFreeText] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [inacbgResult, setInacbgResult] = useState<INACBGResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [aiUsage, setAiUsage] = useState<{ used: number; remaining: number; limit: number } | null>(null);
+  const [isParsed, setIsParsed] = useState(false); // Track if free text was parsed
+  const [showResultAnimation, setShowResultAnimation] = useState(false);
+  const [showCategoryAnimation, setShowCategoryAnimation] = useState(false);
+  const resultsRef = useRef<HTMLDivElement | null>(null);
+  
+  // Input mode toggle: 'text' or 'form'
+  const [inputMode, setInputMode] = useState<InputMode>('form');
+
+  // === DUMMY PARSER FUNCTION (Temporary) ===
+  const parseDummyText = (text: string): { diagnosis: string; tindakan: string; obat: string } => {
+    const lowerText = text.toLowerCase();
+    
+    // Deteksi diagnosis berdasarkan kata kunci
+    let diagnosis = '';
+    if (lowerText.includes('pneumonia') || lowerText.includes('paru') || lowerText.includes('paru basah')) {
+      diagnosis = 'Pneumonia';
+    } else if (lowerText.includes('diabetes') || lowerText.includes('gula') || lowerText.includes('dm')) {
+      diagnosis = 'Diabetes Mellitus';
+    } else if (lowerText.includes('hipertensi') || lowerText.includes('darah tinggi') || lowerText.includes('tensi')) {
+      diagnosis = 'Hipertensi';
+    } else if (lowerText.includes('demam') || lowerText.includes('panas')) {
+      diagnosis = 'Demam';
+    } else if (lowerText.includes('diare') || lowerText.includes('mencret')) {
+      diagnosis = 'Diare Akut';
+    } else if (lowerText.includes('tbc') || lowerText.includes('tuberkulosis') || lowerText.includes('tb')) {
+      diagnosis = 'Tuberkulosis Paru';
+    } else {
+      diagnosis = 'Kondisi Umum';
+    }
+    
+    // Deteksi tindakan
+    const tindakanList: string[] = [];
+    if (lowerText.includes('rontgen') || lowerText.includes('xray') || lowerText.includes('x-ray') || lowerText.includes('foto thorax')) {
+      tindakanList.push('Foto Rontgen Thorax');
+    }
+    if (lowerText.includes('nebulisasi') || lowerText.includes('nebul')) {
+      tindakanList.push('Nebulisasi');
+    }
+    if (lowerText.includes('infus') || lowerText.includes('iv')) {
+      tindakanList.push('Pemasangan Infus');
+    }
+    if (lowerText.includes('ekg') || lowerText.includes('jantung')) {
+      tindakanList.push('Pemeriksaan EKG');
+    }
+    if (lowerText.includes('lab') || lowerText.includes('darah lengkap') || lowerText.includes('cek darah')) {
+      tindakanList.push('Pemeriksaan Laboratorium');
+    }
+    
+    // Deteksi obat
+    const obatList: string[] = [];
+    if (lowerText.includes('ceftriaxone') || lowerText.includes('antibiotik')) {
+      obatList.push('Ceftriaxone injeksi 1g');
+    }
+    if (lowerText.includes('paracetamol') || lowerText.includes('panadol') || lowerText.includes('penurun panas')) {
+      obatList.push('Paracetamol 500mg');
+    }
+    if (lowerText.includes('amoxicillin') || lowerText.includes('amoxilin')) {
+      obatList.push('Amoxicillin 500mg');
+    }
+    if (lowerText.includes('metformin')) {
+      obatList.push('Metformin 500mg');
+    }
+    if (lowerText.includes('amlodipine') || lowerText.includes('amlodipine')) {
+      obatList.push('Amlodipine 5mg');
+    }
+    if (lowerText.includes('omeprazole')) {
+      obatList.push('Omeprazole 20mg');
+    }
+    
+    return {
+      diagnosis,
+      tindakan: tindakanList.join(', ') || 'Pemeriksaan Umum',
+      obat: obatList.join(', ') || 'Simptomatik'
+    };
+  };
   
   // ICD-10 Explorer state (Diagnosis)
   const [showICD10Explorer, setShowICD10Explorer] = useState(false);
@@ -41,8 +123,68 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
   const [originalProcedureTerm, setOriginalProcedureTerm] = useState('');
   const [selectedICD9Code, setSelectedICD9Code] = useState<{code: string; name: string} | null>(null);
 
-  // Dokumen Wajib state
-  const [dokumenWajib, setDokumenWajib] = useState<any>(null);
+  // Medication Explorer state (Obat) - ICD-like Hierarchy
+  const [showMedicationExplorer, setShowMedicationExplorer] = useState(false);
+  const [normalizedMedicationTerm, setNormalizedMedicationTerm] = useState('');
+  const [medicationCategories, setMedicationCategories] = useState<any[]>([]);
+  const [selectedMedicationCategory, setSelectedMedicationCategory] = useState<any>(null);
+  const [selectedMedicationDetails, setSelectedMedicationDetails] = useState<string[]>([]);
+  const [originalMedicationTerm, setOriginalMedicationTerm] = useState('');
+  const [isMedicationLoading, setIsMedicationLoading] = useState(false);
+
+  // Reset isParsed when freeText changes
+  const handleFreeTextChange = (value: string) => {
+    setFreeText(value);
+    if (isParsed) {
+      setIsParsed(false);
+      if (inputMode === 'text') {
+        setDiagnosis('');
+        setProcedure('');
+        setMedication('');
+        setShowICD10Explorer(false);
+        setShowICD9Explorer(false);
+        setResult(null);
+        setSelectedICD10Code(null);
+        setSelectedICD9Code(null);
+      }
+    }
+  };
+
+  const handleDiagnosisChange = (value: string) => {
+    setDiagnosis(value);
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  const handleProcedureChange = (value: string) => {
+    setProcedure(value);
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  const handleMedicationChange = (value: string) => {
+    setMedication(value);
+    if (isParsed) {
+      setIsParsed(false);
+    }
+  };
+
+  const handleInputModeChange = (mode: InputMode) => {
+    if (mode === 'text' && isParsed) {
+      setDiagnosis('');
+      setProcedure('');
+      setMedication('');
+      setIsParsed(false);
+      setShowICD10Explorer(false);
+      setShowICD9Explorer(false);
+      setResult(null);
+      setSelectedICD10Code(null);
+      setSelectedICD9Code(null);
+    }
+    setInputMode(mode);
+  };
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -67,17 +209,62 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     setShowICD10Explorer(false);
     setShowICD9Explorer(false);
     setResult(null);
+    setShowResultAnimation(false);
+    setShowCategoryAnimation(false);
     setSelectedICD10Code(null);
     setSelectedICD9Code(null);
     
-    // Prepare AI correction for diagnosis
-    const inputTerm = inputMode === 'text' ? freeText : diagnosis;
-    setOriginalSearchTerm(inputTerm);
+    // Declare variables in outer scope for error handling
+    let diagnosisToUse = '';
+    let procedureToUse = '';
+    let inputTerm = '';
+    let procedureTerm = '';
     
     try {
-      // Run translations in parallel for speed
-      const procedureTerm = inputMode === 'text' ? '' : procedure;
+      // === STEP 1: Check if using Free Text mode ===
+      if (inputMode === 'text' && freeText.trim()) {
+        console.log('🔍 Parsing free text untuk auto-fill form...');
+        
+        // Reset form fields first when parsing new free text
+        setDiagnosis('');
+        setProcedure('');
+        setMedication('');
+        
+        // DUMMY PARSING - Nanti diganti dengan API call
+        const dummyParsedData = parseDummyText(freeText);
+        
+        // Auto-fill form
+        setDiagnosis(String(dummyParsedData.diagnosis || ''));
+        setProcedure(String(dummyParsedData.tindakan || ''));
+        setMedication(String(dummyParsedData.obat || ''));
+        
+        setIsParsed(true);
+        console.log('✓ Form auto-filled:', dummyParsedData);
+        
+        // Switch to form input mode to show parsed results
+        setInputMode('form');
+        
+        // Wait a bit for state to update
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Use parsed data for ICD search
+        diagnosisToUse = dummyParsedData.diagnosis;
+        procedureToUse = dummyParsedData.tindakan;
+      } else {
+        // === STEP 2: Using Form Input mode - use form values directly ===
+        diagnosisToUse = diagnosis;
+        procedureToUse = procedure;
+      }
+    
+      // === STEP 3: Translate & Search ICD ===
+      inputTerm = diagnosisToUse;
+      setOriginalSearchTerm(inputTerm);
+      
+      procedureTerm = procedureToUse;
       setOriginalProcedureTerm(procedureTerm || '');
+      
+      const medicationToUse = inputMode === 'text' ? medication : medication;
+      setOriginalMedicationTerm(medicationToUse || '');
 
       const promises: Promise<any>[] = [];
       if (inputTerm) {
@@ -90,8 +277,13 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
       } else {
         promises.push(Promise.resolve(null));
       }
+      if (medicationToUse) {
+        promises.push(apiService.translateMedicationTerm(medicationToUse));
+      } else {
+        promises.push(Promise.resolve(null));
+      }
 
-      const [dxResp, pxResp] = await Promise.all(promises);
+      const [dxResp, pxResp, medResp] = await Promise.all(promises);
 
       // Handle diagnosis translation
       if (inputTerm) {
@@ -122,6 +314,36 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         setShowICD9Explorer(true);
       }
       
+      // Handle medication translation (ICD-like hierarchy)
+      if (medicationToUse) {
+        setIsMedicationLoading(true);
+        if (medResp && medResp.success) {
+          const normalized = medResp.data.normalized_generic || medResp.data.normalized;
+          const categories = medResp.data.categories || [];
+          
+          // DEBUG: Log categories untuk check kode_fornas
+          console.log('[MEDICATION] Categories:', categories);
+          categories.forEach((cat: any, catIdx: number) => {
+            console.log(`[MEDICATION] Category ${catIdx}: ${cat.generic_name} (${cat.total_dosage_forms} sediaan)`);
+            cat.details?.forEach((detail: any, detailIdx: number) => {
+              console.log(`  [${detailIdx}] Kode: ${detail.kode_fornas} | Obat: ${detail.obat_name}`);
+            });
+          });
+          
+          setNormalizedMedicationTerm(normalized);
+          setMedicationCategories(categories);
+          // Auto-select first category if available
+          if (categories.length > 0) {
+            setSelectedMedicationCategory(categories[0]);
+          }
+        } else {
+          setNormalizedMedicationTerm(medicationToUse);
+          setMedicationCategories([]);
+        }
+        setIsMedicationLoading(false);
+        setShowMedicationExplorer(true);
+      }
+      
     } catch (error: any) {
       console.error('[Translation] Error:', error);
       
@@ -137,9 +359,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         setCorrectedTerm(inputTerm);
         setShowICD10Explorer(true);
       }
-      const procedureTerm = inputMode === 'text' ? '' : procedure;
-      if (procedureTerm) {
-        setCorrectedProcedureTerm(procedureTerm);
+      if (procedureToUse) {
+        setCorrectedProcedureTerm(procedureToUse);
         setShowICD9Explorer(true);
       }
       console.log('[DEBUG] Error fallback - Setting explorers to TRUE');
@@ -148,11 +369,50 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     }
   };
 
+  // Animated reveal when category explorers (ICD-10, ICD-9, FORNAS) are ready
+  useEffect(() => {
+    const hasAnyExplorer =
+      (showICD10Explorer && !!correctedTerm) ||
+      (showICD9Explorer && !!correctedProcedureTerm) ||
+      (showMedicationExplorer && !!normalizedMedicationTerm);
+
+    if (!hasAnyExplorer) return;
+
+    setShowCategoryAnimation(false);
+
+    const timer = setTimeout(() => {
+      setShowCategoryAnimation(true);
+    }, 40);
+
+    return () => clearTimeout(timer);
+  }, [showICD10Explorer, correctedTerm, showICD9Explorer, correctedProcedureTerm, showMedicationExplorer, normalizedMedicationTerm]);
+
+  // Auto-scroll & animated reveal when analysis result is ready
+  useEffect(() => {
+    if (!result) return;
+
+    // Reset animation state first so transition can replay on subsequent analyses
+    setShowResultAnimation(false);
+
+    const timer = setTimeout(() => {
+      setShowResultAnimation(true);
+
+      if (resultsRef.current) {
+        resultsRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [result]);
+
   // Handle Generate AI Analysis after code selection
   const handleGenerateAnalysis = async () => {
     // Auto-translate if not yet translated
     if (!correctedTerm && (diagnosis || freeText)) {
-      await handleTranslateAndAnalyze();
+      await handleGenerate();
       return;
     }
 
@@ -163,29 +423,56 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     
     setIsLoading(true);
     const startTime = Date.now();
+
+    // ================================================
+    // 1) CONSTRUCT DRUG LIST
+    // ================================================
+    let drugList: string[] = [];
+
+    // ================================================
+    // FIX: Gunakan nama obat generik, bukan ID sediaan
+    // ================================================
+    if (selectedMedicationDetails.length > 0) {
+        drugList = [selectedMedicationCategory?.generic_name.toLowerCase()];
+    }
+    else if (medication) {
+        // User ketik manual → sudah generik
+        drugList = [medication.toLowerCase().split(" ")[0]];
+    }
+
+    // Jika free text → pakai hasil parsed "medication"
+    else if (freeText && medication) {
+      drugList = [medication];
+    }
     
     try {
+      // Determine input mode
+      const modeToUse: InputMode = freeText.trim() ? 'text' : 'form';
+      
       // Prepare request data based on input mode
-      const requestData = inputMode === 'text' 
-        ? { 
-            mode: 'text' as const, 
-            input_text: freeText,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          }
-        : { 
-            mode: 'form' as const, 
-            diagnosis, 
-            procedure, 
-            medication,
-            service_type: serviceType,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          };
+      const requestData: any = modeToUse === 'text'
+      ? {
+          mode: 'text',
+          input_text: freeText,
+          drug_list: drugList,
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        }
+      : {
+          mode: 'form',
+          diagnosis,
+          procedure,
+          medication,
+          service_type: serviceType,
+          bpjs_class: bpjsClass,
+          drug_list: drugList,
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        };
 
       console.log('[Generate Analysis] Request data:', requestData);
       console.log('[Generate Analysis] Starting analysis at', new Date().toISOString());
@@ -207,27 +494,30 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         }
 
         // Transform API response to match AnalysisResult interface
-        const aiResult = response.data;
+        const aiResult = response.data?.data ?? response.data;
         
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
         
-        // Extract ICD-9 codes from tindakan array (NEW FORMAT)
+        // Extract ICD-9 codes (support BOTH new + old format)
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
+
         const icd9Codes = tindakanArray
           .map((t: any) => {
-            // New format: tindakan is array of objects with icd9 property
+            // NEW FORMAT: object { icd9: "87.09" }
             if (typeof t === 'object' && t.icd9 && t.icd9 !== '-') {
               return t.icd9;
             }
-            // Old format fallback: extract from string pattern
+
+            // OLD FORMAT: "Foto thorax (87.44)"
             if (typeof t === 'string') {
-              const match = t.match(/\((\d{2}\.\d{2})\)/);
+              const match = t.match(/\b(\d{2}\.\d{2}|\d{2}\.\d{1}|\d{2}\d{2})\b/);
               return match ? match[1] : null;
             }
+
             return null;
           })
-          .filter((code: any) => code !== null);
+          .filter((code: any) => code);
 
         // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';
@@ -278,7 +568,11 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         const analysisResult: AnalysisResult = {
           classification: {
             icd10: icd10Code ? [icd10Code] : [],
-            icd9: icd9Codes,
+            icd9: icd9Codes.length > 0 
+                  ? icd9Codes 
+                  : selectedICD9Code 
+                    ? [selectedICD9Code.code] 
+                    : [],
           },
           validation: {
             status: validationStatus,
@@ -320,25 +614,51 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
 
         setResult(analysisResult);
 
-        // Fetch Dokumen Wajib based on diagnosis
-        console.log('[AdminRS] Fetching Dokumen Wajib for:', selectedICD10Code?.name);
-        if (selectedICD10Code?.name) {
-          try {
-            const dokumenResponse = await apiService.getDokumenWajib(selectedICD10Code.name);
-            console.log('[AdminRS] Dokumen Wajib Response:', dokumenResponse);
-            if (dokumenResponse.success && dokumenResponse.data) {
-              setDokumenWajib(dokumenResponse.data);
-              console.log('[AdminRS] Dokumen Wajib Set:', dokumenResponse.data);
-            } else {
-              console.warn('[AdminRS] Dokumen Wajib not found or failed');
-            }
-          } catch (dokError) {
-            console.error('[AdminRS] Failed to fetch dokumen wajib:', dokError);
-            // Don't block main flow if dokumen fetch fails
-          }
-        } else {
-          console.warn('[AdminRS] No selectedICD10Code.name - cannot fetch dokumen wajib');
-        }
+        // TODO: Set INACBG result from backend when available
+        // For now, set mock data untuk demo UI dengan dynamic kelas BPJS
+        const selectedClass = parseInt(bpjsClass) || 1;
+        const tarifByClass = {
+          1: 5770100.0,
+          2: 5054300.0,
+          3: 4338400.0
+        };
+        
+        const mockINACBG: INACBGResult = {
+          success: true,
+          cbg_code: "I-4-10-I",
+          description: "INFARK MYOKARD AKUT (RINGAN)",
+          tarif: tarifByClass[selectedClass as keyof typeof tarifByClass],
+          tarif_detail: {
+            tarif_kelas_1: 5770100.0,
+            tarif_kelas_2: 5054300.0,
+            tarif_kelas_3: 4338400.0,
+            kelas_bpjs_used: selectedClass
+          },
+          breakdown: {
+            cmg: "I",
+            cmg_description: "Cardiovascular system",
+            case_type: "4",
+            case_type_description: "Rawat Inap Bukan Prosedur",
+            specific_code: "10",
+            severity: "I"
+          },
+          matching_detail: {
+            strategy: "diagnosis_only_empirical",
+            confidence: 80,
+            case_count: 4,
+            note: "40.0% kasus I21.0 masuk CBG ini"
+          },
+          classification: {
+            regional: "1",
+            kelas_rs: "B",
+            tipe_rs: "Pemerintah",
+            layanan: "RI"
+          },
+          warnings: [
+            "Prosedur diabaikan, menggunakan CBG yang paling umum untuk diagnosis ini"
+          ]
+        };
+        setInacbgResult(mockINACBG);
 
         // Log the analysis
         try {
@@ -425,6 +745,27 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     console.log(`[ICD-9] Selected: ${code} - ${name}`);
   };
 
+  const handleMedicationCategorySelection = (category: any) => {
+    setSelectedMedicationCategory(category);
+    console.log(`[FORNAS] Selected category: ${category.generic_name}`);
+  };
+
+  const handleMedicationDetailToggle = (kodeFornas: string) => {
+    console.log(`[MEDICATION] Toggle kode_fornas: ${kodeFornas}`);
+    console.log(`[MEDICATION] Current selected:`, selectedMedicationDetails);
+    
+    // SINGLE SELECTION: Replace array with single item or clear if same item clicked
+    setSelectedMedicationDetails(prev => {
+      if (prev.includes(kodeFornas)) {
+        console.log(`[MEDICATION] Deselecting: ${kodeFornas}`);
+        return []; // Clear selection
+      } else {
+        console.log(`[MEDICATION] Selecting (single): ${kodeFornas}`);
+        return [kodeFornas]; // Replace with single selection
+      }
+    });
+  };
+
   return (
     <div className="h-full flex gap-4">
       {/* Left Panel - Input (Fixed Width) */}
@@ -432,8 +773,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         <div
           className={`rounded-2xl p-6 h-full ${
             isDark
-              ? 'bg-slate-800/40 border border-cyan-500/20'
-              : 'bg-white/60 border border-blue-100'
+              ? 'bg-slate-900/30 border border-cyan-500/25'
+              : 'bg-white/40 border border-blue-100/80'
           } backdrop-blur-xl shadow-2xl flex flex-col`}
         >
           <h2
@@ -444,80 +785,45 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             Smart Input Hybrid
           </h2>
 
-          {/* AI Usage Indicator */}
-          {aiUsage && (
-            <div className={`mb-4 p-3 rounded-lg flex-shrink-0 ${
-              isDark ? 'bg-slate-700/50 border border-cyan-500/20' : 'bg-blue-50/80 border border-blue-200'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                  AI Usage Today
-                </span>
-                <span className={`text-xs font-bold ${
-                  aiUsage.remaining === 0 
-                    ? 'text-red-500' 
-                    : aiUsage.remaining < 10 
-                    ? 'text-yellow-500' 
-                    : isDark ? 'text-cyan-400' : 'text-blue-600'
-                }`}>
-                  {aiUsage.used}/{aiUsage.limit}
-                </span>
-              </div>
-              <div className={`w-full h-2 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-200'}`}>
-                <div 
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    aiUsage.remaining === 0 
-                      ? 'bg-red-500' 
-                      : aiUsage.remaining < 10 
-                      ? 'bg-yellow-500' 
-                      : 'bg-gradient-to-r from-cyan-500 to-blue-500'
-                  }`}
-                  style={{ width: `${(aiUsage.used / aiUsage.limit) * 100}%` }}
-                />
-              </div>
-              <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                {aiUsage.remaining} requests remaining
-              </p>
-            </div>
-          )}
+          {/* AI Usage Indicator (moved to navbar profile menu) */}
 
-          <div className="flex gap-2 mb-4 flex-shrink-0">
+          {/* Input Mode Toggle */}
+          <div
+            className={`flex-shrink-0 inline-flex items-center justify-center rounded-full p-1 mt-1 mb-3 border ${
+              isDark
+                ? 'bg-slate-900/70 border-cyan-500/30'
+                : 'bg-white/80 border-blue-100 shadow-sm'
+            }`}
+          >
             <button
-              onClick={() => {
-                setInputMode('form');
-                setFreeText('');
-              }}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
-                inputMode === 'form'
-                  ? isDark
-                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                    : 'bg-blue-200 text-blue-700 border border-blue-400'
-                  : isDark
-                  ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                  : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
-              }`}
-            >
-              Form Input
-            </button>
-            <button
-              onClick={() => {
-                setInputMode('text');
-                setDiagnosis('');
-                setProcedure('');
-                setMedication('');
-                setServiceType('');
-              }}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
+              onClick={() => handleInputModeChange('text')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
                 inputMode === 'text'
                   ? isDark
-                    ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
-                    : 'bg-blue-200 text-blue-700 border border-blue-400'
+                    ? 'bg-cyan-500 text-slate-900 shadow-md'
+                    : 'bg-blue-500 text-white shadow-md'
                   : isDark
-                  ? 'bg-slate-700/30 text-slate-300 border border-slate-600/30 hover:bg-slate-700/50'
-                  : 'bg-white/30 text-gray-600 border border-gray-300/30 hover:bg-white/50'
+                  ? 'text-slate-300 hover:bg-slate-700/60'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
+              <FileText className="w-3 h-3 inline mr-1.5" />
               Free Text
+            </button>
+            <button
+              onClick={() => handleInputModeChange('form')}
+              className={`ml-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-300 ${
+                inputMode === 'form'
+                  ? isDark
+                    ? 'bg-cyan-500 text-slate-900 shadow-md'
+                    : 'bg-blue-500 text-white shadow-md'
+                  : isDark
+                  ? 'text-slate-300 hover:bg-slate-700/60'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <FileText className="w-3 h-3 inline mr-1.5" />
+              Form Input
             </button>
           </div>
 
@@ -528,12 +834,14 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               procedure={procedure}
               medication={medication}
               serviceType={serviceType}
+              bpjsClass={bpjsClass}
               freeText={freeText}
-              onDiagnosisChange={setDiagnosis}
-              onProcedureChange={setProcedure}
-              onMedicationChange={setMedication}
+              onDiagnosisChange={handleDiagnosisChange}
+              onProcedureChange={handleProcedureChange}
+              onMedicationChange={handleMedicationChange}
               onServiceTypeChange={setServiceType}
-              onFreeTextChange={setFreeText}
+              onBpjsClassChange={setBpjsClass}
+              onFreeTextChange={handleFreeTextChange}
               onGenerate={handleGenerate}
               isLoading={isLoading}
               isDark={isDark}
@@ -548,8 +856,8 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         <div
           className={`rounded-2xl p-6 h-full ${
             isDark
-              ? 'bg-slate-800/40 border border-cyan-500/20'
-              : 'bg-white/60 border border-blue-100'
+              ? 'bg-slate-900/30 border border-cyan-500/25'
+              : 'bg-white/40 border border-blue-100/80'
           } backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden`}
         >
           <h2
@@ -557,7 +865,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               isDark ? 'text-cyan-300' : 'text-blue-700'
             }`}
           >
-            Pilih Kode Spesifik ICD-10
+            Pilih Kode Spesifik
           </h2>
           
           {/* Scrollable Content */}
@@ -565,23 +873,11 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             
             {/* Combined ICD Explorer Section (Diagnosis + Tindakan) */}
             {(showICD10Explorer && correctedTerm) || (showICD9Explorer && correctedProcedureTerm) ? (
-              <div className="flex-shrink-0">
-                <div className={`mb-4 px-4 py-3 rounded-lg ${
-                  isDark ? 'bg-gradient-to-r from-cyan-500/10 to-green-500/10 border border-cyan-500/30' : 'bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200'
-                }`}>
-                  <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                    🏥 Mapping Kode ICD
-                  </h3>
-                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                    {showICD10Explorer && showICD9Explorer 
-                      ? 'Pilih kode diagnosis (ICD-10) dan tindakan (ICD-9) yang sesuai'
-                      : showICD10Explorer 
-                        ? 'Pilih kode diagnosis (ICD-10) yang sesuai'
-                        : 'Pilih kode tindakan (ICD-9) yang sesuai'
-                    }
-                  </p>
-                </div>
-
+              <div
+                className={`flex-shrink-0 relative transform transition-all duration-500 ${
+                  showCategoryAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+                }`}
+              >
                 {/* 2-Column Layout: Explorers (Left 65%) | Shared Mapping Preview (Right 35%) */}
                 <div className="grid grid-cols-12 gap-4">
                   {/* Left Column: ICD-10 & ICD-9 Explorers (8 columns = ~66%) */}
@@ -589,13 +885,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                     {/* ICD-10 Diagnosis Section */}
                     {showICD10Explorer && correctedTerm && (
                       <div>
-                        <div className={`mb-3 px-3 py-2 rounded-md ${
-                          isDark ? 'bg-cyan-500/5 border-l-2 border-cyan-500' : 'bg-blue-50 border-l-2 border-blue-500'
-                        }`}>
-                          <h4 className={`text-xs font-semibold ${isDark ? 'text-cyan-400' : 'text-blue-600'}`}>
-                            🩺 Diagnosis ICD-10
-                          </h4>
-                        </div>
                         <ICD10Explorer
                           searchTerm={originalSearchTerm}
                           correctedTerm={correctedTerm}
@@ -604,7 +893,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                             procedure,
                             medication,
                             freeText,
-                            mode: inputMode,
+                            mode: freeText.trim() ? 'text' as const : 'form' as const,
                           }}
                           isDark={isDark}
                           isAnalyzing={isLoading}
@@ -617,19 +906,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                     {/* ICD-9 Tindakan Section */}
                     {showICD9Explorer && correctedProcedureTerm && (
                       <div>
-                        {console.log('[AdminRS] Rendering ICD9Explorer with:', {
-                          showICD9Explorer,
-                          correctedProcedureTerm,
-                          originalProcedureTerm,
-                          procedureSynonyms
-                        })}
-                        <div className={`mb-3 px-3 py-2 rounded-md ${
-                          isDark ? 'bg-green-500/5 border-l-2 border-green-500' : 'bg-green-50 border-l-2 border-green-500'
-                        }`}>
-                          <h4 className={`text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                            ⚕ Tindakan ICD-9
-                          </h4>
-                        </div>
                         <ICD9Explorer
                           searchTerm={originalProcedureTerm}
                           correctedTerm={correctedProcedureTerm}
@@ -639,13 +915,65 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                             procedure,
                             medication,
                             freeText,
-                            mode: inputMode,
+                            mode: freeText.trim() ? 'text' as const : 'form' as const,
                           }}
                           isDark={isDark}
                           isAnalyzing={isLoading}
                           onCodeSelected={handleProcedureCodeSelection}
                           hidePreview={true}
                         />
+                      </div>
+                    )}
+
+                    {/* Medication FORNAS Section - ICD-like Hierarchy + AI Translation (Obat) */}
+                    {showMedicationExplorer && normalizedMedicationTerm && (
+                      <div className="space-y-3">
+                        <div
+                          className={`rounded-lg px-4 py-3 flex items-center justify-between ${
+                            isDark
+                              ? 'bg-emerald-500/10 border border-emerald-400/40'
+                              : 'bg-emerald-50 border border-emerald-200'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Pill className={`w-4 h-4 ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`} />
+                              <span
+                                className={`text-xs font-semibold tracking-wide uppercase ${
+                                  isDark ? 'text-emerald-200' : 'text-emerald-700'
+                                }`}
+                              >
+                                AI Translation (Obat)
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs md:text-sm">
+                              <span className={isDark ? 'text-slate-300' : 'text-gray-600'}>
+                                {originalMedicationTerm || '-'}
+                              </span>
+                              <span className="text-xs md:text-sm">→</span>
+                              <span className={`font-semibold ${
+                                isDark ? 'text-emerald-300' : 'text-emerald-700'
+                              }`}>
+                                {normalizedMedicationTerm}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <MedicationCategoryPanel
+                            categories={medicationCategories}
+                            selectedCategory={selectedMedicationCategory}
+                            onSelectCategory={handleMedicationCategorySelection}
+                            isLoading={isMedicationLoading}
+                            isDark={isDark}
+                          />
+                          <MedicationDetailPanel
+                            category={selectedMedicationCategory}
+                            selectedDetails={selectedMedicationDetails}
+                            onToggleDetail={handleMedicationDetailToggle}
+                            isDark={isDark}
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -659,7 +987,9 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                       icd9Code={selectedICD9Code}
                       originalDiagnosis={originalSearchTerm}
                       originalProcedure={originalProcedureTerm}
-                      originalMedication={medication}
+                      originalMedication={originalMedicationTerm}
+                      selectedMedicationCategory={selectedMedicationCategory}
+                      selectedMedicationDetails={selectedMedicationDetails}
                       onGenerateAnalysis={handleGenerateAnalysis}
                     />
                   </div>
@@ -669,18 +999,43 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
               <div className={`flex flex-col items-center justify-center py-20 ${
                 isDark ? 'text-slate-400' : 'text-gray-500'
               }`}>
-                <svg className="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <p className="text-sm text-center px-4">
-                  Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
-                </p>
+                {isLoading ? (
+                  <>
+                    <div
+                      className={`w-10 h-10 rounded-full border-4 mb-4 animate-spin ${
+                        isDark
+                          ? 'border-cyan-500/30 border-t-cyan-400'
+                          : 'border-blue-500/30 border-t-blue-500'
+                      }`}
+                    />
+                    <p className="text-sm text-center px-4 mb-1">
+                      AI sedang menyiapkan kategori ICD & FORNAS...
+                    </p>
+                    <p className="text-xs opacity-70 text-center px-4">
+                      Mohon tunggu sebentar, kami mencari kode yang paling relevan.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="text-sm text-center px-4">
+                      Klik "Generate AI Insight" untuk melihat kategori ICD yang sesuai dengan diagnosis dan tindakan
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
             {/* Results Section - Below Explorer */}
             {result && (
-              <div className="flex-shrink-0">
+              <div
+                ref={resultsRef}
+                className={`flex-shrink-0 transform transition-all duration-500 ${
+                  showResultAnimation ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+                }`}
+              >
                 {/* ================== Hasil Analisis AI ================== */}
                 <div
                   className={`rounded-xl p-4 mb-4 ${
@@ -690,7 +1045,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                   }`}
                 >
                   {/* HEADER: Judul + ICD di kanan */}
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-3">
 
                     {/* LEFT: Judul + Deskripsi */}
                     <div>
@@ -760,6 +1115,38 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                         </span>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Toggle Tabs untuk Analysis vs INACBG */}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => setResultViewMode('analysis')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${
+                        resultViewMode === 'analysis'
+                          ? isDark
+                            ? 'bg-cyan-500 text-white shadow-lg'
+                            : 'bg-blue-600 text-white shadow-lg'
+                          : isDark
+                            ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      📋 Analisis Klinis
+                    </button>
+                    <button
+                      onClick={() => setResultViewMode('inacbg')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${
+                        resultViewMode === 'inacbg'
+                          ? isDark
+                            ? 'bg-cyan-500 text-white shadow-lg'
+                            : 'bg-blue-600 text-white shadow-lg'
+                          : isDark
+                            ? 'bg-slate-700/50 text-slate-300 hover:bg-slate-700'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      💰 INA-CBG
+                    </button>
                   </div>
                 </div>
 
@@ -866,108 +1253,18 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                   </div>
                 )}
 
-                {/* Dokumen Wajib Panel */}
-                {dokumenWajib && dokumenWajib.dokumen_list && dokumenWajib.dokumen_list.length > 0 && (
-                  <div
-                    className={`rounded-xl p-6 mb-4 ${
-                      isDark
-                        ? "bg-orange-500/10 border border-orange-500/30"
-                        : "bg-orange-50 border border-orange-200"
-                    }`}
-                  >
-                    <h3
-                      className={`text-lg font-semibold mb-4 flex items-center gap-2 ${
-                        isDark ? "text-orange-300" : "text-orange-700"
-                      }`}
-                    >
-                      <span>📄</span> Checklist Dokumen Wajib
-                    </h3>
-
-                    <div
-                      className={`mb-4 p-3 rounded-lg text-sm ${
-                        isDark
-                          ? "bg-orange-500/20 text-orange-200"
-                          : "bg-orange-100 text-orange-800"
-                      }`}
-                    >
-                      <p className="font-medium">
-                        Diagnosis: <span className="font-bold">{dokumenWajib.diagnosis}</span>
-                      </p>
-                      <p className="text-xs mt-1">
-                        Total dokumen yang diperlukan: {dokumenWajib.total_dokumen}
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      {dokumenWajib.dokumen_list.map((doc: any) => (
-                        <div
-                          key={doc.id}
-                          className={`p-3 rounded-lg border ${
-                            doc.status === 'wajib'
-                              ? isDark
-                                ? "bg-red-500/10 border-red-500/30"
-                                : "bg-red-50 border-red-200"
-                              : doc.status === 'opsional'
-                              ? isDark
-                                ? "bg-blue-500/10 border-blue-500/30"
-                                : "bg-blue-50 border-blue-200"
-                              : isDark
-                              ? "bg-yellow-500/10 border-yellow-500/30"
-                              : "bg-yellow-50 border-yellow-200"
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <span className="text-lg mt-0.5">
-                              {doc.status === 'wajib' ? '✅' : doc.status === 'opsional' ? 'ℹ️' : '⚠️'}
-                            </span>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <p
-                                  className={`font-medium ${
-                                    isDark ? "text-white" : "text-gray-900"
-                                  }`}
-                                >
-                                  {doc.nama_dokumen}
-                                </p>
-                                <span
-                                  className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                    doc.status === 'wajib'
-                                      ? isDark
-                                        ? "bg-red-500/30 text-red-200"
-                                        : "bg-red-200 text-red-800"
-                                      : doc.status === 'opsional'
-                                      ? isDark
-                                        ? "bg-blue-500/30 text-blue-200"
-                                        : "bg-blue-200 text-blue-800"
-                                      : isDark
-                                      ? "bg-yellow-500/30 text-yellow-200"
-                                      : "bg-yellow-200 text-yellow-800"
-                                  }`}
-                                >
-                                  {doc.status}
-                                </span>
-                              </div>
-                              <p
-                                className={`text-sm mt-1 ${
-                                  isDark ? "text-slate-300" : "text-gray-600"
-                                }`}
-                              >
-                                {doc.keterangan}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                {/* Conditional Panel based on resultViewMode */}
+                {resultViewMode === 'analysis' ? (
+                  <ResultsPanel result={result} isDark={isDark} />
+                ) : (
+                  <INACBGPanel result={inacbgResult} isDark={isDark} />
                 )}
-
-                <ResultsPanel result={result} isDark={isDark} />
               </div>
             )}
           </div>
         </div>
       </div>
+      {/* End Right Panel */}
     </div>
   );
 }

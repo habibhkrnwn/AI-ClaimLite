@@ -1,3 +1,44 @@
+"""
+Compatibility shim for configuration.
+
+Some modules import a module named `config` and expect module-level
+variables like `OPENAI_API_KEY`. The main project config lives in
+`ai_claim_lite_config.py` (class `Config`). This shim exposes the
+commonly-used attributes at module level for backward compatibility.
+"""
+try:
+    # Prefer absolute import when running as top-level module
+    from ai_claim_lite_config import Config
+except Exception:
+    try:
+        # Fallback to relative import when package context is available
+        from .ai_claim_lite_config import Config
+    except Exception:
+        Config = None
+
+
+# Expose commonly used environment-backed settings as module-level names
+if Config:
+    OPENAI_API_KEY = Config.OPENAI_API_KEY
+    DATABASE_URL = Config.DATABASE_URL
+    SECRET_KEY = Config.SECRET_KEY
+    APP_ENV = Config.APP_ENV
+    DEBUG = Config.DEBUG
+    APP_HOST = Config.APP_HOST
+    APP_PORT = Config.APP_PORT
+else:
+    # When Config cannot be imported, ensure names exist as None to avoid AttributeError
+    OPENAI_API_KEY = None
+    DATABASE_URL = None
+    SECRET_KEY = None
+    APP_ENV = None
+    DEBUG = False
+    APP_HOST = "0.0.0.0"
+    APP_PORT = 8000
+
+
+def get_config_class():
+    return Config
 # core_engine/ai_claim_lite_config.py
 
 """
@@ -47,6 +88,19 @@ class Config:
     DEBUG = os.getenv("DEBUG", "true").lower() == "true"
     APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT = int(os.getenv("APP_PORT", "8000"))
+
+# ============================================================
+# 🔑 DIRECT ACCESS (for backward compatibility)
+# ============================================================
+# Export Config attributes to module level for direct access
+OPENAI_API_KEY = Config.OPENAI_API_KEY
+DATABASE_URL = Config.DATABASE_URL
+SECRET_KEY = Config.SECRET_KEY
+APP_ENV = Config.APP_ENV
+DEBUG = Config.DEBUG
+APP_HOST = Config.APP_HOST
+APP_PORT = Config.APP_PORT
+
 
 # ============================================================
 # 🎯 FEATURE FLAGS - Enable/Disable fitur tertentu

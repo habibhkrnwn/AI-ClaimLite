@@ -9,6 +9,7 @@ export interface User {
   id: number;
   email: string;
   full_name: string;
+  tipe_rs: string;
   role: string;
   is_active: boolean;
   active_until?: Date | null;
@@ -22,6 +23,7 @@ export interface RegisterData {
   email: string;
   password: string;
   full_name: string;
+  tipe_rs: string;
   daily_ai_limit?: number;
 }
 
@@ -33,7 +35,7 @@ export interface LoginData {
 export const authService = {
   // Register new user
   async register(data: RegisterData): Promise<User> {
-    const { email, password, full_name, daily_ai_limit = 100 } = data;
+    const { email, password, full_name, tipe_rs, daily_ai_limit = 100 } = data;
 
     // Check if user already exists
     const existingUser = await query(
@@ -50,10 +52,10 @@ export const authService = {
 
     // Insert new user with AI limit
     const result = await query(
-      `INSERT INTO users (email, password_hash, full_name, daily_ai_limit, ai_usage_count, ai_usage_date) 
-       VALUES ($1, $2, $3, $4, 0, CURRENT_DATE) 
-       RETURNING id, email, full_name, role, is_active, created_at, daily_ai_limit, ai_usage_count, ai_usage_date`,
-      [email, password_hash, full_name, daily_ai_limit]
+      `INSERT INTO users (email, password_hash, full_name, tipe_rs, daily_ai_limit, ai_usage_count, ai_usage_date) 
+       VALUES ($1, $2, $3, $4, $5, 0, CURRENT_DATE) 
+       RETURNING id, email, full_name, tipe_rs, role, is_active, created_at, daily_ai_limit, ai_usage_count, ai_usage_date`,
+      [email, password_hash, full_name, tipe_rs, daily_ai_limit]
     );
 
     return result.rows[0];
@@ -65,7 +67,7 @@ export const authService = {
 
     // Get user by email
     const result = await query(
-      `SELECT id, email, password_hash, full_name, role, is_active, active_until 
+      `SELECT id, email, password_hash, full_name, tipe_rs, role, is_active, active_until 
        FROM users WHERE email = $1`,
       [email]
     );
@@ -193,7 +195,7 @@ export const authService = {
   // Get user by ID
   async getUserById(userId: number): Promise<User | null> {
     const result = await query(
-      `SELECT id, email, full_name, role, is_active, active_until, created_at,
+      `SELECT id, email, full_name, tipe_rs, role, is_active, active_until, created_at,
               daily_ai_limit, ai_usage_count, ai_usage_date
        FROM users WHERE id = $1`,
       [userId]

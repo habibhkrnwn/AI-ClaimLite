@@ -13,6 +13,82 @@ const CORE_ENGINE_URL = process.env.CORE_ENGINE_URL || 'http://localhost:8000';
 // All routes require authentication
 router.use(authenticate);
 
+// Parse resume medis to extract diagnosis, procedure, medication
+router.post('/parse-resume', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { resume_text } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated',
+      });
+      return;
+    }
+
+    if (!resume_text || resume_text.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Resume text is required',
+      });
+      return;
+    }
+
+    console.log('[Parse Resume] Calling core_engine parse-text endpoint');
+    
+    // Call core_engine to parse the resume text using AI
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/parse-text`, {
+      input_text: resume_text.trim(),
+    }, {
+      timeout: 60000, // 60 seconds timeout for AI parsing
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('[Parse Resume] Core engine response:', response.data);
+
+    // Core engine returns {status: "success", result: {...}}
+    if (response.data.status === 'success' && response.data.result) {
+      const parsed = response.data.result;
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          diagnosis: parsed.diagnosis || '',
+          tindakan: parsed.tindakan || '',
+          obat: parsed.obat || '',
+        },
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Parsing failed',
+      });
+    }
+  } catch (error: any) {
+    console.error('Parse resume error:', error);
+    
+    let userMessage = 'Failed to parse resume medis';
+    let statusCode = 500;
+    
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      userMessage = 'Parsing timeout - teks terlalu panjang atau kompleks';
+      statusCode = 504;
+    } else if (error.response?.data?.message) {
+      userMessage = error.response.data.message;
+      statusCode = error.response.status || 500;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      message: userMessage,
+      detail: error.message,
+    });
+  }
+});
+
 // Analyze single claim with form or text input (endpoint 1A)
 router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -53,7 +129,8 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
         return;
       }
     } else {
-      // Default to form mode - only diagnosis is required
+      // Default to form mode - only diagnosis is required (flexible validation for better UX)
+      // Tindakan/obat/service_type are optional - will use defaults if empty
       if (!diagnosis || diagnosis.trim() === '') {
         res.status(400).json({
           success: false,
@@ -79,6 +156,7 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       : {
           mode: 'form',
           diagnosis: diagnosis,
+          // Defensive defaults: empty string for tindakan/obat, default service_type
           tindakan: procedure || '',
           obat: medication || '',
           service_type: service_type || 'rawat-jalan',
@@ -622,6 +700,53 @@ router.post('/translate-procedure-term', async (req: Request, res: Response): Pr
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to translate procedure term',
+    });
+  }
+});
+
+// Translate medication term with FORNAS AI
+router.post('/translate-medication-term', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { term } = req.body;
+
+    if (!term || typeof term !== 'string' || term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Medication term is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for AI medication translation
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/translate-medication`, {
+      term: term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: {
+          original: term,
+          normalized: response.data.result.normalized_name || response.data.result.normalized_generic,
+          normalized_generic: response.data.result.normalized_generic,
+          categories: response.data.result.categories || [],
+          confidence: response.data.result.confidence || 0,
+          found_in_db: response.data.result.found_in_db || false,
+        },
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Medication translation failed',
+      });
+    }
+  } catch (error: any) {
+    console.error('Medication term translation error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to translate medication term',
     });
   }
 });

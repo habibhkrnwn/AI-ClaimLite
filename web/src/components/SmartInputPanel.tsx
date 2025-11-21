@@ -1,4 +1,5 @@
-import { FileText, Activity, Pill } from 'lucide-react';
+import { useRef, KeyboardEvent } from 'react';
+import { FileText, Activity, Pill, Building2 } from 'lucide-react';
 
 type InputMode = 'form' | 'text';
 
@@ -7,10 +8,14 @@ interface SmartInputPanelProps {
   diagnosis: string;
   procedure: string;
   medication: string;
+  serviceType: string;
+  bpjsClass: string;
   freeText: string;
   onDiagnosisChange: (value: string) => void;
   onProcedureChange: (value: string) => void;
   onMedicationChange: (value: string) => void;
+  onServiceTypeChange: (value: string) => void;
+  onBpjsClassChange: (value: string) => void;
   onFreeTextChange: (value: string) => void;
   onGenerate: () => Promise<void>;
   isLoading: boolean;
@@ -23,10 +28,14 @@ export default function SmartInputPanel({
   diagnosis,
   procedure,
   medication,
+  serviceType,
+  bpjsClass,
   freeText,
   onDiagnosisChange,
   onProcedureChange,
   onMedicationChange,
+  onServiceTypeChange,
+  onBpjsClassChange,
   onFreeTextChange,
   onGenerate,
   isLoading,
@@ -35,7 +44,45 @@ export default function SmartInputPanel({
 }: SmartInputPanelProps) {
   const isLimitReached = aiUsage ? aiUsage.remaining === 0 : false;
 
+  // Safety: Ensure all props are strings (defensive programming)
+  const safeDiagnosis = String(diagnosis || '');
+  const safeProcedure = String(procedure || '');
+  const safeMedication = String(medication || '');
+  const safeFreeText = String(freeText || '');
 
+  const diagnosisRef = useRef<HTMLInputElement | null>(null);
+  const procedureRef = useRef<HTMLInputElement | null>(null);
+  const medicationRef = useRef<HTMLInputElement | null>(null);
+
+  const isFormSubmitDisabled =
+    isLoading ||
+    !safeDiagnosis.trim() ||
+    !safeProcedure.trim() ||
+    !safeMedication.trim() ||
+    isLimitReached;
+
+  const handleDiagnosisKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      procedureRef.current?.focus();
+    }
+  };
+
+  const handleProcedureKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      medicationRef.current?.focus();
+    }
+  };
+
+  const handleMedicationKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!isFormSubmitDisabled) {
+        void onGenerate();
+      }
+    }
+  };
 
   // Original Input Mode (Form or Text)
   if (mode === 'text') {
@@ -47,10 +94,10 @@ export default function SmartInputPanel({
             Resume Medis (Free Text)
           </label>
           <textarea
-            value={freeText}
+            value={safeFreeText}
             onChange={(e) => onFreeTextChange(e.target.value)}
-            placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah..."
-            className={`w-full px-4 py-3 rounded-lg border flex-1 resize-none ${
+            placeholder="Example: Pasien paru2 basah dengan saturasi oksigen rendah, dilakukan foto thorax dan pemberian antibiotik..."
+            className={`w-full flex-1 px-4 py-3 rounded-lg border resize-none ${
               isDark
                 ? 'bg-slate-800/50 border-cyan-500/30 text-white placeholder-slate-500'
                 : 'bg-white/70 border-blue-200 text-gray-900 placeholder-gray-400'
@@ -61,7 +108,7 @@ export default function SmartInputPanel({
         </div>
         <button
           onClick={onGenerate}
-          disabled={isLoading || !freeText.trim() || isLimitReached}
+          disabled={isLoading || !safeFreeText.trim() || isLimitReached}
           className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
             isLimitReached
               ? 'bg-gray-400 cursor-not-allowed'
@@ -87,8 +134,10 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={diagnosis}
+            value={safeDiagnosis}
             onChange={(e) => onDiagnosisChange(e.target.value)}
+            ref={diagnosisRef}
+            onKeyDown={handleDiagnosisKeyDown}
             placeholder="Masukkan diagnosis (mis: paru2 basah)..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -107,8 +156,10 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={procedure}
+            value={safeProcedure}
             onChange={(e) => onProcedureChange(e.target.value)}
+            ref={procedureRef}
+            onKeyDown={handleProcedureKeyDown}
             placeholder="Masukkan tindakan medis..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -127,8 +178,10 @@ export default function SmartInputPanel({
           </label>
           <input
             type="text"
-            value={medication}
+            value={safeMedication}
             onChange={(e) => onMedicationChange(e.target.value)}
+            ref={medicationRef}
+            onKeyDown={handleMedicationKeyDown}
             placeholder="Masukkan daftar obat..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -139,11 +192,58 @@ export default function SmartInputPanel({
             } transition-all duration-300`}
           />
         </div>
+
+        <div className="space-y-2 flex-shrink-0">
+          <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+            <Building2 className="w-4 h-4" />
+            Jenis Pelayanan
+          </label>
+          <select
+            value={serviceType}
+            onChange={(e) => onServiceTypeChange(e.target.value)}
+            className={`w-full px-4 py-2.5 rounded-lg border ${
+              isDark
+                ? 'bg-slate-800/50 border-cyan-500/30 text-white'
+                : 'bg-white/70 border-blue-200 text-gray-900'
+            } backdrop-blur-sm focus:outline-none focus:ring-2 ${
+              isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
+            } transition-all duration-300`}
+          >
+            <option value="" disabled>Pilih jenis pelayanan...</option>
+            <option value="rawat-inap">Rawat Inap</option>
+            <option value="rawat-jalan">Rawat Jalan</option>
+            <option value="igd">IGD (Instalasi Gawat Darurat)</option>
+            <option value="one-day-care">One Day Care</option>
+          </select>
+        </div>
+
+        <div className="space-y-2 flex-shrink-0">
+          <label className={`flex items-center gap-2 text-sm font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+            <Building2 className="w-4 h-4" />
+            Kelas BPJS
+          </label>
+          <select
+            value={bpjsClass}
+            onChange={(e) => onBpjsClassChange(e.target.value)}
+            className={`w-full px-4 py-2.5 rounded-lg border ${
+              isDark
+                ? 'bg-slate-800/50 border-cyan-500/30 text-white'
+                : 'bg-white/70 border-blue-200 text-gray-900'
+            } backdrop-blur-sm focus:outline-none focus:ring-2 ${
+              isDark ? 'focus:ring-cyan-500/50' : 'focus:ring-blue-500/50'
+            } transition-all duration-300`}
+          >
+            <option value="" disabled>Pilih kelas BPJS...</option>
+            <option value="1">Kelas 1</option>
+            <option value="2">Kelas 2</option>
+            <option value="3">Kelas 3</option>
+          </select>
+        </div>
       </div>
 
       <button
         onClick={onGenerate}
-        disabled={isLoading || !diagnosis.trim() || !procedure.trim() || !medication.trim() || isLimitReached}
+        disabled={isFormSubmitDisabled}
         className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
           isLimitReached
             ? 'bg-gray-400 cursor-not-allowed'

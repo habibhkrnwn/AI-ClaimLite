@@ -130,24 +130,6 @@ export default function ICD9Explorer({
             {correctedTerm}
           </span>
         </div>
-        
-        {/* Selected Code Indicator */}
-        {selectedSubCode && (
-          <div className={`mt-3 pt-3 border-t ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
-            <div className="flex items-center gap-2">
-              <span className={`text-xs font-medium ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                Selected:
-              </span>
-              <span className={`text-sm font-bold px-3 py-1 rounded-full ${
-                isDark 
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' 
-                  : 'bg-blue-100 text-blue-700 border border-blue-300'
-              }`}>
-                ✓ {selectedSubCode}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Layout: Categories | Details (or + Preview if not hidden) */}

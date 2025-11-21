@@ -14,10 +14,51 @@ export interface Analysis {
   created_at: string;
 }
 
+export interface INACBGResult {
+  success: boolean;
+  cbg_code: string;
+  description: string;
+  tarif: number;
+  tarif_detail: {
+    tarif_kelas_1: number;
+    tarif_kelas_2: number;
+    tarif_kelas_3: number;
+    kelas_bpjs_used: number;
+  };
+  breakdown: {
+    cmg: string;
+    cmg_description: string;
+    case_type: string;
+    case_type_description: string;
+    specific_code: string;
+    severity: string;
+  };
+  matching_detail: {
+    strategy: string;
+    confidence: number;
+    case_count: number;
+    note: string;
+  };
+  classification: {
+    regional: string;
+    kelas_rs: string;
+    tipe_rs: string;
+    layanan: string;
+  };
+  warnings?: string[];
+}
+
+export interface DiagnosisItem {
+  name: string;
+  icd10: string | null;
+}
+
 export interface AnalysisResult {
   classification: {
     icd10: string[];
     icd9: string[];
+    diagnosis_primer?: DiagnosisItem;  // NEW: Primary diagnosis
+    diagnosis_sekunder?: DiagnosisItem[];  // NEW: Secondary diagnoses
   };
   validation: {
     status: 'valid' | 'warning' | 'invalid';
@@ -50,4 +91,5 @@ export interface AnalysisResult {
     tingkat: string;   // "Rendah" | "Sedang" | "Tinggi"
     score: number;     // tetap ada BIAR PARSING TIDAK ERROR (abaikan di UI)
   };
+  inacbg?: INACBGResult;  // Optional INACBG result
 }

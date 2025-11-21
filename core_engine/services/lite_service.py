@@ -165,23 +165,60 @@ class OpenAIMedicalParser:
 TUGAS: Extract informasi medis dari resume/catatan dokter dengan akurat.
 
 RULES PENTING:
-1. Diagnosis harus SINGKAT (max 50 karakter), hanya nama penyakit utama
-2. Jangan tambahkan informasi yang tidak ada di input
-3. **DETEKSI KODE ICD-10 DALAM KURUNG**: Jika diagnosis ditulis seperti "Pneumonia (J18.9)" atau "Diabetes (E11.9)", extract kode dalam kurung sebagai diagnosis_icd10
-4. **DETEKSI KODE ICD-9 DALAM TINDAKAN**: Jika tindakan ditulis seperti "Rontgen Thorax (87.44)", extract kode sebagai icd9
-5. Normalize nama obat ke nama generik (contoh: "Panadol" → "Paracetamol")
-6. Confidence score berdasarkan seberapa jelas informasi di input
+1. **DETEKSI MULTIPLE DIAGNOSIS**: Pisahkan diagnosis primer dan sekunder
+   - Separator yang dikenali: koma (,), titik (.), ampersand (&), slash (/), kata "dan", "dengan", "disertai"
+   - Diagnosis PERTAMA = PRIMER, sisanya = SEKUNDER
+   - Contoh: "Pneumonia, Heart Disease & Diabetes" → Primer: Pneumonia, Sekunder: [Heart Disease, Diabetes]
 
-CONTOH EXTRACTION KODE:
-- Input: "Pneumonia (J18.9)" → diagnosis: "Pneumonia", diagnosis_icd10: "J18.9"
-- Input: "Diabetes Mellitus Type 2 (E11.9)" → diagnosis: "Diabetes Mellitus Type 2", diagnosis_icd10: "E11.9"
-- Input: "Rontgen Thorax (87.44)" → tindakan: [{name: "Rontgen Thorax", icd9: "87.44"}]
-- Input: "Pneumonia" → diagnosis: "Pneumonia", diagnosis_icd10: null
+2. **AI TRANSLATION & TYPO CORRECTION**:
+   - "paru2 basah" → "Pneumonia"
+   - "kencing manis" → "Diabetes Mellitus"
+   - "jantung koroner" → "Coronary Heart Disease"
+   - "radang paru" → "Pneumonia"
+   - "demam berdarah" → "Dengue Hemorrhagic Fever"
+   - Handle typo medis common (seftriakson → ceftriaxone, dll)
+
+3. **DETEKSI KODE ICD-10 DALAM KURUNG**: 
+   - "Pneumonia (J18.9)" → extract J18.9 untuk diagnosis tersebut
+   - Kode ICD-10 bisa ada di setiap diagnosis (primer/sekunder)
+
+4. **DETEKSI KODE ICD-9 DALAM TINDAKAN**: 
+   - "Rontgen Thorax (87.44)" → extract 87.44
+
+5. **NORMALISASI**:
+   - Nama obat → generik (Panadol → Paracetamol)
+   - Singkatan tindakan (nebul → nebulisasi)
+   - Setiap diagnosis max 50 karakter
+
+6. Confidence score berdasarkan clarity input
+
+CONTOH EXTRACTION MULTI-DIAGNOSIS:
+- Input: "Pneumonia (J18.9), Diabetes (E11.9)" 
+  → diagnosis_primer: {name: "Pneumonia", icd10: "J18.9"}
+  → diagnosis_sekunder: [{name: "Diabetes", icd10: "E11.9"}]
+
+- Input: "paru2 basah & kencing manis"
+  → diagnosis_primer: {name: "Pneumonia", icd10: null}
+  → diagnosis_sekunder: [{name: "Diabetes Mellitus", icd10: null}]
+
+- Input: "Pneumonia dengan komplikasi heart failure"
+  → diagnosis_primer: {name: "Pneumonia", icd10: null}
+  → diagnosis_sekunder: [{name: "Heart Failure", icd10: null}]
 
 OUTPUT FORMAT (STRICT JSON):
 {
-  "diagnosis": "string (nama penyakit singkat, TANPA kode dalam kurung)",
-  "diagnosis_icd10": "string atau null (kode ICD-10 jika ada, format: A00-Z99)",
+  "diagnosis_primer": {
+    "name": "string (nama penyakit utama, TANPA kode)",
+    "icd10": "string atau null (kode ICD-10)"
+  },
+  "diagnosis_sekunder": [
+    {
+      "name": "string (nama penyakit sekunder)",
+      "icd10": "string atau null"
+    }
+  ],
+  "diagnosis": "string (DEPRECATED: untuk backward compatibility, gabungan primer + sekunder)",
+  "diagnosis_icd10": "string atau null (DEPRECATED: ICD-10 primer)",
   "tindakan": [
     {
       "name": "string (nama tindakan, TANPA kode dalam kurung)",
@@ -215,9 +252,27 @@ INPUT TEXT:
 
 INSTRUKSI:
 - Input sudah terstruktur, extract dengan presisi tinggi
-- Jika ada label "Diagnosis:", "Tindakan:", dll, gunakan sebagai guide
-- Extract kode ICD-10/ICD-9 jika sudah ada di dalam kurung
+- **MULTIPLE DIAGNOSIS DETECTION**:
+  * Pisahkan dengan: , . & / "dan" "dengan" "disertai"
+  * PERTAMA = PRIMER, sisanya = SEKUNDER
+  * Contoh: "Pneumonia, Diabetes & Heart Disease" → Primer: Pneumonia, Sekunder: [Diabetes, Heart Disease]
+
+- **AI TRANSLATION**:
+  * "paru2 basah" → "Pneumonia"
+  * "kencing manis" → "Diabetes Mellitus"
+  * Dll (lihat system prompt)
+
+- Extract kode ICD-10/ICD-9 jika ada di dalam kurung
 - Confidence tinggi (>0.9) karena input structured
+
+CONTOH:
+Input Diagnosis: "paru2 basah, kencing manis & jantung koroner"
+Output:
+  diagnosis_primer: {{"name": "Pneumonia", "icd10": null}}
+  diagnosis_sekunder: [
+    {{"name": "Diabetes Mellitus", "icd10": null}},
+    {{"name": "Coronary Heart Disease", "icd10": null}}
+  ]
 
 Extract dan return JSON sesuai format."""
 
@@ -244,22 +299,50 @@ INPUT TEXT:
 
 INSTRUKSI:
 - Text mungkin narrative/tidak terstruktur
-- Diagnosis bisa embedded dalam kalimat (extract hanya nama penyakit)
-- **PENTING: Deteksi kode ICD-10 dalam kurung setelah diagnosis** (contoh: "Pneumonia (J18.9)")
-- **PENTING: Deteksi kode ICD-9 dalam kurung setelah tindakan** (contoh: "Rontgen Thorax (87.44)")
+- **MULTIPLE DIAGNOSIS DETECTION**:
+  * Pisahkan diagnosis dengan separator: , . & / "dan" "dengan" "disertai"
+  * Yang PERTAMA disebut = DIAGNOSIS PRIMER
+  * Sisanya = DIAGNOSIS SEKUNDER
+  * Contoh: "paru2 basah, kencing manis & jantung" → Primer: Pneumonia, Sekunder: [Diabetes Mellitus, Heart Disease]
+
+- **AI TRANSLATION WAJIB**:
+  * "paru2 basah" / "radang paru" → "Pneumonia"
+  * "kencing manis" → "Diabetes Mellitus"
+  * "jantung koroner" → "Coronary Heart Disease"
+  * "demam berdarah" → "Dengue Hemorrhagic Fever"
+  * "tipus" → "Typhoid Fever"
+  * "asam urat" → "Gout"
+
+- **DETEKSI KODE ICD**:
+  * ICD-10 dalam kurung: "Pneumonia (J18.9)" → icd10: "J18.9"
+  * ICD-9 untuk tindakan: "Rontgen Thorax (87.44)" → icd9: "87.44"
+
 - Tindakan & obat bisa disebutkan dalam paragraf (extract semua)
-- Normalize abbreviations (contoh: "nebul" → "nebulisasi")
+- Normalize abbreviations ("nebul" → "nebulisasi")
 - Handle typo medis common
 
-CONTOH EXTRACTION:
-Input: "Pasien dengan pneumonia berat dirawat 5 hari, diberikan ceftriaxone"
-Output diagnosis: "Pneumonia berat" (BUKAN "Pasien dengan pneumonia berat")
+CONTOH EXTRACTION MULTI-DIAGNOSIS:
 
-Input: "Diagnosis: Pneumonia (J18.9), dilakukan Rontgen Thorax (87.44)"
+Input: "Pasien dengan paru2 basah, kencing manis dan hipertensi dirawat 5 hari"
 Output: {{
-  "diagnosis": "Pneumonia",
-  "diagnosis_icd10": "J18.9",
+  "diagnosis_primer": {{"name": "Pneumonia", "icd10": null}},
+  "diagnosis_sekunder": [
+    {{"name": "Diabetes Mellitus", "icd10": null}},
+    {{"name": "Hypertension", "icd10": null}}
+  ]
+}}
+
+Input: "Diagnosis: Pneumonia (J18.9) / Diabetes (E11.9), dilakukan Rontgen Thorax (87.44)"
+Output: {{
+  "diagnosis_primer": {{"name": "Pneumonia", "icd10": "J18.9"}},
+  "diagnosis_sekunder": [{{"name": "Diabetes", "icd10": "E11.9"}}],
   "tindakan": [{{"name": "Rontgen Thorax", "icd9": "87.44"}}]
+}}
+
+Input: "radang paru dengan komplikasi jantung"
+Output: {{
+  "diagnosis_primer": {{"name": "Pneumonia", "icd10": null}},
+  "diagnosis_sekunder": [{{"name": "Heart Disease", "icd10": null}}]
 }}
 
 Extract dan return JSON sesuai format."""
@@ -268,20 +351,44 @@ Extract dan return JSON sesuai format."""
     def _validate_and_normalize(self, result: Dict) -> Dict:
         """Validate dan normalize AI result"""
         
-        # Ensure all required fields exist
-        result.setdefault("diagnosis", "Tidak terdeteksi")
-        result.setdefault("diagnosis_icd10", None)
+        # Ensure diagnosis_primer exists
+        if "diagnosis_primer" not in result or not result["diagnosis_primer"]:
+            result["diagnosis_primer"] = {
+                "name": "Tidak terdeteksi",
+                "icd10": None
+            }
+        
+        # Ensure diagnosis_sekunder exists
+        result.setdefault("diagnosis_sekunder", [])
+        
+        # Backward compatibility: create "diagnosis" from primer + sekunder
+        primer_name = result["diagnosis_primer"].get("name", "Tidak terdeteksi")
+        sekunder_names = [d.get("name", "") for d in result.get("diagnosis_sekunder", [])]
+        
+        if sekunder_names:
+            result["diagnosis"] = f"{primer_name}, {', '.join(sekunder_names)}"
+        else:
+            result["diagnosis"] = primer_name
+        
+        # Backward compatibility: diagnosis_icd10 dari primer
+        result["diagnosis_icd10"] = result["diagnosis_primer"].get("icd10")
+        
         result.setdefault("tindakan", [])
         result.setdefault("obat", [])
         result.setdefault("confidence", 0.8)
         result.setdefault("notes", "")
         
-        # Validate diagnosis length
-        if len(result["diagnosis"]) > 50:
-            # Truncate jika terlalu panjang
-            words = result["diagnosis"].split()
-            result["diagnosis"] = " ".join(words[:4])  # Max 4 words
-            result["notes"] += " (Diagnosis disingkat AI)"
+        # Validate diagnosis_primer length
+        if len(result["diagnosis_primer"].get("name", "")) > 50:
+            words = result["diagnosis_primer"]["name"].split()
+            result["diagnosis_primer"]["name"] = " ".join(words[:4])
+            result["notes"] += " (Diagnosis primer disingkat AI)"
+        
+        # Validate diagnosis_sekunder lengths
+        for i, diag in enumerate(result.get("diagnosis_sekunder", [])):
+            if len(diag.get("name", "")) > 50:
+                words = diag["name"].split()
+                result["diagnosis_sekunder"][i]["name"] = " ".join(words[:4])
         
         # Validate tindakan format
         validated_tindakan = []
@@ -604,9 +711,9 @@ Obat: {obat_raw}"""
         
         logger.info(f"[ICD9_LOOKUP] ✓ Processed {len(tindakan_with_icd9)} tindakan")
         
-        # 🔹 Match obat dengan Fornas DB
-        fornas_matched = match_multiple_obat(obat_list)
-        logger.info(f"[FORNAS] Matched {len(fornas_matched)} obat")
+        # 🔹 Match obat dengan Fornas DB (legacy - not used, replaced by FORNAS_SMART)
+        # fornas_matched = match_multiple_obat(obat_list)
+        # logger.info(f"[FORNAS] Matched {len(fornas_matched)} obat")
         
         # 🔹 FORNAS LITE VALIDATION (AI-powered)
         fornas_lite_result = None
@@ -641,8 +748,8 @@ Obat: {obat_raw}"""
     
     # 🔹 Get consistency data
     consistency_data = analyze_clinical_consistency(
-        dx=full_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
-        tx_list=[t.get("icd9_code") for t in full_analysis.get("tindakan", []) if t.get("icd9_code")],
+        dx=lite_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
+        tx_list=[t.get("icd9_code") for t in lite_analysis.get("tindakan", []) if t.get("icd9_code")],
         drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
     )
     
@@ -665,15 +772,24 @@ Obat: {obat_raw}"""
         
         # 🔹 Backward compatible: Keep Indonesian keys
         "klasifikasi": {
+            # Backward compatible: single diagnosis field (using already-extracted icd10_code variable)
             "diagnosis": f"{diagnosis_name} ({icd10_code})",
+            
+            # 🆕 NEW: Support for diagnosis primer/sekunder (future-ready for multi-diagnosis)
+            "diagnosis_primer": parsed.get("diagnosis_primer", {
+                "name": diagnosis_name,
+                "icd10": icd10_code  # Use already-extracted variable (more efficient)
+            }),
+            "diagnosis_sekunder": parsed.get("diagnosis_sekunder", []),
+            
             "tindakan": [f"{t['name']} ({t['icd9_code']})" for t in tindakan_with_icd9],
-            "obat": _format_obat_lite(obat_list, fornas_matched),
+            "obat": _format_obat_lite(obat_list, []),  # Legacy function - use fornas_lite_result instead
             "confidence": f"{int(parsed['confidence'] * 100)}%"
         },
         
         "validasi_klinis": {
             "sesuai_cp": "✅ Sesuai",  # Simplified for Lite mode
-            "sesuai_fornas": _extract_fornas_compliance(fornas_matched),
+            "sesuai_fornas": _extract_fornas_compliance([]),  # Legacy function - use fornas_lite_result instead
             "catatan": lite_analysis.get("justifikasi_klinis", "-")[:150] + "..."
         },
         

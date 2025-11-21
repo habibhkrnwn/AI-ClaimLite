@@ -75,6 +75,12 @@ class ApiService {
     const timeout = 300000; // 5 minutes
 
     try {
+      console.log('[API Request]', {
+        method: options.method || 'GET',
+        url,
+        hasToken: !!this.accessToken
+      });
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -87,6 +93,12 @@ class ApiService {
       clearTimeout(timeoutId);
 
       const data = await response.json();
+
+      console.log('[API Response]', {
+        status: response.status,
+        ok: response.ok,
+        data
+      });
 
       if (!response.ok) {
         throw new Error(data.message || 'Request failed');
@@ -234,11 +246,28 @@ class ApiService {
   }
 
   // AI Analysis endpoints
+  // Parse resume medis to extract diagnosis, procedure, and medication
+  async parseResumeMedis(resumeText: string): Promise<{
+    success: boolean;
+    data: {
+      diagnosis?: string;
+      tindakan?: string;
+      obat?: string;
+    };
+  }> {
+    console.log('[API] Parsing resume medis:', resumeText.substring(0, 100) + '...');
+    return this.request('/api/ai/parse-resume', {
+      method: 'POST',
+      body: JSON.stringify({ resume_text: resumeText }),
+    });
+  }
+
   async analyzeClaimAI(data: {
-    mode?: 'form' | 'text';
+    mode: 'form' | 'text';
     diagnosis?: string;
     procedure?: string;
     medication?: string;
+    drug_list: string[];
     input_text?: string;
     icd10_code?: string;
     icd9_code?: string | null;
@@ -363,6 +392,34 @@ class ApiService {
     };
   }> {
     return this.request('/api/ai/translate-procedure-term', {
+      method: 'POST',
+      body: JSON.stringify({ term }),
+    });
+  }
+
+  // Translate medication term with FORNAS AI
+  async translateMedicationTerm(term: string): Promise<{
+    success: boolean;
+    data: {
+      original: string;
+      normalized: string;
+      categories: Array<{
+        generic_name: string;
+        kelas_terapi: string;
+        sub_kelas_terapi: string;
+        total_dosage_forms: number;
+        confidence: number;
+        details: Array<{
+          kode_fornas: string;
+          obat_name: string;
+          sediaan_kekuatan: string;
+        }>;
+      }>;
+      confidence: number;
+      found_in_db: boolean;
+    };
+  }> {
+    return this.request('/api/ai/translate-medication-term', {
       method: 'POST',
       body: JSON.stringify({ term }),
     });

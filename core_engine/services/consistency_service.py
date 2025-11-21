@@ -7,7 +7,16 @@ berdasarkan data PNPK, Clinical Pathway, dan FORNAS
 import json
 import os
 import logging
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Set, Optional
+import openai
+from dotenv import load_dotenv
+
+# Load environment variables early so os.getenv works even if config.py not imported
+load_dotenv()
+try:
+    from rapidfuzz import fuzz
+except ImportError:  # Fail-safe if library not present
+    fuzz = None
 
 logger = logging.getLogger(__name__)
 
@@ -129,40 +138,79 @@ def normalize_drug_name(drug: str) -> str:
 
 
 def calculate_match_score(expected: List[str], actual: List[str]) -> Tuple[float, int, int]:
-    """
-    Hitung skor kesesuaian antara expected dan actual items
-    
-    Returns:
-        (score, matched_actual, total_actual)
-        - score: Percentage of ACTUAL items found in EXPECTED (correctness %)
-        - matched_actual: Number of actual items matching expected
-        - total_actual: Total number of actual items provided
-    """
+    """(Legacy) Simple proportion match used previously."""
     if not expected:
-        # Jika tidak ada expected, anggap sesuai
         return 1.0, 0, 0
-    
     if not actual:
-        # Ada expected tapi tidak ada actual
         return 0.0, 0, 0
-    
-    # Normalize both lists
     expected_norm = [item.lower().strip() for item in expected]
     actual_norm = [item.lower().strip() for item in actual]
-    
-    # Count how many ACTUAL items are found in EXPECTED (correctness check)
     matched = 0
     for act in actual_norm:
         for exp in expected_norm:
             if exp in act or act in exp:
                 matched += 1
                 break
-    
     total_actual = len(actual_norm)
     score = matched / total_actual if total_actual > 0 else 0.0
-    
     return score, matched, total_actual
-    return score, matched, total_expected
+
+
+def _fuzzy_match(candidate: str, pool: Set[str], threshold: int = 85) -> Optional[str]:
+    """Return matched item from pool using fuzzy ratio >= threshold, else None."""
+    if not pool:
+        return None
+    if fuzz is None:
+        # Fallback exact matching only
+        return candidate if candidate in pool else None
+    best_item = None
+    best_score = 0
+    for item in pool:
+        score = fuzz.token_set_ratio(candidate, item)
+        if score > best_score:
+            best_score = score
+            best_item = item
+    if best_score >= threshold:
+        return best_item
+    return None
+
+
+def compute_metrics(expected: List[str], actual: List[str], fuzzy: bool = False) -> Dict[str, Any]:
+    """
+    Compute precision, recall, F1 along with matched/missing/extra lists.
+    If fuzzy=True, use fuzzy matching for actual items against expected.
+    """
+    expected_set = {e.lower().strip() for e in expected if e}
+    actual_norm = [a.lower().strip() for a in actual if a]
+    matched: Set[str] = set()
+    mapping: Dict[str, str] = {}
+    if fuzzy:
+        for act in actual_norm:
+            m = _fuzzy_match(act, expected_set)
+            if m:
+                matched.add(m)
+                mapping[act] = m
+    else:
+        for act in actual_norm:
+            if act in expected_set:
+                matched.add(act)
+                mapping[act] = act
+    missing = list(expected_set - matched)
+    extra = [act for act in actual_norm if act not in mapping]
+    precision = (len(matched) / len(actual_norm)) if actual_norm else 0.0
+    recall = (len(matched) / len(expected_set)) if expected_set else 1.0  # If no expected → perfect recall semantics
+    if precision == 0 and recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "matched_items": sorted(list(matched)),
+        "missing_expected": sorted(missing),
+        "extra_actual": sorted(extra)
+    }
 
 
 def validate_dx_tx(dx: str, tx_list: List[str]) -> Dict[str, str]:
@@ -175,7 +223,7 @@ def validate_dx_tx(dx: str, tx_list: List[str]) -> Dict[str, str]:
     
     Returns:
         {
-            "status": "✅ Sesuai" | "⚠️ Parsial" | "❌ Tidak Sesuai",
+            "status": "✅ Sesuai" | "⚠️ Perlu Perhatian" | "❌ Tidak Sesuai",
             "catatan": "Penjelasan klinis"
         }
     """
@@ -206,12 +254,21 @@ def validate_dx_tx(dx: str, tx_list: List[str]) -> Dict[str, str]:
             else:
                 expected_tx = dx_tx_map[base_code].get("tindakan", [])
     
-    # Jika tidak ada mapping, return status khusus
+    # Jika tidak ada mapping → Informasional, tidak dihitung skor
     if not expected_tx:
         logger.warning(f"[DX→TX] No mapping found for {dx_norm}")
+        note = generate_clinical_note(dx, tx_list, [], {"status": "ℹ️ Tidak Ada Referensi"}, 'no_mapping_dx_tx')
         return {
-            "status": "⚠️ Parsial",
-            "catatan": f"Tidak ada aturan khusus tindakan untuk diagnosis {dx}"
+            "status": "ℹ️ Tidak Ada Referensi",
+            "score": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "matched_items": [],
+            "missing_expected": [],
+            "extra_actual": tx_list,
+            "source": "ai_only",
+            "catatan": note
         }
     
     # Jika tidak ada tindakan actual
@@ -221,27 +278,30 @@ def validate_dx_tx(dx: str, tx_list: List[str]) -> Dict[str, str]:
             "catatan": f"Diagnosis {dx} memerlukan tindakan: {', '.join(expected_tx[:3])}"
         }
     
-    # Calculate match score
-    score, matched, total = calculate_match_score(expected_tx, tx_list)
-    
-    logger.info(f"[DX→TX] Match score: {score:.2f} ({matched}/{total})")
-    
-    # Determine status based on score
-    if score >= 0.8:
-        return {
-            "status": "✅ Sesuai",
-            "catatan": f"Tindakan sesuai dengan protokol diagnosis {dx}"
-        }
-    elif score >= 0.4:
-        return {
-            "status": "⚠️ Parsial",
-            "catatan": f"Sebagian tindakan sesuai ({matched}/{total}), pertimbangkan: {', '.join([t for t in expected_tx if t not in tx_list][:2])}"
-        }
+    metrics = compute_metrics(expected_tx, tx_list, fuzzy=False)
+    f1 = metrics["f1"]
+    # Status threshold for Dx→Tx
+    if f1 >= 0.80:
+        status = "✅ Sesuai"
+    elif f1 >= 0.60:
+        status = "🟡 Cukup Sesuai"
+    elif f1 >= 0.40:
+        status = "⚠️ Perlu Perhatian"
     else:
-        return {
-            "status": "❌ Tidak Sesuai",
-            "catatan": f"Tindakan tidak sesuai protokol. Direkomendasikan: {', '.join(expected_tx[:3])}"
-        }
+        status = "❌ Tidak Sesuai"
+    base_note = generate_clinical_note(dx, tx_list, [], {"status": status, "metrics": metrics}, 'dx_tx')
+    return {
+        "status": status,
+        "score": f1,
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": f1,
+        "matched_items": metrics["matched_items"],
+        "missing_expected": metrics["missing_expected"],
+        "extra_actual": metrics["extra_actual"],
+        "source": "rule",
+        "catatan": base_note
+    }
 
 
 def validate_dx_drug(dx: str, drug_list: List[str]) -> Dict[str, str]:
@@ -254,7 +314,7 @@ def validate_dx_drug(dx: str, drug_list: List[str]) -> Dict[str, str]:
     
     Returns:
         {
-            "status": "✅ Sesuai" | "⚠️ Parsial" | "❌ Tidak Sesuai",
+            "status": "✅ Sesuai" | "⚠️ Perlu Perhatian" | "❌ Tidak Sesuai",
             "catatan": "Penjelasan klinis"
         }
     """
@@ -285,12 +345,20 @@ def validate_dx_drug(dx: str, drug_list: List[str]) -> Dict[str, str]:
             else:
                 expected_drugs = dx_drug_map[base_code].get("obat", [])
     
-    # Jika tidak ada mapping
     if not expected_drugs:
         logger.warning(f"[DX→DRUG] No mapping found for {dx_norm}")
+        note = generate_clinical_note(dx, [], drug_list, {"status": "ℹ️ Tidak Ada Referensi"}, 'no_mapping_dx_drug')
         return {
-            "status": "⚠️ Parsial",
-            "catatan": f"Tidak ada aturan khusus obat untuk diagnosis {dx}"
+            "status": "ℹ️ Tidak Ada Referensi",
+            "score": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "matched_items": [],
+            "missing_expected": [],
+            "extra_actual": [normalize_drug_name(d) for d in drug_list],
+            "source": "ai_only",
+            "catatan": note
         }
     
     # Jika tidak ada obat actual
@@ -300,32 +368,31 @@ def validate_dx_drug(dx: str, drug_list: List[str]) -> Dict[str, str]:
             "catatan": f"Diagnosis {dx} memerlukan terapi: {', '.join(expected_drugs[:3])}"
         }
     
-    # Normalize drug names untuk matching
     expected_norm = [normalize_drug_name(d) for d in expected_drugs]
     actual_norm = [normalize_drug_name(d) for d in drug_list]
-    
-    # Calculate match score
-    score, matched, total = calculate_match_score(expected_norm, actual_norm)
-    
-    logger.info(f"[DX→DRUG] Match score: {score:.2f} ({matched}/{total})")
-    
-    # Determine status
-    if score >= 0.7:
-        return {
-            "status": "✅ Sesuai",
-            "catatan": f"Terapi obat sesuai dengan protokol diagnosis {dx}"
-        }
-    elif score >= 0.3:
-        missing_drugs = [d for d in expected_drugs if normalize_drug_name(d) not in actual_norm][:2]
-        return {
-            "status": "⚠️ Parsial",
-            "catatan": f"Sebagian terapi sesuai ({matched}/{total}), pertimbangkan: {', '.join(missing_drugs)}"
-        }
+    metrics = compute_metrics(expected_norm, actual_norm, fuzzy=True)
+    f1 = metrics["f1"]
+    if f1 >= 0.80:
+        status = "✅ Sesuai"
+    elif f1 >= 0.60:
+        status = "🟡 Cukup Sesuai"
+    elif f1 >= 0.40:
+        status = "⚠️ Perlu Perhatian"
     else:
-        return {
-            "status": "❌ Tidak Sesuai",
-            "catatan": f"Terapi tidak sesuai protokol. Direkomendasikan: {', '.join(expected_drugs[:3])}"
-        }
+        status = "❌ Tidak Sesuai"
+    note = generate_clinical_note(dx, [], drug_list, {"status": status, "metrics": metrics}, 'dx_drug')
+    return {
+        "status": status,
+        "score": f1,
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": f1,
+        "matched_items": metrics["matched_items"],
+        "missing_expected": metrics["missing_expected"],
+        "extra_actual": metrics["extra_actual"],
+        "source": "rule",
+        "catatan": note
+    }
 
 
 def validate_tx_drug(tx_list: List[str], drug_list: List[str]) -> Dict[str, str]:
@@ -338,7 +405,7 @@ def validate_tx_drug(tx_list: List[str], drug_list: List[str]) -> Dict[str, str]
     
     Returns:
         {
-            "status": "✅ Sesuai" | "⚠️ Parsial" | "❌ Tidak Sesuai",
+            "status": "✅ Sesuai" | "⚠️ Perlu Perhatian" | "❌ Tidak Sesuai",
             "catatan": "Penjelasan klinis"
         }
     """
@@ -363,46 +430,56 @@ def validate_tx_drug(tx_list: List[str], drug_list: List[str]) -> Dict[str, str]
     # Remove duplicates
     expected_drugs = list(set(expected_drugs))
     
-    # Jika tidak ada mapping
     if not expected_drugs:
         logger.warning(f"[TX→DRUG] No mapping found for procedures: {tx_list}")
+        note = generate_clinical_note("", tx_list, drug_list, {"status": "ℹ️ Tidak Ada Referensi"}, 'no_mapping_tx_drug')
         return {
-            "status": "⚠️ Parsial",
-            "catatan": "Tidak ada aturan khusus obat untuk tindakan ini"
+            "status": "ℹ️ Tidak Ada Referensi",
+            "score": None,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "matched_items": [],
+            "missing_expected": [],
+            "extra_actual": [normalize_drug_name(d) for d in drug_list],
+            "source": "ai_only",
+            "catatan": note
         }
     
     # Jika tidak ada obat actual
     if not drug_list:
-        return {
-            "status": "⚠️ Parsial",
+        result = {
+            "status": "⚠️ Perlu Perhatian",
             "catatan": f"Tindakan dapat memerlukan obat pendukung: {', '.join(expected_drugs[:3])}"
         }
+        result["catatan"] = generate_clinical_note("", tx_list, drug_list, result, 'tx_drug')
+        return result
     
-    # Normalize
     expected_norm = [normalize_drug_name(d) for d in expected_drugs]
     actual_norm = [normalize_drug_name(d) for d in drug_list]
-    
-    # Calculate match score
-    score, matched, total = calculate_match_score(expected_norm, actual_norm)
-    
-    logger.info(f"[TX→DRUG] Match score: {score:.2f} ({matched}/{total})")
-    
-    # Determine status (lebih lenient karena tx-drug bukan one-to-one)
-    if score >= 0.5 or matched > 0:
-        return {
-            "status": "✅ Sesuai",
-            "catatan": f"Obat pendukung sesuai dengan tindakan yang dilakukan"
-        }
-    elif score >= 0.2:
-        return {
-            "status": "⚠️ Parsial",
-            "catatan": f"Sebagian obat sesuai tindakan ({matched}/{total})"
-        }
+    metrics = compute_metrics(expected_norm, actual_norm, fuzzy=True)
+    f1 = metrics["f1"]
+    if f1 >= 0.60:
+        status = "✅ Sesuai"
+    elif f1 >= 0.40:
+        status = "🟡 Cukup Sesuai"
+    elif f1 >= 0.25:
+        status = "⚠️ Perlu Perhatian"
     else:
-        return {
-            "status": "❌ Tidak Sesuai",
-            "catatan": f"Obat tidak terkait dengan tindakan. Pertimbangkan: {', '.join(expected_drugs[:2])}"
-        }
+        status = "❌ Tidak Sesuai"
+    note = generate_clinical_note("", tx_list, drug_list, {"status": status, "metrics": metrics}, 'tx_drug')
+    return {
+        "status": status,
+        "score": f1,
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": f1,
+        "matched_items": metrics["matched_items"],
+        "missing_expected": metrics["missing_expected"],
+        "extra_actual": metrics["extra_actual"],
+        "source": "rule",
+        "catatan": note
+    }
 
 
 def analyze_clinical_consistency(
@@ -430,46 +507,32 @@ def analyze_clinical_consistency(
     """
     logger.info(f"[CONSISTENCY] Analyzing: DX={dx}, TX={tx_list}, DRUG={drug_list}")
     
-    # Validate each dimension
     dx_tx_result = validate_dx_tx(dx, tx_list)
     dx_drug_result = validate_dx_drug(dx, drug_list)
     tx_drug_result = validate_tx_drug(tx_list, drug_list)
-    
-    # Calculate overall score
-    status_scores = {
-        "✅ Sesuai": 1.0,
-        "⚠️ Parsial": 0.5,
-        "❌ Tidak Sesuai": 0.0
-    }
-    
-    dx_tx_score = status_scores.get(dx_tx_result["status"], 0.0)
-    dx_drug_score = status_scores.get(dx_drug_result["status"], 0.0)
-    tx_drug_score = status_scores.get(tx_drug_result["status"], 0.0)
-    
-    total_score = dx_tx_score + dx_drug_score + tx_drug_score
-    
-    logger.info(f"[CONSISTENCY] Scores: DX→TX={dx_tx_score}, DX→DRUG={dx_drug_score}, TX→DRUG={tx_drug_score}, Total={total_score}")
-    
-    # Determine overall consistency level
-    if total_score >= 2.5:
-        tingkat = "Tinggi"
-    elif total_score >= 1.5:
-        tingkat = "Sedang"
+    numeric_scores = [r["score"] for r in [dx_tx_result, dx_drug_result, tx_drug_result] if isinstance(r.get("score"), (int, float))]
+    if numeric_scores:
+        aggregate = round(sum(numeric_scores) / len(numeric_scores), 4)
+        if aggregate >= 0.75:
+            tingkat = "Tinggi"
+        elif aggregate >= 0.50:
+            tingkat = "Sedang"
+        else:
+            tingkat = "Rendah"
     else:
-        tingkat = "Rendah"
-    
+        aggregate = None
+        tingkat = "Data Terbatas"
     result = {
         "konsistensi": {
             "dx_tx": dx_tx_result,
             "dx_drug": dx_drug_result,
             "tx_drug": tx_drug_result,
             "tingkat_konsistensi": tingkat,
-            "_score": total_score  # For debugging/monitoring
+            "_score": aggregate,
+            "_dimensi_dihitung": len(numeric_scores)
         }
     }
-    
-    logger.info(f"[CONSISTENCY] Result: {tingkat} (score={total_score:.2f})")
-    
+    logger.info(f"[CONSISTENCY] Aggregate={aggregate} Level={tingkat}")
     return result
 
 
@@ -480,3 +543,94 @@ def clear_cache():
     _diagnosis_obat_map = None
     _tindakan_obat_map = None
     logger.info("✓ Mapping cache cleared")
+
+
+def generate_clinical_note(dx: str, tx_list: List[str], drug_list: List[str], validation_result: Dict[str, Any], validation_type: str) -> str:
+    """
+    Generate clinical note using OpenAI based on diagnosis, procedures, drugs, and validation results.
+    
+    Args:
+        dx: Diagnosis code
+        tx_list: List of procedure codes
+        drug_list: List of drug names
+        validation_result: Result from validation (status, score, etc.)
+        validation_type: Type of validation ('dx_tx', 'dx_drug', 'tx_drug')
+    
+    Returns:
+        Generated clinical note
+    """
+    try:
+        # Get OpenAI API key
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            logger.warning("OpenAI API key not found, using fallback note")
+            fallback_note = validation_result.get('catatan', 'Catatan tidak tersedia')
+            return f"[AI] {fallback_note}"
+        
+        # Create OpenAI client (for openai>=1.0)
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        # Prepare prompt based on validation type
+        if validation_type == 'dx_tx':
+            prompt = f"""
+            Berdasarkan diagnosis ICD-10: {dx}
+            Tindakan ICD-9 yang dilakukan: {', '.join(tx_list) if tx_list else 'Tidak ada'}
+            Hasil validasi: {validation_result['status']}
+            
+            Berikan catatan klinis yang solutif dan inovatif tentang konsistensi antara diagnosis dan tindakan medis.
+            Catatan harus membantu dokter dalam pengambilan keputusan klinis, saran perbaikan jika diperlukan, dan pertimbangan risiko.
+            """
+        elif validation_type == 'dx_drug':
+            prompt = f"""
+            Berdasarkan diagnosis ICD-10: {dx}
+            Obat yang diberikan: {', '.join(drug_list) if drug_list else 'Tidak ada'}
+            Hasil validasi: {validation_result['status']}
+            
+            Berikan catatan klinis yang solutif dan inovatif tentang konsistensi antara diagnosis dan terapi obat.
+            Catatan harus membantu dokter dalam pengambilan keputusan klinis, saran perbaikan jika diperlukan, dan pertimbangan risiko.
+            """
+        elif validation_type == 'tx_drug':
+            prompt = f"""
+            Berdasarkan tindakan ICD-9: {', '.join(tx_list) if tx_list else 'Tidak ada'}
+            Obat yang diberikan: {', '.join(drug_list) if drug_list else 'Tidak ada'}
+            Hasil validasi: {validation_result['status']}
+            
+            Berikan catatan klinis yang solutif dan inovatif tentang konsistensi antara tindakan medis dan terapi obat.
+            Catatan harus membantu dokter dalam pengambilan keputusan klinis, saran perbaikan jika diperlukan, dan pertimbangan risiko.
+            """
+        elif validation_type.startswith('no_mapping'):
+            prompt = f"""
+            Tidak tersedia rule mapping khusus.
+            Data klinis:
+            - Diagnosis: {dx or 'Tidak ada'}
+            - Tindakan: {', '.join(tx_list) if tx_list else 'Tidak ada'}
+            - Obat: {', '.join(drug_list) if drug_list else 'Tidak ada'}
+            Berikan analisis kewajaran kombinasi ini, kemungkinan gap, dan saran verifikasi klinis lanjutan secara ringkas dan fokus.
+            """
+        else:
+            prompt = f"Berikan catatan klinis berdasarkan data yang diberikan."
+        
+        # Call OpenAI API (new client-based format for openai>=1.0)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Anda adalah asisten medis AI yang memberikan catatan klinis yang akurat, solutif, dan inovatif dalam bahasa Indonesia."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.7
+        )
+        
+        note = response.choices[0].message.content.strip()
+        # Only prefix [AI] for rule-guided validations, not for no_mapping cases
+        if validation_type.startswith('no_mapping'):
+            final_note = note  # plain
+        else:
+            final_note = f"[AI] {note}"
+        logger.info(f"Generated note for {validation_type}: {final_note[:100]}...")
+        return final_note
+    
+    except Exception as e:
+        logger.error(f"Error generating clinical note: {e}")
+        return validation_result.get('catatan', 'Catatan tidak dapat dihasilkan')

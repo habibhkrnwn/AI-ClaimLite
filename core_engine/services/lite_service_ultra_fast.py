@@ -272,24 +272,7 @@ async def _parallel_ai_analysis(
         try:
             pnpk_service = PNPKSummaryService(db_pool)
             
-            # Try with user-provided ICD-10 code first (more accurate)
-            user_icd10_code = payload.get("icd10_code")
-            if user_icd10_code:
-                # Lookup ICD-10 name from code
-                try:
-                    from models import ICD10Master
-                    from database_connection import get_db_session
-                    db = get_db_session()
-                    icd10_record = db.query(ICD10Master).filter(ICD10Master.code == user_icd10_code).first()
-                    db.close()
-                    
-                    if icd10_record and icd10_record.name:
-                        logger.info(f"[PNPK] Using ICD-10 name from code {user_icd10_code}: {icd10_record.name}")
-                        return await pnpk_service.get_pnpk_summary(icd10_record.name, auto_match=True)
-                except Exception as lookup_error:
-                    logger.warning(f"[PNPK] ICD-10 lookup failed: {lookup_error}")
-            
-            # Fallback: Use parsed diagnosis name
+            # Use parsed diagnosis name
             logger.info(f"[PNPK] Using parsed diagnosis name: {diagnosis_name}")
             return await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
         except Exception as e:
@@ -674,8 +657,9 @@ async def analyze_lite_single_ultra_fast(
         emit_progress("Menyusun hasil akhir...", 90)
         
         # 🔍 EVALUATE CLINICAL CONSISTENCY
-        # Extract ICD-9 codes from tindakan
-        icd9_codes = [t.get("icd9", "") for t in tindakan_formatted if t.get("icd9") and t.get("icd9") != "-"]
+        # Extract ICD-9 codes from tindakan (fix: use icd9_code not icd9)
+        icd9_codes = [t.get("icd9_code", "") for t in tindakan_formatted if t.get("icd9_code") and t.get("icd9_code") != "-"]
+        logger.info(f"[CONSISTENCY] Extracted ICD-9 codes for validation: {icd9_codes}")
         
         # Analyze consistency
         consistency_result = analyze_clinical_consistency(
@@ -712,6 +696,12 @@ async def analyze_lite_single_ultra_fast(
             # 🔹 Backward compatible (Indonesian keys)
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
+                "diagnosis_primer": parsed.get("diagnosis_primer", {
+                    "name": diagnosis_name,
+                    "icd10": icd10_code
+                }),
+                "diagnosis_sekunder": parsed.get("diagnosis_sekunder", []),
+                "diagnosis_icd10": parsed.get("diagnosis_primer", {}).get("icd10"),  # Backward compatibility
                 "tindakan": tindakan_formatted,
                 "obat": _format_obat_lite(obat_list, fornas_matched),
                 "confidence": f"{int(parsed['confidence'] * 100)}%"

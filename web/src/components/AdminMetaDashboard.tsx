@@ -653,13 +653,23 @@ export default function AdminMetaDashboard({ isDark }: AdminMetaDashboardProps) 
 
                           {/* Tipe RS */}
                           <td className="px-4 py-4 text-center">
-                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                              isDark ? 'bg-cyan-900/30 text-cyan-300 border border-cyan-500/50' : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
-                            }`}>
-                              {user.tipe_rs}
+                            <span
+                              className={`
+                                inline-flex items-center px-3 py-1 text-xs font-semibold rounded-lg
+                                border backdrop-blur-sm transition
+                                ${
+                                  user.tipe_rs === "RSUD"
+                                    ? "text-cyan-300 border-cyan-400/40 bg-cyan-400/10 shadow-[0_0_6px_rgba(34,211,238,0.35)]"
+                                    : user.tipe_rs?.startsWith("RS")
+                                    ? "text-emerald-300 border-emerald-400/40 bg-emerald-400/10 shadow-[0_0_6px_rgba(16,185,129,0.35)]"
+                                    : "text-blue-300 border-blue-400/40 bg-blue-400/10 shadow-[0_0_6px_rgba(96,165,250,0.35)]"
+                                }
+                              `}
+                            >
+                              {user.tipe_rs || "-"}
                             </span>
                           </td>
-                          
+       
                           {/* Status */}
                           <td className="px-4 py-4 text-center">
                             <span

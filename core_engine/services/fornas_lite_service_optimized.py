@@ -76,7 +76,10 @@ class FornasLiteValidatorOptimized:
         
         logger.info(f"[FORNAS_OPTIMIZED] ✓ Completed smart validation")
         
-        return result
+        return {
+            "fornas_validation": result.get("fornas_validation", []),
+            "fornas_summary": result.get("fornas_summary", {})
+        }
 
 
 # Public interface

@@ -126,49 +126,55 @@ def generate_medical_explanation(code: str, name: str, code_type: str = "ICD-10"
     Returns:
         Penjelasan singkat dalam bahasa Indonesia
     """
-    # Skip explanation generation to avoid errors
-    return ""
-    
-    # DISABLED: Uncomment below to enable AI explanation
-    # if not OPENAI_AVAILABLE or not openai_client:
-    #     return ""
-    # 
-    # try:
-    #     prompt = f"""Buatkan penjelasan singkat dalam bahasa Indonesia (maksimal 15 kata) untuk kode medis berikut:
-    # 
-    # Kode: {code}
-    # Nama: {name}
-    # Tipe: {code_type}
-    # 
-    # Penjelasan harus:
-    # - Singkat dan jelas (maksimal 15 kata)
-    # - Menjelaskan apa itu penyakit/prosedur tersebut
-    # - Menyebutkan penyebab, gejala, atau cara prosedur dilakukan
-    # - Menggunakan bahasa awam yang mudah dipahami
-    # - Tanpa prefix seperti "Penjelasan:" atau "Keterangan:"
-    # 
-    # Contoh:
-    # - Chikungunya virus disease → Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam dan nyeri sendi
-    # - Appendectomy → Operasi pengangkatan usus buntu yang meradang atau terinfeksi
-    # 
-    # Penjelasan:"""
-    #     
-    #     response = openai_client.chat.completions.create(
-    #         model="gpt-4o-mini",
-    #         messages=[
-    #             {"role": "system", "content": "Anda adalah ahli medis yang menjelaskan istilah medis dalam bahasa Indonesia yang mudah dipahami."},
-    #             {"role": "user", "content": prompt}
-    #         ],
-    #         max_tokens=100,
-    #         temperature=0.3
-    #     )
-    #     
-    #     explanation = response.choices[0].message.content.strip()
-    #     return explanation
-    # 
-    # except Exception as e:
-    #     print(f"[AI_EXPLANATION] Error generating explanation for {code}: {e}")
-    #     return ""
+    # Validasi input minimal
+    if not code or not name:
+        return ""
+
+    # Jika OpenAI tidak tersedia, langsung fallback
+    if not OPENAI_AVAILABLE or not openai_client:
+        return ""
+
+    try:
+        prompt = f"""Buatkan penjelasan singkat dalam bahasa Indonesia (maksimal 15 kata) untuk kode medis berikut:
+
+Kode: {code}
+Nama: {name}
+Tipe: {code_type}
+
+Penjelasan harus:
+- Singkat dan jelas (maksimal 15 kata)
+- Menjelaskan apa itu penyakit/prosedur tersebut
+- Menyebutkan penyebab, gejala, atau cara prosedur dilakukan
+- Menggunakan bahasa awam yang mudah dipahami
+- Tanpa prefix seperti "Penjelasan:" atau "Keterangan:"
+
+Contoh:
+- Chikungunya virus disease → Penyakit virus menular dari gigitan nyamuk Aedes, menyebabkan demam dan nyeri sendi
+- Appendectomy → Operasi pengangkatan usus buntu yang meradang atau terinfeksi
+
+Penjelasan:"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Anda adalah ahli medis yang menjelaskan istilah medis dalam bahasa Indonesia yang mudah dipahami.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=100,
+            temperature=0.3,
+        )
+
+        explanation = response.choices[0].message.content.strip()
+        # Bersihkan karakter pembuka/penutup yang tidak perlu
+        explanation = explanation.strip().strip('"').strip("'")
+        return explanation
+
+    except Exception as e:
+        print(f"[AI_EXPLANATION] Error generating explanation for {code}: {e}")
+        return ""
 
 
 # Cache untuk explanation agar tidak perlu generate ulang
@@ -474,23 +480,23 @@ def endpoint_validate_form(request_data: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    POST /api/lite/parse
+    POST /api/lite/parse-text
     
-    Parse resume medis free text menjadi struktur terpisah.
-    Untuk preview sebelum analisis.
+    Parse resume medis free text menjadi struktur terpisah menggunakan AI.
+    Untuk ekstraksi diagnosis, tindakan, dan obat dari paragraf resume medis.
     
     Request:
     {
-        "input_text": "Pneumonia berat, diberikan Ceftriaxone..."
+        "input_text": "Pasien didiagnosa pneumonia berat, diberikan nebulisasi dan ceftriaxone injeksi..."
     }
     
     Response:
     {
         "status": "success",
-        "parsed": {
+        "result": {
             "diagnosis": "Pneumonia berat",
-            "tindakan": ["Nebulisasi"],
-            "obat": ["Ceftriaxone injeksi"]
+            "tindakan": "Nebulisasi",
+            "obat": "Ceftriaxone injeksi"
         }
     }
     """
@@ -504,15 +510,20 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 "message": "Input text tidak boleh kosong"
             }
         
-        # Parse text
+        # Parse text using AI
         parsed = parse_free_text(input_text)
+        
+        # Extract structured data
+        diagnosis = parsed.get("diagnosis", "")
+        tindakan = parsed.get("tindakan", "")
+        obat = parsed.get("obat", "")
         
         return {
             "status": "success",
-            "parsed": {
-                "diagnosis": parsed["diagnosis"],
-                "tindakan": parsed["tindakan"],
-                "obat": parsed["obat"]
+            "result": {
+                "diagnosis": diagnosis,
+                "tindakan": tindakan,
+                "obat": obat
             },
             "timestamp": datetime.now().isoformat()
         }
@@ -520,7 +531,7 @@ def endpoint_parse_text(request_data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {
             "status": "error",
-            "message": str(e)
+            "message": f"Parsing error: {str(e)}"
         }
 
 
@@ -548,10 +559,11 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
         // Mode TEXT (free text input)
         "input_text": "Pneumonia berat, diberikan Ceftriaxone...",
         
-        // Mode FORM (3 field terpisah)
+        // Mode FORM (4 field terpisah)
         "diagnosis": "Pneumonia berat (J18.9)",
         "tindakan": "Nebulisasi (93.96), Rontgen Thorax",
         "obat": "Ceftriaxone injeksi 1g, Paracetamol 500mg",
+        "service_type": "rawat-inap",  // NEW: rawat-inap | rawat-jalan | igd | one-day-care
         
         // Optional context
         "rs_id": "RS001",
@@ -589,10 +601,11 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
                     "message": "input_text required untuk mode text"
                 }
         elif mode == "form":
-            # Validasi 3 field form
+            # Validasi 4 field form
             diagnosis = request_data.get("diagnosis", "")
             tindakan = request_data.get("tindakan", "")
             obat = request_data.get("obat", "")
+            service_type = request_data.get("service_type", "")
             
             errors = []
             if not diagnosis:
@@ -601,6 +614,8 @@ def endpoint_analyze_single(request_data: Dict[str, Any], db_pool=None) -> Dict[
                 errors.append("tindakan required untuk mode form")
             if not obat:
                 errors.append("obat required untuk mode form")
+            if not service_type:
+                errors.append("service_type required untuk mode form")
             
             if errors:
                 return {
@@ -1467,7 +1482,7 @@ def endpoint_fornas_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"[FORNAS_LOOKUP] Error: {e}")
+        print(f"[FORNAS_LOOKUP] Error: {e}")
         return {
             "status": "error",
             "message": str(e)
@@ -1528,7 +1543,7 @@ def endpoint_fornas_details(request_data: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"[FORNAS_DETAILS] Error: {e}")
+        print(f"[FORNAS_DETAILS] Error: {e}")
         return {
             "status": "error",
             "message": str(e)
@@ -2004,6 +2019,176 @@ Respond with ONLY the medical term, nothing else."""
         }
 
 
+# ============================================================
+# 🔹 ENDPOINT: Translate Medication with AI Normalization
+# ============================================================
+def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/translate-medication
+    
+    Translate medication name to Indonesian using FORNAS AI normalization.
+    Returns suggestions from FORNAS database.
+    
+    Request:
+    {
+        "term": "ceftriaxone"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "result": {
+            "original_term": "ceftriaxone",
+            "normalized_name": "Seftriakson",
+            "suggestions": [
+                {
+                    "kode_fornas": "A001",
+                    "obat_name": "Seftriakson 1 g Injeksi",
+                    "kelas_terapi": "Antibiotik",
+                    "confidence": 100
+                },
+                {
+                    "kode_fornas": "A002",
+                    "obat_name": "Seftriakson 500 mg Injeksi",
+                    "kelas_terapi": "Antibiotik",
+                    "confidence": 95
+                }
+            ],
+            "confidence": 100,
+            "found_in_db": true,
+            "source": "ai_fornas"
+        }
+    }
+    """
+    
+    try:
+        from services.fornas_smart_service import (
+            FornasAINormalizer, 
+            db_search_by_keywords,
+            db_exact_match
+        )
+        
+        term = request_data.get("term", "").strip()
+        
+        if not term:
+            return {
+                "status": "error",
+                "message": "Medication term is required",
+                "result": None
+            }
+        
+        print(f"[TRANSLATE_MEDICATION] Processing: {term}")
+        
+        # Step 1: Search by keywords to get context
+        similar_drugs = db_search_by_keywords(term, limit=50)
+        db_context = [drug.obat_name for drug in similar_drugs]
+        
+        # Step 2: Use AI normalization to get generic name
+        normalizer = FornasAINormalizer()
+        ai_result = normalizer.normalize_to_indonesian(term, db_context=db_context)
+        
+        print(f"[TRANSLATE_MEDICATION] AI result: {ai_result}")
+        
+        # Step 3: Extract generic name from normalized result
+        normalized_name = ai_result.get("normalized_name", term)
+        
+        # Extract generic name (remove dosage/form info)
+        # Example: "Fentanil 50 mcg/ml Injeksi" -> "Fentanil"
+        import re
+        generic_name = re.split(r'\s+\d+', normalized_name)[0].strip()
+        
+        print(f"[TRANSLATE_MEDICATION] Generic name extracted: {generic_name}")
+        
+        # Step 4: Search all drugs with this generic name (like ICD hierarchy)
+        from models import FornasDrug
+        from database_connection import SessionLocal
+        
+        db = SessionLocal()
+        
+        try:
+            # Search for all dosage forms of this generic drug
+            results = db.query(FornasDrug).filter(
+                FornasDrug.obat_name.ilike(f"{generic_name}%")
+            ).order_by(FornasDrug.obat_name).limit(30).all()
+            
+            print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms")
+            
+            # Step 5: Group by generic name (like ICD categories)
+            categories = {}
+            
+            for drug in results:
+                # Extract generic name from full name
+                generic = re.split(r'\s+\d+', drug.obat_name)[0].strip()
+                
+                # Use sediaan_kekuatan from database (JSON or text)
+                # If it's JSON, extract the value; if text, use directly
+                sediaan_kekuatan = drug.sediaan_kekuatan
+                if isinstance(sediaan_kekuatan, (dict, list)):
+                    # If JSON, convert to string representation
+                    import json
+                    sediaan_kekuatan = json.dumps(sediaan_kekuatan, ensure_ascii=False)
+                elif not sediaan_kekuatan:
+                    # Fallback: extract from obat_name if sediaan_kekuatan is NULL
+                    sediaan_match = re.search(r'(\d+.*)', drug.obat_name)
+                    sediaan_kekuatan = sediaan_match.group(1) if sediaan_match else drug.obat_name
+                
+                # Generate unique ID: use kode_fornas if exists, else create from obat_name + sediaan
+                unique_id = drug.kode_fornas if drug.kode_fornas else f"{drug.obat_name}_{sediaan_kekuatan}".replace(" ", "_")
+                
+                # DEBUG: Print unique_id untuk setiap drug
+                print(f"[TRANSLATE_MEDICATION] Drug: {drug.obat_name} | UniqueID: {unique_id} | Sediaan: {sediaan_kekuatan}")
+                
+                if generic not in categories:
+                    categories[generic] = {
+                        "generic_name": generic,
+                        "kelas_terapi": drug.kelas_terapi or "",
+                        "subkelas_terapi": drug.subkelas_terapi or "",
+                        "total_dosage_forms": 0,
+                        "confidence": 100,
+                        "details": []
+                    }
+                
+                categories[generic]["details"].append({
+                    "kode_fornas": unique_id,  # Use unique_id instead
+                    "obat_name": drug.obat_name,
+                    "sediaan_kekuatan": str(sediaan_kekuatan),
+                    "restriksi_penggunaan": drug.restriksi_penggunaan or ""
+                })
+                categories[generic]["total_dosage_forms"] += 1
+            
+            # Convert to list and sort by relevance
+            categories_list = list(categories.values())
+            
+            # Sort: exact match first, then by number of dosage forms
+            def category_sort_key(cat):
+                exact_match = cat["generic_name"].lower() == generic_name.lower()
+                return (not exact_match, -cat["total_dosage_forms"])
+            
+            categories_list.sort(key=category_sort_key)
+            
+            return {
+                "status": "success",
+                "result": {
+                    "original_term": term,
+                    "normalized_generic": generic_name,
+                    "categories": categories_list,
+                    "confidence": ai_result.get("confidence", 100),
+                    "found_in_db": len(categories_list) > 0
+                }
+            }
+        finally:
+            db.close()
+    
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[TRANSLATE_MEDICATION] ❌ Error: {error_msg}")
+        
+        return {
+            "status": "error",
+            "message": f"Medication translation failed: {error_msg}",
+            "result": None
+        }
+
 
 # ============================================================
 # 🔹 ENDPOINT: ICD-9 Hierarchy (for Tindakan)
@@ -2133,6 +2318,8 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
             if code != head_code:
                 detail_common_term = ICD10_COMMON_TERMS.get(code) or ICD10_COMMON_TERMS.get(head_code)
                 explanation = ICD10_EXPLANATIONS.get(code, "")
+                if not explanation:
+                    explanation = get_cached_explanation(code, name, "ICD-10")
                 
                 detail_obj = {
                     "code": code,
@@ -2305,6 +2492,8 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
                 # Get common term and explanation from mappings
                 detail_common_term = ICD9_COMMON_TERMS.get(code) or ICD9_COMMON_TERMS.get(head_code)
                 explanation = ICD9_EXPLANATIONS.get(code, "")
+                if not explanation:
+                    explanation = get_cached_explanation(code, name, "ICD-9")
                 
                 detail_obj = {
                     "code": code,

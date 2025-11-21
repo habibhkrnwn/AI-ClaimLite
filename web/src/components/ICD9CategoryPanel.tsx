@@ -34,7 +34,7 @@ export default function ICD9CategoryPanel({
     return (
       <div className={`flex flex-col items-center justify-center py-12 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
         <div className={`w-8 h-8 border-3 ${isDark ? 'border-cyan-500/30 border-t-cyan-500' : 'border-blue-500/30 border-t-blue-500'} rounded-full animate-spin mb-3`} />
-        <p className="text-sm">Memuat kategori...</p>
+        <p className="text-sm animate-pulse">Memuat kategori...</p>
       </div>
     );
   }
@@ -42,31 +42,47 @@ export default function ICD9CategoryPanel({
   if (categories.length === 0) {
     return (
       <div className={`flex flex-col items-center justify-center py-12 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-        <Hash className="w-12 h-12 mb-3 opacity-30" />
-        <p className="text-sm text-center px-4">
-          Masukkan tindakan dan klik "Generate AI Insight" untuk melihat kategori ICD-9
+        <div className="relative">
+          <Hash className="w-12 h-12 mb-3 opacity-30 animate-bounce" />
+          <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center ${
+            isDark ? 'bg-orange-500/20 text-orange-400' : 'bg-orange-100 text-orange-600'
+          }`}>
+            <span className="text-xs">!</span>
+          </div>
+        </div>
+        <p className="text-sm text-center px-4 font-medium">
+          Tidak ada ICD-9 ditemukan
+        </p>
+        <p className="text-xs text-center px-4 mt-1 opacity-70">
+          Coba kata kunci yang berbeda
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col space-y-4">
-      <div className={`pb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
+    <div className="flex flex-col">
+      <div className={`flex-shrink-0 pb-3 mb-3 border-b ${isDark ? 'border-cyan-500/20' : 'border-blue-200'}`}>
         <h3 className={`text-sm font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-          Kategori ICD-9 (Tindakan)
+          ICD Utama (Tindakan)
         </h3>
         <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-          {categories.length} kategori ditemukan
+          {categories.length} kode ditemukan
         </p>
       </div>
 
-      <div className="space-y-1.5 max-h-96 overflow-y-auto">
+      {/* Scrollable category list with fixed height - Max 5 items visible */}
+      <div className={`space-y-1 pr-2 overflow-y-auto ${
+        isDark 
+          ? 'scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-slate-800/20' 
+          : 'scrollbar-thin scrollbar-thumb-blue-400/40 scrollbar-track-gray-200/40'
+      } hover:scrollbar-thumb-cyan-500/50`}
+      style={{ height: '280px', maxHeight: '280px' }}>
         {categories.map((category) => (
           <button
             key={category.headCode}
             onClick={() => onSelectCategory(category.headCode)}
-            className={`w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200 group ${
+            className={`w-full text-left rounded-md transition-all duration-200 group ${
               selectedHeadCode === category.headCode
                 ? isDark
                   ? 'bg-cyan-500/20 border border-cyan-500/50 shadow-md'
@@ -75,11 +91,12 @@ export default function ICD9CategoryPanel({
                 ? 'bg-slate-800/30 border border-slate-700/50 hover:bg-slate-800/50 hover:border-cyan-500/30'
                 : 'bg-white/50 border border-gray-200 hover:bg-white hover:border-blue-300'
             }`}
+            style={{ height: '55px' }}
           >
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="h-full px-2.5 py-2 flex items-center gap-2.5 overflow-hidden">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <span
-                  className={`text-lg font-bold ${
+                  className={`text-base font-bold ${
                     selectedHeadCode === category.headCode
                       ? isDark ? 'text-cyan-300' : 'text-blue-700'
                       : isDark ? 'text-cyan-400' : 'text-blue-600'
@@ -98,11 +115,12 @@ export default function ICD9CategoryPanel({
                 </span>
               </div>
               <p
-                className={`text-sm font-medium flex-1 min-w-0 ${
+                className={`text-sm font-medium flex-1 min-w-0 truncate ${
                   selectedHeadCode === category.headCode
                     ? isDark ? 'text-slate-200' : 'text-gray-800'
                     : isDark ? 'text-slate-300' : 'text-gray-700'
                 }`}
+                title={category.headName}
               >
                 {category.headName}
               </p>
@@ -114,22 +132,6 @@ export default function ICD9CategoryPanel({
                 }`}
               />
             </div>
-            {/* Common term (Istilah Umum) */}
-            {category.commonTerm && (
-              <div className={`mt-2 px-2 py-1 rounded ${
-                selectedHeadCode === category.headCode
-                  ? isDark ? 'bg-cyan-500/10 border-l-2 border-cyan-400' : 'bg-blue-50 border-l-2 border-blue-500'
-                  : isDark ? 'bg-slate-700/30 border-l-2 border-slate-600' : 'bg-gray-50 border-l-2 border-gray-400'
-              }`}>
-                <p className={`text-xs font-medium ${
-                  selectedHeadCode === category.headCode
-                    ? isDark ? 'text-cyan-300' : 'text-blue-700'
-                    : isDark ? 'text-slate-400' : 'text-gray-600'
-                }`}>
-                  {category.commonTerm}
-                </p>
-              </div>
-            )}
           </button>
         ))}
       </div>
