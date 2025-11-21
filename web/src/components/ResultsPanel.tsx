@@ -43,8 +43,78 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
   } backdrop-blur-md shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]`;
 
   return (
-    <div className="grid grid-cols-2 gap-4 overflow-y-auto max-h-full pr-2">
+    <div className="space-y-4 overflow-y-auto max-h-full pr-2">
 
+      {/* ==================== DIAGNOSIS PRIMER & SEKUNDER ====================== */}
+      {(result.classification?.diagnosis_primer || result.classification?.diagnosis_sekunder) && (
+        <div className={`rounded-xl p-5 ${isDark ? 'bg-gradient-to-r from-cyan-900/30 to-blue-900/30 border border-cyan-500/30' : 'bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200'} backdrop-blur-md shadow-lg`}>
+          <div className="flex items-center gap-2 mb-4">
+            <Activity className={`w-5 h-5 ${isDark ? 'text-cyan-300' : 'text-blue-700'}`} />
+            <h3 className={`text-lg font-semibold ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
+              Diagnosis Terdeteksi
+            </h3>
+          </div>
+
+          {/* DIAGNOSIS PRIMER */}
+          {result.classification.diagnosis_primer && (
+            <div className="mb-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-2 h-2 rounded-full ${isDark ? 'bg-cyan-400' : 'bg-blue-600'}`} />
+                <span className={`text-sm font-semibold ${isDark ? 'text-cyan-200' : 'text-blue-800'}`}>
+                  Diagnosis PRIMER (Utama)
+                </span>
+              </div>
+              <div className={`ml-4 p-3 rounded-lg ${isDark ? 'bg-slate-800/50 border border-cyan-500/20' : 'bg-white/70 border border-blue-200'}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`font-medium ${isDark ? 'text-slate-100' : 'text-gray-900'}`}>
+                    {result.classification.diagnosis_primer.name}
+                  </span>
+                  {result.classification.diagnosis_primer.icd10 && (
+                    <span className={`text-xs font-mono px-2 py-1 rounded ${isDark ? 'bg-cyan-500/20 text-cyan-300' : 'bg-blue-100 text-blue-700'}`}>
+                      ICD-10: {result.classification.diagnosis_primer.icd10}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DIAGNOSIS SEKUNDER */}
+          {result.classification.diagnosis_sekunder && result.classification.diagnosis_sekunder.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-2 h-2 rounded-full ${isDark ? 'bg-blue-400' : 'bg-blue-500'}`} />
+                <span className={`text-sm font-semibold ${isDark ? 'text-blue-200' : 'text-blue-700'}`}>
+                  Diagnosis SEKUNDER ({result.classification.diagnosis_sekunder.length})
+                </span>
+              </div>
+              <div className="ml-4 space-y-2">
+                {result.classification.diagnosis_sekunder.map((diag, idx) => (
+                  <div key={idx} className={`p-3 rounded-lg ${isDark ? 'bg-slate-800/30 border border-slate-700' : 'bg-white/50 border border-gray-200'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                          #{idx + 1}
+                        </span>
+                        <span className={`${isDark ? 'text-slate-200' : 'text-gray-800'}`}>
+                          {diag.name}
+                        </span>
+                      </div>
+                      {diag.icd10 && (
+                        <span className={`text-xs font-mono px-2 py-1 rounded ${isDark ? 'bg-blue-500/20 text-blue-300' : 'bg-blue-50 text-blue-600'}`}>
+                          {diag.icd10}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
       {/* ==================== CP NASIONAL RINGKAS ====================== */}
       <div className={cardClass}>
         <div className="flex items-center gap-2 mb-3">
@@ -365,6 +435,7 @@ export default function ResultsPanel({ result, isDark }: ResultsPanelProps) {
           );
         })()}
       </div> 
+      </div>
     </div>
   );
 }

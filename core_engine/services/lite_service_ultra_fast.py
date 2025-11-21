@@ -672,6 +672,12 @@ async def analyze_lite_single_ultra_fast(
         lite_result = {
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
+                "diagnosis_primer": parsed.get("diagnosis_primer", {
+                    "name": diagnosis_name,
+                    "icd10": icd10_code
+                }),
+                "diagnosis_sekunder": parsed.get("diagnosis_sekunder", []),
+                "diagnosis_icd10": parsed.get("diagnosis_primer", {}).get("icd10"),  # Backward compatibility
                 "tindakan": tindakan_formatted,
                 "obat": _format_obat_lite(obat_list, fornas_matched),
                 "confidence": f"{int(parsed['confidence'] * 100)}%"

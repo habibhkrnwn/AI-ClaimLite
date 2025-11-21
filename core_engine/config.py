@@ -29,6 +29,19 @@ class Config:
 
 
 # ============================================================
+# 🔑 DIRECT ACCESS (for backward compatibility)
+# ============================================================
+# Export Config attributes to module level for direct access
+OPENAI_API_KEY = Config.OPENAI_API_KEY
+DATABASE_URL = Config.DATABASE_URL
+SECRET_KEY = Config.SECRET_KEY
+APP_ENV = Config.APP_ENV
+DEBUG = Config.DEBUG
+APP_HOST = Config.APP_HOST
+APP_PORT = Config.APP_PORT
+
+
+# ============================================================
 # 🎯 FEATURE FLAGS - Enable/Disable fitur tertentu
 # ============================================================
 FEATURE_FLAGS = {

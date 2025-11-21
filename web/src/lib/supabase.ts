@@ -48,10 +48,17 @@ export interface INACBGResult {
   warnings?: string[];
 }
 
+export interface DiagnosisItem {
+  name: string;
+  icd10: string | null;
+}
+
 export interface AnalysisResult {
   classification: {
     icd10: string[];
     icd9: string[];
+    diagnosis_primer?: DiagnosisItem;  // NEW: Primary diagnosis
+    diagnosis_sekunder?: DiagnosisItem[];  // NEW: Secondary diagnoses
   };
   validation: {
     status: 'valid' | 'warning' | 'invalid';
