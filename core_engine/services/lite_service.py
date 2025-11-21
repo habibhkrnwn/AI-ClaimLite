@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 # OpenAI client
 try:
     from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -633,10 +635,37 @@ Obat: {obat_raw}"""
         logger.exception("Full analysis error traceback:")
         return error_response
     
+    # 🔹 Extract ICD codes for frontend compatibility
+    icd10_code = lite_analysis.get('icd10', {}).get('kode_icd', '-')
+    icd9_codes = [t['icd9_code'] for t in tindakan_with_icd9 if t.get('icd9_code') and t['icd9_code'] != '-']
+    
+    # 🔹 Get consistency data
+    consistency_data = analyze_clinical_consistency(
+        dx=full_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
+        tx_list=[t.get("icd9_code") for t in full_analysis.get("tindakan", []) if t.get("icd9_code")],
+        drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
+    )
+    
     # 🔹 Build 6-Panel Output (using lite_analysis)
     lite_result = {
+        # ✅ NEW: Frontend-compatible format (English keys + extracted codes)
+        "classification": {
+            "icd10": [icd10_code] if icd10_code and icd10_code != '-' else [],
+            "icd9": icd9_codes
+        },
+        
+        # ✅ NEW: Frontend-compatible consistency (English key)
+        "consistency": {
+            "dx_tx": consistency_data.get("konsistensi", {}).get("dx_tx", {}),
+            "dx_drug": consistency_data.get("konsistensi", {}).get("dx_drug", {}),
+            "tx_drug": consistency_data.get("konsistensi", {}).get("tx_drug", {}),
+            "tingkat": consistency_data.get("konsistensi", {}).get("tingkat_konsistensi", "-"),
+            "score": consistency_data.get("konsistensi", {}).get("_score", 0)
+        },
+        
+        # 🔹 Backward compatible: Keep Indonesian keys
         "klasifikasi": {
-            "diagnosis": f"{diagnosis_name} ({lite_analysis.get('icd10', {}).get('kode_icd', '-')})",
+            "diagnosis": f"{diagnosis_name} ({icd10_code})",
             "tindakan": [f"{t['name']} ({t['icd9_code']})" for t in tindakan_with_icd9],
             "obat": _format_obat_lite(obat_list, fornas_matched),
             "confidence": f"{int(parsed['confidence'] * 100)}%"
@@ -658,12 +687,8 @@ Obat: {obat_raw}"""
         
         "insight_ai": _generate_ai_insight(lite_analysis, diagnosis_name, [t['name'] for t in tindakan_with_icd9], obat_list, parser.client if hasattr(parser, 'client') else None),
         
-        # 🔹 Clinical Consistency Validation
-        **analyze_clinical_consistency(
-            dx=full_analysis.get("icd10", {}).get("kode_icd", diagnosis_name),
-            tx_list=[t.get("icd9_code") for t in full_analysis.get("tindakan", []) if t.get("icd9_code")],
-            drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
-        ),
+        # 🔹 Backward compatible: Keep Indonesian key
+        "konsistensi": consistency_data.get("konsistensi", {}),
         
         "metadata": {
             "claim_id": claim_id,
@@ -675,7 +700,9 @@ Obat: {obat_raw}"""
             "parsing_cost_usd": parsed["parsing_metadata"]["cost_usd"],
             "parsing_time_ms": parsed["parsing_metadata"]["processing_time_ms"],
             "tokens_used": parsed["parsing_metadata"]["tokens_used"],
-            "severity": lite_analysis.get("severity", "sedang")
+            "severity": lite_analysis.get("severity", "sedang"),
+            "icd10_code": icd10_code,
+            "icd9_codes": icd9_codes
         }
     }
     

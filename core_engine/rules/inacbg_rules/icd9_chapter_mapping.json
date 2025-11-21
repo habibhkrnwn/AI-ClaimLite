@@ -1,0 +1,302 @@
+{
+  "description": "ICD9 Procedure Chapter Grouping untuk Similarity Matching",
+  "version": "1.0",
+  "last_updated": "2025-11-18",
+  "chapters": {
+    "00-05": {
+      "range": "00-05",
+      "category": "CNS procedures",
+      "body_system": "Nervous",
+      "is_major": true,
+      "examples": [
+        "01 - Incision and excision of skull",
+        "02 - Craniotomy and craniectomy",
+        "03 - Operations on spinal cord",
+        "04 - Operations on cranial and peripheral nerves",
+        "05 - Operations on sympathetic nerves"
+      ]
+    },
+    "06-07": {
+      "range": "06-07",
+      "category": "Endocrine procedures",
+      "body_system": "Endocrine",
+      "is_major": false,
+      "examples": [
+        "06 - Operations on thyroid and parathyroid glands",
+        "07 - Operations on other endocrine glands"
+      ]
+    },
+    "08-16": {
+      "range": "08-16",
+      "category": "Eye procedures",
+      "body_system": "Eye",
+      "is_major": false,
+      "examples": [
+        "08 - Operations on eyelids",
+        "10 - Operations on conjunctiva",
+        "11 - Operations on cornea",
+        "12 - Operations on iris, ciliary body, and sclera",
+        "13 - Operations on lens (cataract)",
+        "14 - Operations on retina, choroid, vitreous, and posterior chamber"
+      ]
+    },
+    "18-20": {
+      "range": "18-20",
+      "category": "Ear procedures",
+      "body_system": "Ear",
+      "is_major": false,
+      "examples": [
+        "18 - Operations on external ear",
+        "19 - Reconstructive operations on middle ear",
+        "20 - Other operations on middle and inner ear"
+      ]
+    },
+    "21-29": {
+      "range": "21-29",
+      "category": "Nose, mouth & pharynx procedures",
+      "body_system": "ENT",
+      "is_major": false,
+      "examples": [
+        "21 - Operations on nose",
+        "22 - Operations on nasal sinuses",
+        "26 - Operations on teeth, gums, and alveoli",
+        "27 - Other operations on mouth and face",
+        "28 - Operations on tonsils and adenoids",
+        "29 - Operations on pharynx"
+      ]
+    },
+    "30-34": {
+      "range": "30-34",
+      "category": "Respiratory procedures",
+      "body_system": "Respiratory",
+      "is_major": true,
+      "examples": [
+        "30 - Excision of larynx",
+        "31 - Other operations on larynx and trachea",
+        "32 - Excision of lung and bronchus",
+        "33 - Other operations on lung and bronchus",
+        "34 - Operations on chest wall, pleura, mediastinum, and diaphragm"
+      ]
+    },
+    "35-39": {
+      "range": "35-39",
+      "category": "Cardiovascular procedures",
+      "body_system": "Cardiovascular",
+      "is_major": true,
+      "examples": [
+        "35 - Operations on valves and septa of heart",
+        "36 - Operations on vessels of heart (CABG, PCI)",
+        "37 - Other operations on heart and pericardium",
+        "38 - Incision, excision, and occlusion of vessels",
+        "39 - Other operations on vessels"
+      ]
+    },
+    "40-41": {
+      "range": "40-41",
+      "category": "Hemic and lymphatic procedures",
+      "body_system": "Blood",
+      "is_major": false,
+      "examples": [
+        "40 - Operations on lymphatic system",
+        "41 - Operations on bone marrow and spleen"
+      ]
+    },
+    "42-54": {
+      "range": "42-54",
+      "category": "Digestive procedures",
+      "body_system": "Digestive",
+      "is_major": true,
+      "examples": [
+        "42 - Operations on esophagus",
+        "43 - Incision and excision of stomach",
+        "44 - Other operations on stomach",
+        "45 - Incision, excision, and anastomosis of intestine",
+        "46 - Other operations on intestine",
+        "47 - Operations on appendix",
+        "48 - Operations on rectum, rectosigmoid, and perirectal tissue",
+        "49 - Operations on anus",
+        "50 - Operations on liver",
+        "51 - Operations on gallbladder and biliary tract",
+        "52 - Operations on pancreas",
+        "53 - Repair of hernia",
+        "54 - Other operations on abdominal region"
+      ]
+    },
+    "55-59": {
+      "range": "55-59",
+      "category": "Urinary procedures",
+      "body_system": "Nephro-urinary",
+      "is_major": false,
+      "examples": [
+        "55 - Operations on kidney",
+        "56 - Operations on ureter",
+        "57 - Operations on urinary bladder",
+        "58 - Operations on urethra",
+        "59 - Other operations on urinary tract"
+      ]
+    },
+    "60-64": {
+      "range": "60-64",
+      "category": "Male genital procedures",
+      "body_system": "Male reproductive",
+      "is_major": false,
+      "examples": [
+        "60 - Operations on prostate and seminal vesicles",
+        "61 - Operations on scrotum and tunica vaginalis",
+        "62 - Operations on testes",
+        "63 - Operations on spermatic cord, epididymis, and vas deferens",
+        "64 - Operations on penis"
+      ]
+    },
+    "65-71": {
+      "range": "65-71",
+      "category": "Female genital procedures",
+      "body_system": "Female reproductive",
+      "is_major": true,
+      "examples": [
+        "65 - Operations on ovary",
+        "66 - Operations on fallopian tubes",
+        "67 - Operations on cervix",
+        "68 - Other incision and excision of uterus",
+        "69 - Other operations on uterus and supporting structures",
+        "70 - Operations on vagina and cul-de-sac",
+        "71 - Operations on vulva and perineum"
+      ]
+    },
+    "72-75": {
+      "range": "72-75",
+      "category": "Obstetric procedures",
+      "body_system": "Obstetric",
+      "is_major": true,
+      "examples": [
+        "72 - Forceps, vacuum, and breech delivery",
+        "73 - Other procedures inducing or assisting delivery",
+        "74 - Cesarean section and removal of fetus",
+        "75 - Other obstetric operations"
+      ]
+    },
+    "76-84": {
+      "range": "76-84",
+      "category": "Musculoskeletal procedures",
+      "body_system": "Musculoskeletal",
+      "is_major": true,
+      "examples": [
+        "76 - Operations on facial bones and joints",
+        "77 - Incision, excision, and division of other bones",
+        "78 - Other operations on bones",
+        "79 - Reduction of fracture and dislocation",
+        "80 - Incision and excision of joint structures",
+        "81 - Repair and plastic operations on joint structures",
+        "82 - Operations on muscle, tendon, and fascia of hand",
+        "83 - Operations on muscle, tendon, fascia, and bursa",
+        "84 - Other procedures on musculoskeletal system"
+      ]
+    },
+    "85-86": {
+      "range": "85-86",
+      "category": "Skin and breast procedures",
+      "body_system": "Integumentary",
+      "is_major": false,
+      "examples": [
+        "85 - Operations on the breast",
+        "86 - Operations on skin and subcutaneous tissue"
+      ]
+    },
+    "87-99": {
+      "range": "87-99",
+      "category": "Miscellaneous diagnostic and therapeutic procedures",
+      "body_system": "General",
+      "is_major": false,
+      "examples": [
+        "87 - Diagnostic radiology",
+        "88 - Other diagnostic radiology and related techniques",
+        "89 - Interview, evaluation, consultation, and examination",
+        "90 - Microscopic examination",
+        "91 - Interview, evaluation, and consultation",
+        "92 - Nuclear medicine",
+        "93 - Physical therapy, respiratory therapy, rehabilitation",
+        "94 - Procedures related to the psyche",
+        "95 - Ophthalmologic and otologic diagnosis and treatment",
+        "96 - Nonoperative intubation and irrigation",
+        "97 - Replacement and removal of therapeutic appliances",
+        "98 - Nonoperative removal of foreign body or calculus",
+        "99 - Other nonoperative procedures (transfusion, injection, dialysis)"
+      ]
+    }
+  },
+  "similarity_rules": {
+    "description": "Rules untuk menentukan similarity antar ICD9 procedures",
+    "rules": [
+      {
+        "rule": "same_chapter",
+        "similarity_score": 0.8,
+        "description": "Prosedur dalam chapter yang sama dianggap mirip"
+      },
+      {
+        "rule": "same_body_system",
+        "similarity_score": 0.6,
+        "description": "Prosedur pada body system yang sama"
+      },
+      {
+        "rule": "same_first_two_digits",
+        "similarity_score": 0.9,
+        "description": "Prosedur dengan 2 digit pertama sama (misal: 57.0 vs 57.9)"
+      },
+      {
+        "rule": "same_major_category",
+        "similarity_score": 0.5,
+        "description": "Prosedur dengan kategori major/minor yang sama"
+      }
+    ]
+  },
+  "common_similar_groups": {
+    "description": "Group ICD9 yang sering muncul bersamaan atau sebagai alternatif",
+    "groups": [
+      {
+        "name": "Cataract surgery",
+        "codes": ["13.2", "13.3", "13.4", "13.5", "13.6"],
+        "note": "Various cataract extraction methods"
+      },
+      {
+        "name": "Hernia repair",
+        "codes": ["53.0", "53.1", "53.2", "53.3", "53.4", "53.5"],
+        "note": "Different hernia repair approaches"
+      },
+      {
+        "name": "Appendectomy",
+        "codes": ["47.0", "47.1", "47.2"],
+        "note": "Open vs laparoscopic appendectomy"
+      },
+      {
+        "name": "Cholecystectomy",
+        "codes": ["51.2", "51.3", "51.4"],
+        "note": "Gallbladder removal methods"
+      },
+      {
+        "name": "Cesarean section",
+        "codes": ["74.0", "74.1", "74.2", "74.4", "74.9"],
+        "note": "Various C-section types"
+      },
+      {
+        "name": "Blood transfusion",
+        "codes": ["99.03", "99.04", "99.05", "99.06", "99.07"],
+        "note": "Different blood product transfusions"
+      },
+      {
+        "name": "Dialysis",
+        "codes": ["39.95", "54.98"],
+        "note": "Hemodialysis vs peritoneal dialysis"
+      },
+      {
+        "name": "Joint replacement",
+        "codes": ["81.51", "81.52", "81.53", "81.54", "81.55"],
+        "note": "Hip, knee, shoulder, etc."
+      },
+      {
+        "name": "Fracture reduction",
+        "codes": ["79.0", "79.1", "79.2", "79.3", "79.4", "79.5", "79.6", "79.7", "79.8"],
+        "note": "Fracture reduction by body part"
+      }
+    ]
+  }
+}

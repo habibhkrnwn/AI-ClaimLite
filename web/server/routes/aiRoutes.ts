@@ -16,7 +16,7 @@ router.use(authenticate);
 // Analyze single claim with form or text input (endpoint 1A)
 router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { mode, diagnosis, procedure, medication, input_text } = req.body;
+    const { mode, diagnosis, procedure, medication, service_type, input_text } = req.body;
     const userId = req.user?.userId;
 
     if (!userId) {
@@ -53,11 +53,11 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
         return;
       }
     } else {
-      // Default to form mode
-      if (!diagnosis || !procedure || !medication) {
+      // Default to form mode - only diagnosis is required
+      if (!diagnosis || diagnosis.trim() === '') {
         res.status(400).json({
           success: false,
-          message: 'Diagnosis, procedure, and medication are required for form mode',
+          message: 'Diagnosis is required for form mode',
         });
         return;
       }
@@ -79,8 +79,9 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
       : {
           mode: 'form',
           diagnosis: diagnosis,
-          tindakan: procedure,
-          obat: medication,
+          tindakan: procedure || '',
+          obat: medication || '',
+          service_type: service_type || 'rawat-jalan',
           icd10_code: icd10_code || null,
           icd9_code: icd9_code || null,
           save_history: true,
@@ -202,7 +203,7 @@ router.post('/analyze', async (req: Request, res: Response): Promise<void> => {
     console.error('Error code:', error.code);
     
     if (error.code === 'ECONNABORTED') {
-      console.error('⏱️  Request timeout after', processingTime, 'ms');
+      console.error('⏱  Request timeout after', processingTime, 'ms');
       console.error('This usually means OpenAI API is slow or core_engine is processing heavy workload');
     }
     
@@ -547,9 +548,10 @@ router.post('/translate-medical-term', async (req: Request, res: Response): Prom
       return;
     }
 
-    // Call core_engine API for AI translation
+    // Call core_engine API for AI translation (NEW FORMAT)
     const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/translate-medical`, {
       term: term.trim(),
+      type: 'diagnosis',  // Specify diagnosis type
     }, {
       timeout: 30000, // 30 seconds
     });
@@ -558,9 +560,9 @@ router.post('/translate-medical-term', async (req: Request, res: Response): Prom
       res.status(200).json({
         success: true,
         data: {
-          original: term,
-          translated: response.data.result.medical_term,
-          confidence: response.data.result.confidence || 'high',
+          original: response.data.data.original,
+          translated: response.data.data.translated,
+          confidence: response.data.data.confidence || 'high',
         },
       });
     } else {
@@ -591,7 +593,7 @@ router.post('/translate-procedure-term', async (req: Request, res: Response): Pr
       return;
     }
 
-    // Call core_engine API for AI translation
+    // Call core_engine API for AI translation (NEW FORMAT)
     const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/translate-procedure`, {
       term: term.trim(),
     }, {
@@ -599,13 +601,14 @@ router.post('/translate-procedure-term', async (req: Request, res: Response): Pr
     });
 
     if (response.data.status === 'success') {
+      const translatedTerm = response.data.data.translated;
       res.status(200).json({
         success: true,
         data: {
-          original: term,
-          translated: response.data.result.medical_term,
-          synonyms: response.data.result.synonyms || [response.data.result.medical_term],
-          confidence: response.data.result.confidence || 'high',
+          original: response.data.data.original,
+          translated: translatedTerm,
+          synonyms: [translatedTerm],  // Single term for now
+          confidence: response.data.data.confidence || 'high',
         },
       });
     } else {
@@ -660,6 +663,126 @@ router.post('/icd9-hierarchy', async (req: Request, res: Response): Promise<void
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get ICD-9 hierarchy',
+    });
+  }
+});
+
+// FORNAS: Lookup drugs (Panel Kiri - Drug List)
+router.post('/fornas/lookup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { drug_input } = req.body;
+
+    if (!drug_input || typeof drug_input !== 'string' || drug_input.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Drug input is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for FORNAS lookup
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/fornas/lookup`, {
+      drug_input: drug_input.trim(),
+    }, {
+      timeout: 30000,
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: response.data.data,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Failed to lookup FORNAS drug',
+      });
+    }
+  } catch (error: any) {
+    console.error('FORNAS lookup error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to lookup FORNAS drug',
+    });
+  }
+});
+
+// FORNAS: Get drug details (Panel Kanan - Sediaan Variants)
+router.post('/fornas/details', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { drug_name } = req.body;
+
+    if (!drug_name || typeof drug_name !== 'string' || drug_name.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Drug name is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for FORNAS drug details
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/fornas/details`, {
+      drug_name: drug_name.trim(),
+    }, {
+      timeout: 30000,
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: response.data.data,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: response.data.message || 'Failed to get FORNAS drug details',
+      });
+    }
+  } catch (error: any) {
+    console.error('FORNAS details error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get FORNAS drug details',
+    });
+  }
+});
+
+// Get Dokumen Wajib by diagnosis name
+router.get('/dokumen-wajib/:diagnosisName', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { diagnosisName } = req.params;
+
+    if (!diagnosisName) {
+      res.status(400).json({
+        success: false,
+        message: 'Diagnosis name is required',
+      });
+      return;
+    }
+
+    // Call core_engine API for Dokumen Wajib
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/dokumen-wajib`, {
+      diagnosis: decodeURIComponent(diagnosisName),
+    }, {
+      timeout: 30000, // 30 seconds
+    });
+
+    if (response.data.status === 'success') {
+      res.status(200).json({
+        success: true,
+        data: response.data.data,
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: response.data.message || 'No documents found',
+      });
+    }
+  } catch (error: any) {
+    console.error('Dokumen Wajib error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get dokumen wajib',
     });
   }
 });

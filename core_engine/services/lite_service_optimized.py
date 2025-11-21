@@ -6,6 +6,7 @@ Combines multiple OpenAI calls into fewer requests for faster processing
 """
 
 import json
+import re
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -256,7 +259,17 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
         fornas_matched = match_multiple_obat(obat_list)
         logger.info(f"[OPTIMIZED] ✓ Matched {len(fornas_matched)} obat with Fornas")
         
-        # Step 4: FORNAS LITE VALIDATION with AI (3rd API call - OPTIMIZED BATCH)
+        # Step 4: FORNAS VALIDATION - Check if drugs exist in FORNAS database
+        fornas_validation_result = None
+        try:
+            from services.fornas_normalize_service import validate_drugs_in_fornas
+            
+            fornas_validation_result = validate_drugs_in_fornas(obat_list)
+            logger.info(f"[OPTIMIZED] ✓ FORNAS validation: {fornas_validation_result['sesuai_fornas']}/{fornas_validation_result['total_obat']} sesuai")
+        except Exception as fornas_error:
+            logger.warning(f"[OPTIMIZED] ⚠️ FORNAS validation failed: {fornas_error}")
+        
+        # DEPRECATED: Old fornas_lite_result (kept for backward compatibility)
         fornas_lite_result = None
         try:
             icd10_code = lite_diagnosis.get("icd10", {}).get("kode_icd", "-")
@@ -304,7 +317,44 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
             # Use AI-detected ICD-9 from lite_diagnosis
             tindakan_formatted = _format_tindakan_lite(tindakan_list, lite_diagnosis)
         
+        # Extract ICD-9 codes from tindakan_formatted for frontend
+        icd9_codes = []
+        for t_str in tindakan_formatted:
+            # Extract code from format "Name (XX.XX)"
+            match = re.search(r'\((\d{2}\.\d{2})\)', t_str)
+            if match:
+                icd9_codes.append(match.group(1))
+        
+        # Get consistency data
+        consistency_data = analyze_clinical_consistency(
+            dx=icd10_code,
+            tx_list=[t.get("icd9_code") for t in lite_diagnosis.get("tindakan", []) if t.get("icd9_code")],
+            drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
+        )
+        
+        # DEBUG: Log fornas validation result
+        if fornas_validation_result:
+            logger.info(f"[OPTIMIZED] FORNAS validation data: {fornas_validation_result}")
+        else:
+            logger.warning(f"[OPTIMIZED] ⚠️ No FORNAS validation result!")
+        
         lite_result = {
+            # ✅ Frontend-compatible format (English keys)
+            "classification": {
+                "icd10": [icd10_code] if icd10_code and icd10_code != '-' else [],
+                "icd9": icd9_codes
+            },
+            
+            # ✅ Frontend-compatible consistency (English key)
+            "consistency": {
+                "dx_tx": consistency_data.get("konsistensi", {}).get("dx_tx", {}),
+                "dx_drug": consistency_data.get("konsistensi", {}).get("dx_drug", {}),
+                "tx_drug": consistency_data.get("konsistensi", {}).get("tx_drug", {}),
+                "tingkat": consistency_data.get("konsistensi", {}).get("tingkat_konsistensi", "-"),
+                "score": consistency_data.get("konsistensi", {}).get("_score", 0)
+            },
+            
+            # 🔹 Backward compatible (Indonesian keys)
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
                 "tindakan": tindakan_formatted,
@@ -318,19 +368,20 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
                 "catatan": lite_diagnosis.get("justifikasi_klinis", "Diagnosis sesuai dengan standar medis.")
             },
             
-            "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
-            "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
+            # NEW: FORNAS validation table (as shown in UI gambar 1)
+            "fornas_validation": fornas_validation_result if fornas_validation_result else {
+                "total_obat": len(obat_list),
+                "sesuai_fornas": 0,
+                "tidak_sesuai": len(obat_list),
+                "validations": []
+            },
             
             "cp_ringkas": _summarize_cp(lite_diagnosis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
-            # 🔹 Clinical Consistency Validation
-            **analyze_clinical_consistency(
-                dx=icd10_code,
-                tx_list=[t.get("icd9_code") for t in lite_diagnosis.get("tindakan", []) if t.get("icd9_code")],
-                drug_list=[o.get("name", o) if isinstance(o, dict) else o for o in obat_list]
-            ),
+            # 🔹 Backward compatible (Indonesian key)
+            "konsistensi": consistency_data.get("konsistensi", {}),
             
             "metadata": {
                 "claim_id": claim_id,
@@ -342,6 +393,7 @@ def analyze_lite_single_optimized(payload: Dict[str, Any], db_pool=None) -> Dict
                 "ai_calls": 4,  # Reduced from 45+ AI calls!
                 "optimization": "lite_diagnosis + combined_prompts + batch_fornas",
                 "icd10_code": icd10_code,
+                "icd9_codes": icd9_codes,
                 "severity": lite_diagnosis.get("severity", "sedang")
             }
         }

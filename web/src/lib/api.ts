@@ -391,6 +391,27 @@ class ApiService {
       }),
     });
   }
+
+  // Get Dokumen Wajib by diagnosis name
+  async getDokumenWajib(diagnosisName: string): Promise<{
+    success: boolean;
+    data?: {
+      diagnosis: string;
+      total_dokumen: number;
+      dokumen_list: Array<{
+        id: number;
+        diagnosis_name: string;
+        nama_dokumen: string;
+        status: string;
+        keterangan: string;
+      }>;
+    };
+    message?: string;
+  }> {
+    return this.request(`/api/ai/dokumen-wajib/${encodeURIComponent(diagnosisName)}`, {
+      method: 'GET',
+    });
+  }
 }
 
 export const apiService = new ApiService();

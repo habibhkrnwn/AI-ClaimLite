@@ -13,6 +13,10 @@ import re
 import logging
 from typing import Dict, List, Any
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Use new smart service instead of old fornas_service
 from services.fornas_smart_service import validate_fornas

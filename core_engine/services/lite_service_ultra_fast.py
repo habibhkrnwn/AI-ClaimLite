@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 try:
     from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -252,17 +254,15 @@ async def _parallel_ai_analysis(
             obat_list
         )
     
-    # Task 2: Fornas Validation (CPU bound, run in executor)
+    # Task 2: FORNAS Validation (NEW - using fornas_normalize_service)
     async def run_fornas_validation():
+        from services.fornas_normalize_service import validate_drugs_in_fornas
+        
         loop = asyncio.get_event_loop()
-        validator = FornasLiteValidatorOptimized()
         return await loop.run_in_executor(
             None,
-            validator.validate_drugs_lite,
-            obat_list,
-            "-",  # ICD-10 code (will be updated later)
-            diagnosis_name,
-            True  # include_summary
+            validate_drugs_in_fornas,
+            obat_list
         )
     
     # Task 3: PNPK Data Fetch (I/O bound, truly async)
@@ -271,6 +271,26 @@ async def _parallel_ai_analysis(
             return None
         try:
             pnpk_service = PNPKSummaryService(db_pool)
+            
+            # Try with user-provided ICD-10 code first (more accurate)
+            user_icd10_code = payload.get("icd10_code")
+            if user_icd10_code:
+                # Lookup ICD-10 name from code
+                try:
+                    from models import ICD10Master
+                    from database_connection import get_db_session
+                    db = get_db_session()
+                    icd10_record = db.query(ICD10Master).filter(ICD10Master.code == user_icd10_code).first()
+                    db.close()
+                    
+                    if icd10_record and icd10_record.name:
+                        logger.info(f"[PNPK] Using ICD-10 name from code {user_icd10_code}: {icd10_record.name}")
+                        return await pnpk_service.get_pnpk_summary(icd10_record.name, auto_match=True)
+                except Exception as lookup_error:
+                    logger.warning(f"[PNPK] ICD-10 lookup failed: {lookup_error}")
+            
+            # Fallback: Use parsed diagnosis name
+            logger.info(f"[PNPK] Using parsed diagnosis name: {diagnosis_name}")
             return await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
         except Exception as e:
             logger.warning(f"[PARALLEL] PNPK fetch failed: {e}")
@@ -377,7 +397,12 @@ async def _parallel_ai_analysis(
         
         if isinstance(fornas_lite_result, Exception):
             logger.error(f"[PARALLEL] Fornas validation failed: {fornas_lite_result}")
-            fornas_lite_result = {"fornas_validation": [], "summary": {}}
+            fornas_lite_result = {
+                "total_obat": len(obat_list),
+                "sesuai_fornas": 0,
+                "tidak_sesuai": len(obat_list),
+                "validations": []
+            }
         
         if isinstance(pnpk_data, Exception):
             logger.warning(f"[PARALLEL] PNPK fetch failed: {pnpk_data}")
@@ -669,6 +694,22 @@ async def analyze_lite_single_ultra_fast(
         )
         
         lite_result = {
+            # ✅ Frontend-compatible format (English keys)
+            "classification": {
+                "icd10": [icd10_code] if icd10_code and icd10_code != '-' else [],
+                "icd9": icd9_codes
+            },
+            
+            # ✅ Frontend-compatible consistency (English key)
+            "consistency": {
+                "dx_tx": consistency_result.get("konsistensi", {}).get("dx_tx", {}),
+                "dx_drug": consistency_result.get("konsistensi", {}).get("dx_drug", {}),
+                "tx_drug": consistency_result.get("konsistensi", {}).get("tx_drug", {}),
+                "tingkat": consistency_result.get("konsistensi", {}).get("tingkat_konsistensi", "-"),
+                "score": consistency_result.get("konsistensi", {}).get("_score", 0)
+            },
+            
+            # 🔹 Backward compatible (Indonesian keys)
             "klasifikasi": {
                 "diagnosis": f"{diagnosis_name} ({icd10_code})",
                 "tindakan": tindakan_formatted,
@@ -678,14 +719,25 @@ async def analyze_lite_single_ultra_fast(
             
             "validasi_klinis": validasi_klinis,
             
-            "fornas_validation": fornas_lite_result.get("fornas_validation", []) if fornas_lite_result else [],
-            "fornas_summary": fornas_lite_result.get("summary", {}) if fornas_lite_result else {},
+            # NEW: FORNAS validation (using fornas_normalize_service)
+            "fornas_validation": fornas_lite_result if fornas_lite_result else {
+                "total_obat": len(obat_list),
+                "sesuai_fornas": 0,
+                "tidak_sesuai": len(obat_list),
+                "validations": []
+            },
+            
+            # NEW: PNPK Summary (Clinical Pathway)
+            "pnpk_summary": {
+                "available": bool(pnpk_data),
+                **pnpk_data
+            } if pnpk_data else {"available": False, "message": "PNPK data tidak ditemukan"},
             
             "cp_ringkas": _summarize_cp(lite_diagnosis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
             "checklist_dokumen": combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
-            # Use consistency service result
+            # 🔹 Backward compatible (Indonesian key)
             "konsistensi": consistency_result["konsistensi"],
             
             "metadata": {
@@ -698,6 +750,7 @@ async def analyze_lite_single_ultra_fast(
                 "ai_calls": 4,
                 "optimization": "parallel_processing + response_caching",
                 "icd10_code": icd10_code,
+                "icd9_codes": icd9_codes,
                 "severity": lite_diagnosis.get("severity", "sedang"),
                 "processing_time_seconds": round(processing_time, 2),
                 "cache_hit": False,

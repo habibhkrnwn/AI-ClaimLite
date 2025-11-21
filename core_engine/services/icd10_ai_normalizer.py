@@ -25,7 +25,41 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load environment
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ============================================
+# LAZY CLIENT CREATION (Fix for invalid API key)
+# ============================================
+_openai_client_cache = None
+
+def _get_openai_client():
+    """
+    Lazy creation of OpenAI client.
+    Only creates client when AI normalization is actually needed.
+    
+    Returns:
+        OpenAI client instance
+    
+    Raises:
+        ValueError: If API key not found
+        Exception: If client creation fails
+    """
+    global _openai_client_cache
+    
+    if _openai_client_cache is not None:
+        return _openai_client_cache
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in environment")
+    
+    try:
+        _openai_client_cache = OpenAI(api_key=api_key)
+        print("[ICD10_AI] ✅ OpenAI client initialized")
+        return _openai_client_cache
+    except Exception as e:
+        print(f"[ICD10_AI] ❌ Client initialization failed: {e}")
+        raise
 
 # Import ICD-10 service functions
 from services.icd10_service import (
@@ -39,45 +73,45 @@ from services.icd10_service import (
 # AI PROMPTS
 # =====================================================
 
-PROMPT_RAG_TEMPLATE = """
-You are a medical coding expert specializing in ICD-10 WHO classification.
+PROMPT_NORMALIZE_TO_TERM = """
+You are a medical terminology expert specializing in ICD-10 WHO classification.
 
-Your task: Normalize user input to match EXACTLY ONE diagnosis from our ICD-10 database.
+Your task: Normalize user input to standard medical terminology (English medical term ONLY).
 
 USER INPUT: "{user_input}"
 
-AVAILABLE ICD-10 DIAGNOSES IN DATABASE (Most Relevant):
+DATABASE CONTEXT (untuk referensi terminologi):
 {database_context}
 
 CRITICAL RULES:
-1. You MUST return a diagnosis name that EXACTLY matches one from the database list above
-2. Choose the MOST CLINICALLY RELEVANT diagnosis based on user input
-3. If user input is Indonesian/informal (e.g., "paru2 basah"), find the English medical term equivalent
-4. DO NOT create new diagnosis names - ONLY select from the database list
-5. The "matched_diagnosis" field MUST be an EXACT character-by-character copy from database
+1. Return ONLY the core medical term (e.g., "pneumonia", "heart", "diabetes") 
+2. DO NOT include specific diagnosis details (e.g., NOT "Pneumonia, unspecified" - just "pneumonia")
+3. DO NOT include ICD-10 codes
+4. If input is Indonesian/informal, translate to English medical term
+5. Return the GENERAL medical term that would be used in database search
+6. Use lowercase for the medical term
 
 EXAMPLES OF CORRECT BEHAVIOR:
-Input: "paru2 basah"
-→ Look for "Pneumonia" in database → Return "Pneumonia, unspecified" (EXACT match from list)
-
-Input: "demam berdarah"
-→ Look for "Dengue" in database → Return "Dengue haemorrhagic fever" (EXACT match from list)
-
-Input: "Pneumonia"
-→ Look for best "Pneumonia" match → Return "Pneumonia, organism unspecified" (EXACT match from list)
+Input: "jantung" → Output: "heart"
+Input: "paru2 basah" / "paru basah" → Output: "pneumonia"
+Input: "demam berdarah" → Output: "dengue"
+Input: "diabetes" → Output: "diabetes"
+Input: "sakit kepala" → Output: "headache"
+Input: "stroke" → Output: "stroke"
+Input: "jantung koroner" → Output: "coronary heart"
 
 OUTPUT FORMAT (JSON):
 {{
-  "matched_diagnosis": "EXACT diagnosis name from database (copy-paste from list above)",
-  "matched_code": "ICD-10 code from database",
+  "medical_term": "general medical term in English (lowercase)",
   "confidence": 95,
-  "reasoning": "Brief clinical reason why this is the best match (1 sentence)"
+  "reasoning": "Brief explanation of terminology normalization (1 sentence)"
 }}
 
-IMPORTANT: 
-- Copy the diagnosis name EXACTLY as written in the database list (character-by-character)
-- Include all punctuation, commas, and capitalization exactly as shown
-- If unsure, choose the most general/unspecified variant
+IMPORTANT:
+- Return ONLY the general medical term, NOT specific diagnosis
+- Use lowercase
+- Keep it simple (1-3 words max)
+- This term will be used to search database for ALL matching diagnoses
 """
 
 PROMPT_REGENERATE_TEMPLATE = """
@@ -110,15 +144,15 @@ OUTPUT (JSON):
 # CORE AI FUNCTIONS
 # =====================================================
 
-def ai_normalize_with_rag(user_input: str, max_context: int = 30) -> Dict:
+def ai_normalize_to_medical_term(user_input: str, max_context: int = 30) -> Dict:
     """
-    Normalize user input ke ICD-10 diagnosis dengan RAG
+    Normalize user input ke medical terminology (NOT specific diagnosis)
     
     Process:
-    1. Get similar diagnoses dari database (RAG context)
+    1. Get similar diagnoses dari database (RAG context) untuk referensi terminologi
     2. Inject context ke AI prompt
-    3. AI pilih yang paling sesuai dari context
-    4. Return matched diagnosis
+    3. AI normalize input ke general medical term (e.g., "jantung" → "heart")
+    4. Return medical term untuk database search
     
     Args:
         user_input: User input (bisa Indonesia/informal)
@@ -126,8 +160,7 @@ def ai_normalize_with_rag(user_input: str, max_context: int = 30) -> Dict:
     
     Returns:
         Dict: {
-            "matched_diagnosis": str,
-            "matched_code": str,
+            "medical_term": str (e.g., "heart", "pneumonia"),
             "confidence": int,
             "reasoning": str
         }
@@ -135,37 +168,60 @@ def ai_normalize_with_rag(user_input: str, max_context: int = 30) -> Dict:
     print(f"[AI_NORMALIZER] Input: {user_input}")
     
     # Step 1: Get similar diagnoses untuk RAG context
+    # Use original input for initial search
     db_samples = get_similar_diagnoses(user_input, limit=max_context)
     
     if not db_samples:
-        # Fallback: Jika tidak ada similar, ambil random samples
-        print("[AI_NORMALIZER] No similar diagnoses, using broader search...")
-        # Try dengan keyword yang lebih general
-        general_terms = extract_keywords(user_input)
-        for term in general_terms:
-            db_samples = get_similar_diagnoses(term, limit=max_context)
-            if db_samples:
-                break
+        # No database context found
+        # Let AI try to normalize anyway with generic medical knowledge
+        print(f"[AI_NORMALIZER] ⚠️ No database context for '{user_input}'")
+        print(f"[AI_NORMALIZER] AI will normalize based on medical knowledge only")
+        # Continue to AI normalization without context
+        # AI will use its medical knowledge to suggest terms
+        db_samples = []  # Empty context, AI uses own knowledge
     
-    if not db_samples:
-        return {
-            "matched_diagnosis": "",
-            "matched_code": "",
-            "confidence": 0,
-            "reasoning": "No similar diagnoses found in database",
-            "error": "no_context"
-        }
+    # Step 2: Format context untuk AI (if available)
+    if db_samples:
+        db_context = format_db_context_for_rag(db_samples)
+        print(f"[AI_NORMALIZER] Using {len(db_samples)} DB samples as context")
+    else:
+        # Fallback: AI will use general medical knowledge
+        db_context = (
+            "No specific database matches found. "
+            "Please suggest standard ICD-10 medical terminology based on the input. "
+            "Focus on common diagnoses related to the symptoms/terms provided."
+        )
+        print("[AI_NORMALIZER] Using AI medical knowledge (no DB context)")
     
-    # Step 2: Format context untuk AI
-    db_context = format_db_context_for_rag(db_samples)
-    
-    # Step 3: Call AI dengan RAG prompt
-    prompt = PROMPT_RAG_TEMPLATE.format(
+    # Step 3: Call AI dengan normalization prompt
+    prompt = PROMPT_NORMALIZE_TO_TERM.format(
         user_input=user_input,
         database_context=db_context
     )
     
     try:
+        # Lazy client creation
+        try:
+            client = _get_openai_client()
+        except ValueError as e:
+            print(f"[AI_NORMALIZER] ⚠️ OpenAI not configured: {e}")
+            return {
+                "matched_diagnosis": "",
+                "matched_code": "",
+                "confidence": 0,
+                "reasoning": "OpenAI API key not configured",
+                "error": "no_api_key"
+            }
+        except Exception as e:
+            print(f"[AI_NORMALIZER] ❌ Client error: {e}")
+            return {
+                "matched_diagnosis": "",
+                "matched_code": "",
+                "confidence": 0,
+                "reasoning": f"Client error: {str(e)}",
+                "error": "client_failed"
+            }
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -174,15 +230,22 @@ def ai_normalize_with_rag(user_input: str, max_context: int = 30) -> Dict:
         )
         
         result = json.loads(response.choices[0].message.content)
-        print(f"[AI_NORMALIZER] AI suggested: {result.get('matched_diagnosis', 'N/A')}")
+        print(f"[AI_NORMALIZER] AI normalized term: {result.get('medical_term', 'N/A')}")
         
         return result
     
     except Exception as e:
-        print(f"[AI_NORMALIZER] ❌ Error: {e}")
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            print(f"[AI_NORMALIZER] ❌ INVALID API KEY")
+            print(f"[AI_NORMALIZER] → Get new key from: https://platform.openai.com/api-keys")
+        elif "429" in error_msg:
+            print(f"[AI_NORMALIZER] ⚠️ Rate limit exceeded")
+        else:
+            print(f"[AI_NORMALIZER] ❌ Error: {e}")
+        
         return {
-            "matched_diagnosis": "",
-            "matched_code": "",
+            "medical_term": "",
             "confidence": 0,
             "reasoning": f"AI error: {str(e)}",
             "error": "ai_call_failed"
@@ -221,6 +284,27 @@ def ai_regenerate_with_feedback(
     )
     
     try:
+        # Lazy client creation
+        try:
+            client = _get_openai_client()
+        except Exception as e:
+            print(f"[AI_NORMALIZER] ❌ Client unavailable: {e}")
+            if available_options:
+                return {
+                    "matched_diagnosis": available_options[0]["name"],
+                    "matched_code": available_options[0]["code"],
+                    "confidence": 50,
+                    "reasoning": "Fallback - OpenAI unavailable",
+                    "fallback": True
+                }
+            return {
+                "matched_diagnosis": "",
+                "matched_code": "",
+                "confidence": 0,
+                "reasoning": "Client unavailable",
+                "error": "no_client"
+            }
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -259,18 +343,18 @@ def ai_regenerate_with_feedback(
 
 def lookup_icd10_smart_with_rag(user_input: str, max_attempts: int = 3) -> Dict:
     """
-    Smart ICD-10 lookup dengan RAG - GUARANTEED MATCH
+    Smart ICD-10 lookup dengan AI normalization - Return SEMUA recommendations
     
-    Flow:
-    1. Exact match di database → Return langsung
-    2. Partial match → Suggestions (skip AI)
-    3. AI normalization dengan RAG → Verify → Return
-    4. Jika AI tidak match → Feedback loop (max 3 attempts)
-    5. Fallback → Closest suggestions dari database
+    NEW FLOW (Sesuai request):
+    1. Exact match di database → Return langsung dengan subkategori
+    2. Partial match (< 5 hasil) → Return suggestions
+    3. AI normalize ke medical term (e.g., "jantung" → "heart")
+    4. Search DB dengan normalized term → Return SEMUA diagnoses yang match
+    5. User pilih dari recommendations (belum masuk subkategori detail)
     
     Args:
         user_input: User input
-        max_attempts: Max AI regenerate attempts (default 3)
+        max_attempts: Unused (kept for backward compatibility)
     
     Returns:
         Dict dengan guaranteed result (flow + data)
@@ -311,134 +395,63 @@ def lookup_icd10_smart_with_rag(user_input: str, max_attempts: int = 3) -> Dict:
             "message": "Silakan pilih diagnosis yang sesuai:"
         }
     
-    # Step 3: AI Normalization dengan RAG
-    print("[ICD10_SMART_RAG] 🤖 Using AI with RAG...")
-    ai_result = ai_normalize_with_rag(user_input)
+    # Step 3: AI Normalize ke medical term (NOT specific diagnosis!)
+    print("[ICD10_SMART_RAG] 🤖 Using AI to normalize to medical term...")
+    ai_result = ai_normalize_to_medical_term(user_input)
     
-    # Verify AI output
-    verified = validate_ai_output_against_db(ai_result)
+    medical_term = ai_result.get("medical_term", "")
     
-    if verified:
-        print("[ICD10_SMART_RAG] ✅ AI match verified")
-        from services.icd10_service import extract_category_from_code, get_subcategories
-        
-        category = extract_category_from_code(verified["code"])
-        subcats = get_subcategories(category)
-        
+    if not medical_term or ai_result.get("error"):
+        print("[ICD10_SMART_RAG] ⚠️ AI normalization failed, using partial results")
         return {
-            "flow": "ai_direct",
-            "requires_modal": False,
-            "selected_code": verified["code"],
-            "selected_name": verified["name"],
-            "source": verified["source"],
-            "subcategories": subcats,
+            "flow": "fallback_suggestions",
+            "requires_modal": True,
+            "suggestions": partial[:10] if partial else [],
+            "total_suggestions": len(partial[:10]) if partial else 0,
             "ai_used": True,
-            "ai_confidence": ai_result.get("confidence", 0),
-            "ai_reasoning": ai_result.get("reasoning", "")
+            "message": "AI normalization failed. Berikut suggestions berdasarkan input:"
         }
     
-    # Step 4: Feedback loop (jika AI tidak match)
-    print("[ICD10_SMART_RAG] ⚠️  AI output tidak match, regenerating...")
+    print(f"[ICD10_SMART_RAG] ✅ AI normalized: '{user_input}' → '{medical_term}'")
     
-    # Use partial results sebagai available options
-    available_options = partial if partial else get_similar_diagnoses(user_input, limit=30)
+    # Step 4: Search DB dengan normalized medical term
+    print(f"[ICD10_SMART_RAG] 🔍 Searching DB for all diagnoses containing '{medical_term}'...")
+    recommendations = db_search_partial(medical_term, limit=50)
     
-    for attempt in range(max_attempts):
-        print(f"[ICD10_SMART_RAG] Attempt {attempt + 1}/{max_attempts}")
-        
-        regenerated = ai_regenerate_with_feedback(
-            user_input=user_input,
-            previous_attempt=ai_result.get("matched_diagnosis", ""),
-            available_options=available_options
-        )
-        
-        # Verify regenerated
-        verified = validate_ai_output_against_db(regenerated)
-        
-        if verified:
-            print(f"[ICD10_SMART_RAG] ✅ Match found on attempt {attempt + 1}")
-            from services.icd10_service import extract_category_from_code, get_subcategories
-            
-            category = extract_category_from_code(verified["code"])
-            subcats = get_subcategories(category)
-            
-            return {
-                "flow": "ai_regenerated",
-                "requires_modal": False,
-                "selected_code": verified["code"],
-                "selected_name": verified["name"],
-                "source": verified["source"],
-                "subcategories": subcats,
-                "ai_used": True,
-                "ai_attempts": attempt + 1,
-                "ai_confidence": regenerated.get("confidence", 0)
-            }
+    if not recommendations:
+        print("[ICD10_SMART_RAG] ⚠️ No matches found for normalized term, fallback to original input")
+        recommendations = partial[:10] if partial else []
     
-    # Step 5: Fallback - Return suggestions
-    print("[ICD10_SMART_RAG] ⚠️  Max attempts reached, returning suggestions")
+    if len(recommendations) == 0:
+        return {
+            "flow": "not_found",
+            "requires_modal": True,
+            "suggestions": [],
+            "total_suggestions": 0,
+            "ai_used": True,
+            "message": f"Tidak ditemukan diagnosis untuk '{user_input}' (normalized: '{medical_term}')"
+        }
+    
+    # Step 5: Return SEMUA recommendations (belum masuk subkategori)
+    print(f"[ICD10_SMART_RAG] ✅ Found {len(recommendations)} recommendations")
     
     return {
-        "flow": "fallback_suggestions",
+        "flow": "ai_recommendations",
         "requires_modal": True,
-        "suggestions": available_options[:10],
-        "total_suggestions": len(available_options[:10]),
+        "suggestions": recommendations,
+        "total_suggestions": len(recommendations),
         "ai_used": True,
-        "message": "AI tidak dapat menemukan exact match. Silakan pilih yang paling sesuai:",
-        "ai_attempts": max_attempts
+        "normalized_term": medical_term,
+        "original_input": user_input,
+        "ai_confidence": ai_result.get("confidence", 0),
+        "ai_reasoning": ai_result.get("reasoning", ""),
+        "message": f"Rekomendasi diagnosis untuk '{user_input}' (medical term: '{medical_term}'):"
     }
-
 
 # =====================================================
 # HELPER FUNCTIONS
 # =====================================================
-
-def extract_keywords(user_input: str) -> List[str]:
-    """
-    Extract keywords dari user input untuk fallback search
-    
-    Args:
-        user_input: User input
-    
-    Returns:
-        List of keywords
-    """
-    # Mapping umum bahasa Indonesia ke English medical terms
-    indonesian_mapping = {
-        "paru": "pneumonia",
-        "basah": "pneumonia",
-        "demam": "fever",
-        "berdarah": "hemorrhagic",
-        "batuk": "cough",
-        "pilek": "rhinitis",
-        "flu": "influenza",
-        "tipus": "typhoid",
-        "tifoid": "typhoid",
-        "stroke": "cerebrovascular",
-        "jantung": "cardiac",
-        "ginjal": "renal",
-        "liver": "hepatic",
-        "hati": "hepatic"
-    }
-    
-    # Remove common words
-    common_words = {"di", "ke", "dari", "dengan", "pada", "untuk", "yang", "dan", "atau", "2"}
-    
-    words = user_input.lower().split()
-    keywords = []
-    
-    # Try Indonesian mapping first
-    for word in words:
-        cleaned_word = word.strip(",.!?;:")
-        if cleaned_word in indonesian_mapping:
-            keywords.append(indonesian_mapping[cleaned_word])
-        elif cleaned_word not in common_words and len(cleaned_word) > 2:
-            keywords.append(cleaned_word)
-    
-    # If no keywords, return generic medical terms
-    if not keywords:
-        keywords = ["disease", "disorder", "infection"]
-    
-    return keywords[:3]  # Max 3 keywords
+# Note: Keyword extraction removed - AI handles all normalization directly
 
 
 # =====================================================

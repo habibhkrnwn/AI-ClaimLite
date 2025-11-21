@@ -12,11 +12,52 @@ Flow:
 from sqlalchemy import text
 from database_connection import get_db_session
 from openai import OpenAI
+from dotenv import load_dotenv
 import os
 from typing import Dict, List, Optional
 import json
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Load environment variables
+load_dotenv()
+
+# ============================================
+# LAZY CLIENT CREATION (Fix for invalid API key)
+# ============================================
+_openai_client_cache = None
+
+def _get_openai_client():
+    """
+    Lazy creation of OpenAI client.
+    Only creates client when AI normalization is actually needed.
+    
+    This prevents service crash when:
+    - API key is invalid
+    - OpenAI not needed (database search success)
+    
+    Returns:
+        OpenAI client instance
+    
+    Raises:
+        ValueError: If API key not found
+        Exception: If client creation fails
+    """
+    global _openai_client_cache
+    
+    if _openai_client_cache is not None:
+        return _openai_client_cache
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in environment. Please configure .env file.")
+    
+    try:
+        _openai_client_cache = OpenAI(api_key=api_key)
+        print("[ICD9] ✅ OpenAI client initialized successfully")
+        return _openai_client_cache
+    except Exception as e:
+        print(f"[ICD9] ❌ OpenAI client initialization failed: {e}")
+        raise
 
 # Import smart matcher
 try:
@@ -46,31 +87,29 @@ def exact_search_icd9(procedure_input: str) -> Optional[Dict]:
     if not procedure_input or procedure_input.strip() == "":
         return None
     
-    session = get_db_session()
-    try:
-        query = text("""
-            SELECT code, name 
-            FROM icd9cm_master 
-            WHERE LOWER(name) = LOWER(:input)
-            LIMIT 1
-        """)
-        result = session.execute(query, {"input": procedure_input.strip()}).fetchone()
-        
-        if result:
-            print(f"[ICD9] ✅ Exact match found: {result[1]} ({result[0]})")
-            return {
-                "code": result[0],
-                "name": result[1],
-                "source": "database_exact",
-                "valid": True,
-                "confidence": 100
-            }
-        return None
-    except Exception as e:
-        print(f"[ICD9] ❌ Database search error: {e}")
-        return None
-    finally:
-        session.close()
+    with get_db_session() as session:
+        try:
+            query = text("""
+                SELECT code, name 
+                FROM icd9cm_master 
+                WHERE LOWER(name) = LOWER(:input)
+                LIMIT 1
+            """)
+            result = session.execute(query, {"input": procedure_input.strip()}).fetchone()
+            
+            if result:
+                print(f"[ICD9] ✅ Exact match found: {result[1]} ({result[0]})")
+                return {
+                    "code": result[0],
+                    "name": result[1],
+                    "source": "database_exact",
+                    "valid": True,
+                    "confidence": 100
+                }
+            return None
+        except Exception as e:
+            print(f"[ICD9] ❌ Database search error: {e}")
+            return None
 
 
 def partial_search_icd9(procedure_input: str, limit: int = 10) -> List[Dict]:
@@ -88,51 +127,49 @@ def partial_search_icd9(procedure_input: str, limit: int = 10) -> List[Dict]:
     if not procedure_input or procedure_input.strip() == "":
         return []
     
-    session = get_db_session()
-    try:
-        search_term = procedure_input.strip().lower()
-        
-        # Strategy 1: Name starts with input (highest relevance)
-        query = text("""
-            SELECT code, name,
-                   CASE 
-                       WHEN LOWER(name) LIKE :starts_with THEN 90
-                       WHEN LOWER(name) LIKE :contains THEN 70
-                       ELSE 50
-                   END as confidence
-            FROM icd9cm_master 
-            WHERE LOWER(name) LIKE :contains
-            ORDER BY confidence DESC, LENGTH(name) ASC
-            LIMIT :limit
-        """)
-        
-        results = session.execute(query, {
-            "starts_with": f"{search_term}%",
-            "contains": f"%{search_term}%",
-            "limit": limit
-        }).fetchall()
-        
-        if results:
-            matches = [
-                {
-                    "code": row[0],
-                    "name": row[1],
-                    "source": "database_partial",
-                    "valid": True,
-                    "confidence": row[2]
-                }
-                for row in results
-            ]
-            print(f"[ICD9] 🔍 Found {len(matches)} partial matches for '{procedure_input}'")
-            return matches
-        
-        return []
-        
-    except Exception as e:
-        print(f"[ICD9] ❌ Partial search error: {e}")
-        return []
-    finally:
-        session.close()
+    with get_db_session() as session:
+        try:
+            search_term = procedure_input.strip().lower()
+            
+            # Strategy 1: Name starts with input (highest relevance)
+            query = text("""
+                SELECT code, name,
+                       CASE 
+                           WHEN LOWER(name) LIKE :starts_with THEN 90
+                           WHEN LOWER(name) LIKE :contains THEN 70
+                           ELSE 50
+                       END as confidence
+                FROM icd9cm_master 
+                WHERE LOWER(name) LIKE :contains
+                ORDER BY confidence DESC, LENGTH(name) ASC
+                LIMIT :limit
+            """)
+            
+            results = session.execute(query, {
+                "starts_with": f"{search_term}%",
+                "contains": f"%{search_term}%",
+                "limit": limit
+            }).fetchall()
+            
+            if results:
+                matches = [
+                    {
+                        "code": row[0],
+                        "name": row[1],
+                        "source": "database_partial",
+                        "valid": True,
+                        "confidence": row[2]
+                    }
+                    for row in results
+                ]
+                print(f"[ICD9] 🔍 Found {len(matches)} partial matches for '{procedure_input}'")
+                return matches
+            
+            return []
+            
+        except Exception as e:
+            print(f"[ICD9] ❌ Partial search error: {e}")
+            return []
 
 
 def get_similar_procedures_from_db(procedure_input: str, limit: int = 20) -> List[Dict]:
@@ -149,53 +186,51 @@ def get_similar_procedures_from_db(procedure_input: str, limit: int = 20) -> Lis
     if not procedure_input or procedure_input.strip() == "":
         return []
     
-    session = get_db_session()
-    try:
-        # Extract keywords
-        keywords = procedure_input.lower().split()
-        
-        # Build search condition (ILIKE untuk partial match)
-        search_conditions = []
-        params = {}
-        
-        for idx, keyword in enumerate(keywords[:3]):  # Max 3 keywords
-            if len(keyword) > 2:  # Skip very short words
-                param_name = f"keyword{idx}"
-                search_conditions.append(f"LOWER(name) LIKE :{param_name}")
-                params[param_name] = f"%{keyword}%"
-        
-        if not search_conditions:
-            # Fallback: return random common procedures
-            query = text("SELECT code, name FROM icd9cm_master ORDER BY RANDOM() LIMIT :limit")
-            results = session.execute(query, {"limit": limit}).fetchall()
-        else:
-            # Search dengan keywords
-            where_clause = " OR ".join(search_conditions)
-            query = text(f"""
-                SELECT code, name 
-                FROM icd9cm_master 
-                WHERE {where_clause}
-                ORDER BY 
-                    CASE 
-                        WHEN LOWER(name) LIKE :exact THEN 1
-                        ELSE 2
-                    END,
-                    name
-                LIMIT :limit
-            """)
-            params["exact"] = f"%{procedure_input.lower()}%"
-            params["limit"] = limit
-            results = session.execute(query, params).fetchall()
-        
-        procedures = [{"code": row[0], "name": row[1]} for row in results]
-        print(f"[ICD9] 📚 Found {len(procedures)} similar procedures in DB for context")
-        return procedures
-        
-    except Exception as e:
-        print(f"[ICD9] ⚠️ DB search error: {e}")
-        return []
-    finally:
-        session.close()
+    with get_db_session() as session:
+        try:
+            # Extract keywords
+            keywords = procedure_input.lower().split()
+            
+            # Build search condition (ILIKE untuk partial match)
+            search_conditions = []
+            params = {}
+            
+            for idx, keyword in enumerate(keywords[:3]):  # Max 3 keywords
+                if len(keyword) > 2:  # Skip very short words
+                    param_name = f"keyword{idx}"
+                    search_conditions.append(f"LOWER(name) LIKE :{param_name}")
+                    params[param_name] = f"%{keyword}%"
+            
+            if not search_conditions:
+                # Fallback: return random common procedures
+                query = text("SELECT code, name FROM icd9cm_master ORDER BY RANDOM() LIMIT :limit")
+                results = session.execute(query, {"limit": limit}).fetchall()
+            else:
+                # Search dengan keywords
+                where_clause = " OR ".join(search_conditions)
+                query = text(f"""
+                    SELECT code, name 
+                    FROM icd9cm_master 
+                    WHERE {where_clause}
+                    ORDER BY 
+                        CASE 
+                            WHEN LOWER(name) LIKE :exact THEN 1
+                            ELSE 2
+                        END,
+                        name
+                    LIMIT :limit
+                """)
+                params["exact"] = f"%{procedure_input.lower()}%"
+                params["limit"] = limit
+                results = session.execute(query, params).fetchall()
+            
+            procedures = [{"code": row[0], "name": row[1]} for row in results]
+            print(f"[ICD9] 📚 Found {len(procedures)} similar procedures in DB for context")
+            return procedures
+            
+        except Exception as e:
+            print(f"[ICD9] ⚠️ DB search error: {e}")
+            return []
 
 
 def format_db_context_for_rag(procedures: List[Dict]) -> str:
@@ -218,160 +253,134 @@ def format_db_context_for_rag(procedures: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def normalize_procedure_with_ai(procedure_input: str) -> List[str]:
-    """
-    AI normalization ke WHO ICD-9-CM terminology dengan RAG context.
-    
-    Enhanced with:
-    - Database context injection (RAG)
-    - Better Indonesian term mapping
-    - Explicit matching rules
-    - Guaranteed database alignment
-    
-    Args:
-        procedure_input: Input dari user (bisa kurang lengkap/Indonesia)
-    
-    Returns:
-        List of procedure names (3-5 items) yang guaranteed ada di database
-        Example: ["Routine chest x-ray, so described", "Other chest x-ray"]
-    """
-    if not procedure_input or procedure_input.strip() == "":
-        return []
-    
-    # Step 1: Get similar procedures dari DB untuk RAG context
-    db_samples = get_similar_procedures_from_db(procedure_input, limit=30)
-    
-    if not db_samples:
-        print("[ICD9] ⚠️ No DB samples for context, using generic prompt")
-        db_context = "Database not available - suggest common medical procedures."
-    else:
-        db_context = format_db_context_for_rag(db_samples)
-    
-    # Step 2: Enhanced RAG prompt
-    prompt = f"""You are a medical coding expert specializing in ICD-9-CM procedure classification.
+# =====================================================
+# AI PROMPT FOR NORMALIZATION
+# =====================================================
 
-Your task: Normalize user input to match EXACTLY procedures from our ICD-9-CM database.
+PROMPT_NORMALIZE_TO_MEDICAL_TERM = """
+You are a medical terminology expert specializing in ICD-9-CM procedure classification.
+
+Your task: Normalize user input to standard medical procedure terminology (English term ONLY).
 
 USER INPUT: "{procedure_input}"
 
-AVAILABLE ICD-9-CM PROCEDURES IN DATABASE (Most Relevant):
-{db_context}
+DATABASE CONTEXT (untuk referensi terminologi):
+{database_context}
 
 CRITICAL RULES:
-1. You MUST return procedure names that EXACTLY match entries from the database list above
-2. Return ALL CLINICALLY RELEVANT procedures based on user input (no limit on number of suggestions)
-3. Handle Indonesian/informal terms correctly:
-   - "rontgen" = "x-ray" or "radiography"
-   - "rontgen thorax/dada" = "chest x-ray"
-   - "suntik" = "injection"
-   - "infus" = "infusion" or "venous catheterization"
-   - "operasi" = surgical procedures
-   - "ct scan" = "computerized axial tomography"
-   - "mri" = "magnetic resonance imaging"
-   - "nebulizer/nebul" = "nebulization" or "inhalation therapy"
-   - "oksigen" = "oxygen therapy"
-   - "ventilator" = "mechanical ventilation"
-   - "ekg/ecg" = "electrocardiogram"
-   - "usg" = "ultrasonography"
-   - "endoskopi" = "endoscopy"
-   - "cuci darah" = "hemodialysis"
-   - "transfusi" = "transfusion"
-4. If input is vague (e.g., "x-ray" only), suggest procedures for common body parts (chest, abdomen, extremity)
-5. DO NOT create new procedure names - ONLY select from the database list
-6. The procedure names in output MUST be EXACT character-by-character copies from database
-7. Order by clinical likelihood (most common procedures first)
+1. Return ONLY the core medical procedure term (e.g., "chest x-ray", "ct scan", "injection")
+2. DO NOT include specific procedure details
+3. DO NOT include ICD-9 codes
+4. If input is Indonesian/informal, translate to English medical term
+5. Return the GENERAL procedure term for database search
+6. Use lowercase
 
-EXAMPLES OF CORRECT BEHAVIOR:
-Input: "rontgen thorax" or "rontgen dada"
-→ Look for chest x-ray procedures in database
-→ Return: ["Routine chest x-ray, so described", "Other chest x-ray"]
+EXAMPLES:
+Input: "rontgen thorax" / "rontgen dada" → Output: "chest x-ray"
+Input: "ct scan kepala" → Output: "ct scan head"
+Input: "suntik antibiotik" → Output: "injection antibiotic"
+Input: "nebulizer" → Output: "nebulizer"
+Input: "ekg" → Output: "electrocardiogram"
+Input: "usg" → Output: "ultrasonography"
 
-Input: "ct scan kepala"
-→ Look for CT procedures in database
-→ Return: ["Computerized axial tomography of head", "Other computerized axial tomography"]
-
-Input: "nebulizer"
-→ Look for nebulization/inhalation in database
-→ Return: ["Non-invasive mechanical ventilation", "Continuous positive airway pressure [CPAP]"]
-
-Input: "suntik antibiotik"
-→ Look for injection procedures in database
-→ Return: ["Injection of antibiotic", "Injection or infusion of oxazolidinone class of antibiotics"]
-
-INPUT PARSING GUIDELINES:
-- Extract body part: thorax/dada → chest, kepala → head, perut → abdomen
-- Extract modality: rontgen → x-ray, ct → computerized tomography, usg → ultrasound
-- Extract procedure type: suntik → injection, operasi → surgical, pemeriksaan → examination
-- Combine intelligently: "rontgen thorax" → "chest x-ray procedures"
-
-OUTPUT FORMAT (JSON only):
+OUTPUT FORMAT (JSON):
 {{
-  "procedures": [
-    "Exact procedure name 1 from database (name ONLY, no code)",
-    "Exact procedure name 2 from database (name ONLY, no code)",
-    "Exact procedure name 3 from database (name ONLY, no code)",
-    "... (return ALL relevant procedures, tidak ada batasan jumlah)"
-  ]
+  "medical_term": "general procedure term in English (lowercase)",
+  "confidence": 95,
+  "reasoning": "Brief explanation (1 sentence)"
 }}
 
-WRONG FORMAT EXAMPLES (DO NOT DO THIS):
-❌ "87.44 - Routine chest x-ray" (includes code - WRONG!)
-❌ "99.21 - Injection of antibiotic" (includes code - WRONG!)
+IMPORTANT:
+- Return ONLY general term, NOT specific procedure
+- Lowercase
+- Simple (2-4 words max)
+- This term will search database for ALL matching procedures
+"""
 
-CORRECT FORMAT EXAMPLES:
-✅ "Routine chest x-ray, so described" (name only - CORRECT!)
-✅ "Injection of antibiotic" (name only - CORRECT!)
-
-IMPORTANT: 
-- Return ONLY procedure NAMES (no codes!)
-- Copy the procedure names EXACTLY as written in the database list (character-by-character)
-- Include all punctuation, commas, brackets, and capitalization exactly as shown
-- Return ALL relevant procedures (NO MAXIMUM LIMIT - bisa 3, 5, 10, atau lebih)
-- Order by clinical likelihood (most common procedures first)
-- If user input is ambiguous, return ALL possible interpretations
-- Return ONLY valid JSON, no explanation"""
-
+def ai_normalize_procedure_to_term(procedure_input: str) -> Dict:
+    """
+    Normalize user input ke medical procedure terminology (NOT specific procedure)
+    
+    Process:
+    1. Get similar procedures dari database (RAG context) untuk referensi
+    2. AI normalize input ke general medical term (e.g., "rontgen thorax" → "chest x-ray")
+    3. Return medical term untuk database search
+    
+    Args:
+        procedure_input: Input dari user (bisa Indonesia/informal)
+    
+    Returns:
+        Dict: {
+            "medical_term": str (e.g., "chest x-ray", "ct scan"),
+            "confidence": int,
+            "reasoning": str
+        }
+    """
+    if not procedure_input or procedure_input.strip() == "":
+        return {"medical_term": "", "confidence": 0, "reasoning": "Empty input"}
+    
+    print(f"[ICD9_NORMALIZER] Input: {procedure_input}")
+    
+    # Step 1: Get similar procedures untuk RAG context
+    db_samples = get_similar_procedures_from_db(procedure_input, limit=30)
+    
+    if not db_samples:
+        print(f"[ICD9_NORMALIZER] ⚠️ No database context for '{procedure_input}'")
+        print(f"[ICD9_NORMALIZER] AI will normalize based on medical knowledge only")
+        db_samples = []
+    
+    # Step 2: Format context
+    if db_samples:
+        db_context = format_db_context_for_rag(db_samples)
+        print(f"[ICD9_NORMALIZER] Using {len(db_samples)} DB samples as context")
+    else:
+        db_context = (
+            "No specific database matches found. "
+            "Please suggest standard ICD-9-CM medical procedure terminology based on the input."
+        )
+        print("[ICD9_NORMALIZER] Using AI medical knowledge (no DB context)")
+    
+    # Step 3: Call AI with normalization prompt
+    prompt = PROMPT_NORMALIZE_TO_MEDICAL_TERM.format(
+        procedure_input=procedure_input,
+        database_context=db_context
+    )
+    
     try:
-        print(f"[ICD9] 🤖 Calling AI normalization with RAG context for: '{procedure_input}'")
+        client = _get_openai_client()
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Fast & cost-effective
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are a medical coding expert specializing in ICD-9-CM procedure classification. You MUST return procedure names that exactly match the provided database entries. Character-by-character accuracy is critical."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
-            temperature=0.2,  # Lower temp for better accuracy with RAG
-            max_tokens=800  # Increased to allow returning many suggestions (no limit)
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            response_format={"type": "json_object"}
         )
         
-        content = response.choices[0].message.content.strip()
+        result = json.loads(response.choices[0].message.content)
+        print(f"[ICD9_NORMALIZER] AI normalized term: {result.get('medical_term', 'N/A')}")
         
-        # Remove markdown code blocks if present
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
-        
-        data = json.loads(content)
-        procedures = data.get("procedures", [])
-        
-        print(f"[ICD9] ✅ AI with RAG returned {len(procedures)} suggestions: {procedures}")
-        return procedures
-        
-    except json.JSONDecodeError as e:
-        print(f"[ICD9] ⚠️ JSON decode error: {e}")
-        print(f"[ICD9] Response content: {content}")
-        return []
+        return result
+    
     except Exception as e:
-        print(f"[ICD9] ❌ AI normalization error: {e}")
-        return []
+        print(f"[ICD9_NORMALIZER] ❌ Error: {e}")
+        return {
+            "medical_term": "",
+            "confidence": 0,
+            "reasoning": f"AI error: {str(e)}",
+            "error": "ai_call_failed"
+        }
+
+
+# Legacy function - kept for backward compatibility but deprecated
+def normalize_procedure_with_ai(procedure_input: str) -> List[str]:
+    """
+    DEPRECATED: Use ai_normalize_procedure_to_term() instead
+    
+    This function is kept for backward compatibility but now uses the new flow.
+    Returns empty list to force fallback to new approach.
+    """
+    print("[ICD9] ⚠️ normalize_procedure_with_ai() is deprecated, use new flow")
+    return []  # Force fallback to new approach
 
 
 def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
@@ -396,54 +405,52 @@ def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
         return []
     
     valid_matches = []
-    session = get_db_session()
     
-    try:
-        for suggestion in ai_suggestions:
-            if not suggestion or suggestion.strip() == "":
-                continue
-            
-            # Clean suggestion - remove code if present
-            cleaned_suggestion = suggestion.strip()
-            
-            # Check if format is "code - name" (e.g., "87.44 - Routine chest x-ray")
-            if " - " in cleaned_suggestion:
-                parts = cleaned_suggestion.split(" - ", 1)
-                if len(parts) == 2:
-                    # Extract code and name
-                    suggested_code = parts[0].strip()
-                    suggested_name = parts[1].strip()
-                    
-                    # Try exact match with name
-                    cleaned_suggestion = suggested_name
-                    
-                    print(f"[ICD9] 🔍 Cleaned AI suggestion: '{suggested_code} - {suggested_name}' → '{suggested_name}'")
-            
-            # Exact search di database
-            query = text("""
-                SELECT code, name 
-                FROM icd9cm_master 
-                WHERE LOWER(name) = LOWER(:input)
-                LIMIT 1
-            """)
-            result = session.execute(query, {"input": cleaned_suggestion}).fetchone()
-            
-            if result:
-                valid_matches.append({
-                    "code": result[0],
-                    "name": result[1],
-                    "source": "ai_validated",
-                    "valid": True,
-                    "confidence": 95
-                })
-                print(f"[ICD9] ✅ Validated: {result[1]} ({result[0]})")
-            else:
-                print(f"[ICD9] ⚠️ AI suggestion not found in DB: '{suggestion}'")
-    
-    except Exception as e:
-        print(f"[ICD9] ❌ Validation error: {e}")
-    finally:
-        session.close()
+    with get_db_session() as session:
+        try:
+            for suggestion in ai_suggestions:
+                if not suggestion or suggestion.strip() == "":
+                    continue
+                
+                # Clean suggestion - remove code if present
+                cleaned_suggestion = suggestion.strip()
+                
+                # Check if format is "code - name" (e.g., "87.44 - Routine chest x-ray")
+                if " - " in cleaned_suggestion:
+                    parts = cleaned_suggestion.split(" - ", 1)
+                    if len(parts) == 2:
+                        # Extract code and name
+                        suggested_code = parts[0].strip()
+                        suggested_name = parts[1].strip()
+                        
+                        # Try exact match with name
+                        cleaned_suggestion = suggested_name
+                        
+                        print(f"[ICD9] 🔍 Cleaned AI suggestion: '{suggested_code} - {suggested_name}' → '{suggested_name}'")
+                
+                # Exact search di database
+                query = text("""
+                    SELECT code, name 
+                    FROM icd9cm_master 
+                    WHERE LOWER(name) = LOWER(:input)
+                    LIMIT 1
+                """)
+                result = session.execute(query, {"input": cleaned_suggestion}).fetchone()
+                
+                if result:
+                    valid_matches.append({
+                        "code": result[0],
+                        "name": result[1],
+                        "source": "ai_validated",
+                        "valid": True,
+                        "confidence": 95
+                    })
+                    print(f"[ICD9] ✅ Validated: {result[1]} ({result[0]})")
+                else:
+                    print(f"[ICD9] ⚠️ AI suggestion not found in DB: '{suggestion}'")
+        
+        except Exception as e:
+            print(f"[ICD9] ❌ Validation error: {e}")
     
     return valid_matches
 

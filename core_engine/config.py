@@ -8,25 +8,45 @@ Settings untuk customization dan feature flags
 from typing import Dict, List, Any
 from datetime import datetime
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# Load environment variables
-load_dotenv()
-
+# Load environment variables with auto-detection
+# This ensures .env is found regardless of current working directory
+try:
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path)
+        print(f"[CONFIG] ✓ Loaded .env from: {dotenv_path}")
+    else:
+        load_dotenv()  # Fallback to default behavior
+        print("[CONFIG] ⚠ Using default .env search (may not find file if CWD differs)")
+except Exception as e:
+    print(f"[CONFIG] ⚠ .env loading warning: {e}")
+    load_dotenv()  # Fallback
 
 # ============================================================
 # 🔐 ENVIRONMENT CONFIGURATION
 # ============================================================
 class Config:
     """Configuration loaded from environment variables"""
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    # Sanitize API key: remove hidden whitespace/newlines that cause "Incorrect API key" errors
+    _raw_key = os.getenv("OPENAI_API_KEY")
+    OPENAI_API_KEY = _raw_key.strip() if _raw_key else None
+    
+    # Validate key format (OpenAI keys start with 'sk-' or 'sk-proj-')
+    if OPENAI_API_KEY and not (OPENAI_API_KEY.startswith("sk-")):
+        print(f"[CONFIG] ⚠ API key format looks suspicious (len={len(OPENAI_API_KEY)}, starts with '{OPENAI_API_KEY[:10]}...')")
+    elif OPENAI_API_KEY:
+        print(f"[CONFIG] ✓ OpenAI API key loaded (length: {len(OPENAI_API_KEY)} chars)")
+    else:
+        print("[CONFIG] ⚠ OPENAI_API_KEY not found in environment")
+    
     DATABASE_URL = os.getenv("DATABASE_URL")
     SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")
     APP_ENV = os.getenv("APP_ENV", "development")
     DEBUG = os.getenv("DEBUG", "true").lower() == "true"
     APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
     APP_PORT = int(os.getenv("APP_PORT", "8000"))
-
 
 # ============================================================
 # 🎯 FEATURE FLAGS - Enable/Disable fitur tertentu
@@ -53,7 +73,6 @@ FEATURE_FLAGS = {
     "icd10_mapping": True,         # Enable ICD-10 WHO→BPJS mapping
     "inacbg_lookup": False,        # Enable INA-CBG tarif lookup (future)
 }
-
 
 # ============================================================
 # 📊 PANEL CONFIGURATION - Kustomisasi 7 Panel Utama

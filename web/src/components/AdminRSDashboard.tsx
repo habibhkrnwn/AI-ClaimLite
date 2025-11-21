@@ -4,24 +4,25 @@ import ICD10Explorer from './ICD10Explorer';
 import ICD9Explorer from './ICD9Explorer';
 import SharedMappingPreview from './SharedMappingPreview';
 import ResultsPanel from './ResultsPanel';
-import AnalysisHistory from './AnalysisHistory';
+//import AnalysisHistory from './AnalysisHistory';
 import { AnalysisResult } from '../lib/supabase';
 import { apiService } from '../lib/api';
 
 type InputMode = 'form' | 'text';
-type TabMode = 'analysis' | 'history';
+//type TabMode = 'analysis' | 'history';
 
 interface AdminRSDashboardProps {
   isDark: boolean;
   user?: any;
 }
 
-export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps) {
-  const [tabMode, setTabMode] = useState<TabMode>('analysis');
+export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
+  //const [tabMode, setTabMode] = useState<TabMode>('analysis');
   const [inputMode, setInputMode] = useState<InputMode>('form');
   const [diagnosis, setDiagnosis] = useState('');
   const [procedure, setProcedure] = useState('');
   const [medication, setMedication] = useState('');
+  const [serviceType, setServiceType] = useState('');
   const [freeText, setFreeText] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,6 +40,9 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
   const [procedureSynonyms, setProcedureSynonyms] = useState<string[]>([]);
   const [originalProcedureTerm, setOriginalProcedureTerm] = useState('');
   const [selectedICD9Code, setSelectedICD9Code] = useState<{code: string; name: string} | null>(null);
+
+  // Dokumen Wajib state
+  const [dokumenWajib, setDokumenWajib] = useState<any>(null);
 
   // Load AI usage on component mount
   useEffect(() => {
@@ -102,15 +106,19 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
 
       // Handle procedure translation
       if (procedureTerm) {
+        console.log('[AdminRS] Procedure translation response:', pxResp);
         if (pxResp && pxResp.success) {
           const medicalProcedureTerm = pxResp.data.translated;
           const synonyms = pxResp.data.synonyms || [medicalProcedureTerm];
+          console.log('[AdminRS] Setting correctedProcedureTerm:', medicalProcedureTerm, 'synonyms:', synonyms);
           setCorrectedProcedureTerm(medicalProcedureTerm);
           setProcedureSynonyms(synonyms);
         } else {
+          console.log('[AdminRS] No success, using original procedureTerm:', procedureTerm);
           setCorrectedProcedureTerm(procedureTerm);
           setProcedureSynonyms([procedureTerm]);
         }
+        console.log('[AdminRS] Setting showICD9Explorer to TRUE');
         setShowICD9Explorer(true);
       }
       
@@ -142,6 +150,12 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
 
   // Handle Generate AI Analysis after code selection
   const handleGenerateAnalysis = async () => {
+    // Auto-translate if not yet translated
+    if (!correctedTerm && (diagnosis || freeText)) {
+      await handleTranslateAndAnalyze();
+      return;
+    }
+
     if (!selectedICD10Code) {
       alert('Silakan pilih kode ICD-10 terlebih dahulu');
       return;
@@ -166,6 +180,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             diagnosis, 
             procedure, 
             medication,
+            service_type: serviceType,
             icd10_code: selectedICD10Code.code,
             icd9_code: selectedICD9Code?.code || null,
             use_optimized: true,
@@ -225,11 +240,11 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           validationStatus = 'warning';
         }
 
-        // Map Fornas status from fornas_summary
+        // Map Fornas status from fornas_validation (NEW FORMAT)
         let fornasStatus: 'sesuai' | 'tidak-sesuai' | 'perlu-review' = 'sesuai';
-        const fornasSummary = aiResult.fornas_summary || {};
-        const sesuaiCount = fornasSummary.sesuai || 0;
-        const totalObat = fornasSummary.total_obat || 1;
+        const fornasValidation = aiResult.fornas_validation || {};
+        const sesuaiCount = fornasValidation.sesuai_fornas || 0;
+        const totalObat = fornasValidation.total_obat || 1;
         const fornasPercentage = (sesuaiCount / totalObat) * 100;
         
         if (fornasPercentage < 50) {
@@ -277,9 +292,17 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
             status: fornasStatus,
             message: `${sesuaiCount}/${totalObat} obat sesuai Fornas (${Math.round(fornasPercentage)}%)`,
           },
-          // ⬇️ TAMBAHKAN INI
-          fornasList: aiResult.fornas_validation || [],
-          fornasSummary: aiResult.fornas_summary || {},
+          // NEW: FORNAS validation data from backend
+          fornasList: fornasValidation.validations || [],  // Array of {no, nama_obat, status_fornas, sumber_regulasi, updated_at, ...}
+          fornasSummary: {
+            total_obat: totalObat,
+            sesuai: sesuaiCount,
+            tidak_sesuai: fornasValidation.tidak_sesuai || 0,
+            perlu_justifikasi: 0,
+            update_date: fornasValidation.validations?.[0]?.updated_at || "-",
+            status_database: "Active"
+          },
+          pnpk_summary: aiResult.pnpk_summary || null,
           aiInsight: aiResult.insight_ai || 'Analisis berhasil dilakukan.',
           consistency: {
             dx_tx: aiResult.konsistensi?.dx_tx || {},
@@ -290,7 +313,32 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           },
         };
 
+        console.log('[AdminRS] Analysis Result:', analysisResult);
+        console.log('[AdminRS] FORNAS Validation:', fornasValidation);
+        console.log('[AdminRS] fornasList:', analysisResult.fornasList);
+        console.log('[AdminRS] PNPK Summary:', analysisResult.pnpk_summary);
+
         setResult(analysisResult);
+
+        // Fetch Dokumen Wajib based on diagnosis
+        console.log('[AdminRS] Fetching Dokumen Wajib for:', selectedICD10Code?.name);
+        if (selectedICD10Code?.name) {
+          try {
+            const dokumenResponse = await apiService.getDokumenWajib(selectedICD10Code.name);
+            console.log('[AdminRS] Dokumen Wajib Response:', dokumenResponse);
+            if (dokumenResponse.success && dokumenResponse.data) {
+              setDokumenWajib(dokumenResponse.data);
+              console.log('[AdminRS] Dokumen Wajib Set:', dokumenResponse.data);
+            } else {
+              console.warn('[AdminRS] Dokumen Wajib not found or failed');
+            }
+          } catch (dokError) {
+            console.error('[AdminRS] Failed to fetch dokumen wajib:', dokError);
+            // Don't block main flow if dokumen fetch fails
+          }
+        } else {
+          console.warn('[AdminRS] No selectedICD10Code.name - cannot fetch dokumen wajib');
+        }
 
         // Log the analysis
         try {
@@ -321,11 +369,11 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
       // Check specific error types
       if (statusCode === 429) {
         // Limit exceeded
-        alert(`⚠️ Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
+        alert(`⚠ Limit penggunaan AI harian Anda sudah habis!\n\nSilakan coba lagi besok atau hubungi admin untuk menambah limit.`);
       } else if (statusCode === 504 || errorCode === 'ECONNABORTED') {
         // Timeout error
         alert(
-          `⏱️ Analisis Timeout (${Math.round(processingTime / 1000)} detik)\n\n` +
+          `⏱ Analisis Timeout (${Math.round(processingTime / 1000)} detik)\n\n` +
           `Penyebab umum:\n` +
           `• OpenAI API sedang lambat\n` +
           `• Core engine sedang sibuk\n` +
@@ -356,7 +404,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
           fullErrorMessage += `\n\n🔍 Error Code: ${errorCode}`;
         }
         
-        fullErrorMessage += `\n\n⏱️ Processing Time: ${Math.round(processingTime / 1000)} detik`;
+        fullErrorMessage += `\n\n⏱ Processing Time: ${Math.round(processingTime / 1000)} detik`;
         fullErrorMessage += `\n\n💡 Tip: Pastikan Core Engine berjalan di port 8000`;
         
         alert(fullErrorMessage);
@@ -457,6 +505,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                 setDiagnosis('');
                 setProcedure('');
                 setMedication('');
+                setServiceType('');
               }}
               className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all duration-300 ${
                 inputMode === 'text'
@@ -478,10 +527,12 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
               diagnosis={diagnosis}
               procedure={procedure}
               medication={medication}
+              serviceType={serviceType}
               freeText={freeText}
               onDiagnosisChange={setDiagnosis}
               onProcedureChange={setProcedure}
               onMedicationChange={setMedication}
+              onServiceTypeChange={setServiceType}
               onFreeTextChange={setFreeText}
               onGenerate={handleGenerate}
               isLoading={isLoading}
@@ -566,11 +617,17 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                     {/* ICD-9 Tindakan Section */}
                     {showICD9Explorer && correctedProcedureTerm && (
                       <div>
+                        {console.log('[AdminRS] Rendering ICD9Explorer with:', {
+                          showICD9Explorer,
+                          correctedProcedureTerm,
+                          originalProcedureTerm,
+                          procedureSynonyms
+                        })}
                         <div className={`mb-3 px-3 py-2 rounded-md ${
                           isDark ? 'bg-green-500/5 border-l-2 border-green-500' : 'bg-green-50 border-l-2 border-green-500'
                         }`}>
                           <h4 className={`text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                            ⚕️ Tindakan ICD-9
+                            ⚕ Tindakan ICD-9
                           </h4>
                         </div>
                         <ICD9Explorer
@@ -678,7 +735,7 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                       </div>
 
                       {/* Divider */}
-                      <span className={`${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                      <span className={isDark ? "text-slate-600" : "text-gray-400"}>
                         |
                       </span>
 
@@ -705,6 +762,206 @@ export default function AdminRSDashboard({ isDark, user }: AdminRSDashboardProps
                     </div>
                   </div>
                 </div>
+
+                {/* PNPK Summary Panel - Clinical Pathway */}
+                {result?.pnpk_summary && result.pnpk_summary.available && (
+                  <div
+                    className={`rounded-xl p-6 mb-4 ${
+                      isDark
+                        ? "bg-blue-500/10 border border-blue-500/30"
+                        : "bg-blue-50 border border-blue-200"
+                    }`}
+                  >
+                    <h3
+                      className={`text-lg font-semibold mb-4 flex items-center gap-2 ${
+                        isDark ? "text-blue-300" : "text-blue-700"
+                      }`}
+                    >
+                      <span>📋</span> Ringkasan PNPK (Clinical Pathway)
+                    </h3>
+
+                    {/* PNPK Header Info */}
+                    <div
+                      className={`mb-4 p-4 rounded-lg ${
+                        isDark
+                          ? "bg-blue-500/20 border border-blue-500/30"
+                          : "bg-blue-100 border border-blue-300"
+                      }`}
+                    >
+                      <p
+                        className={`font-semibold text-lg mb-2 ${
+                          isDark ? "text-blue-200" : "text-blue-800"
+                        }`}
+                      >
+                        {result.pnpk_summary.diagnosis}
+                      </p>
+                      <p
+                        className={`text-sm ${
+                          isDark ? "text-slate-300" : "text-gray-700"
+                        }`}
+                      >
+                        Total Tahapan: <span className="font-semibold">{result.pnpk_summary.total_stages}</span>
+                      </p>
+                      
+                      {/* Match Info (if available) */}
+                      {result.pnpk_summary.match_info && (
+                        <div
+                          className={`mt-2 pt-2 border-t text-xs ${
+                            isDark ? "border-blue-400/30 text-slate-400" : "border-blue-300 text-gray-600"
+                          }`}
+                        >
+                          <p>
+                            📌 Matched: "{result.pnpk_summary.match_info.original_input}" → "{result.pnpk_summary.match_info.matched_name}"
+                          </p>
+                          <p>
+                            Confidence: {Math.round(result.pnpk_summary.match_info.confidence * 100)}% ({result.pnpk_summary.match_info.matched_by})
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PNPK Stages */}
+                    {result.pnpk_summary.stages && result.pnpk_summary.stages.length > 0 && (
+                      <div className="space-y-3">
+                        {result.pnpk_summary.stages.map((stage: any) => (
+                          <div
+                            key={stage.id}
+                            className={`p-4 rounded-lg border ${
+                              isDark
+                                ? "bg-slate-700/50 border-slate-600"
+                                : "bg-white border-gray-200"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div
+                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                                  isDark
+                                    ? "bg-blue-500/30 text-blue-200"
+                                    : "bg-blue-200 text-blue-800"
+                                }`}
+                              >
+                                {stage.order}
+                              </div>
+                              <div className="flex-1">
+                                <p
+                                  className={`font-semibold mb-2 ${
+                                    isDark ? "text-white" : "text-gray-900"
+                                  }`}
+                                >
+                                  {stage.stage_name}
+                                </p>
+                                <p
+                                  className={`text-sm whitespace-pre-line ${
+                                    isDark ? "text-slate-300" : "text-gray-600"
+                                  }`}
+                                >
+                                  {stage.description}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Dokumen Wajib Panel */}
+                {dokumenWajib && dokumenWajib.dokumen_list && dokumenWajib.dokumen_list.length > 0 && (
+                  <div
+                    className={`rounded-xl p-6 mb-4 ${
+                      isDark
+                        ? "bg-orange-500/10 border border-orange-500/30"
+                        : "bg-orange-50 border border-orange-200"
+                    }`}
+                  >
+                    <h3
+                      className={`text-lg font-semibold mb-4 flex items-center gap-2 ${
+                        isDark ? "text-orange-300" : "text-orange-700"
+                      }`}
+                    >
+                      <span>📄</span> Checklist Dokumen Wajib
+                    </h3>
+
+                    <div
+                      className={`mb-4 p-3 rounded-lg text-sm ${
+                        isDark
+                          ? "bg-orange-500/20 text-orange-200"
+                          : "bg-orange-100 text-orange-800"
+                      }`}
+                    >
+                      <p className="font-medium">
+                        Diagnosis: <span className="font-bold">{dokumenWajib.diagnosis}</span>
+                      </p>
+                      <p className="text-xs mt-1">
+                        Total dokumen yang diperlukan: {dokumenWajib.total_dokumen}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      {dokumenWajib.dokumen_list.map((doc: any) => (
+                        <div
+                          key={doc.id}
+                          className={`p-3 rounded-lg border ${
+                            doc.status === 'wajib'
+                              ? isDark
+                                ? "bg-red-500/10 border-red-500/30"
+                                : "bg-red-50 border-red-200"
+                              : doc.status === 'opsional'
+                              ? isDark
+                                ? "bg-blue-500/10 border-blue-500/30"
+                                : "bg-blue-50 border-blue-200"
+                              : isDark
+                              ? "bg-yellow-500/10 border-yellow-500/30"
+                              : "bg-yellow-50 border-yellow-200"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <span className="text-lg mt-0.5">
+                              {doc.status === 'wajib' ? '✅' : doc.status === 'opsional' ? 'ℹ️' : '⚠️'}
+                            </span>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <p
+                                  className={`font-medium ${
+                                    isDark ? "text-white" : "text-gray-900"
+                                  }`}
+                                >
+                                  {doc.nama_dokumen}
+                                </p>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                    doc.status === 'wajib'
+                                      ? isDark
+                                        ? "bg-red-500/30 text-red-200"
+                                        : "bg-red-200 text-red-800"
+                                      : doc.status === 'opsional'
+                                      ? isDark
+                                        ? "bg-blue-500/30 text-blue-200"
+                                        : "bg-blue-200 text-blue-800"
+                                      : isDark
+                                      ? "bg-yellow-500/30 text-yellow-200"
+                                      : "bg-yellow-200 text-yellow-800"
+                                  }`}
+                                >
+                                  {doc.status}
+                                </span>
+                              </div>
+                              <p
+                                className={`text-sm mt-1 ${
+                                  isDark ? "text-slate-300" : "text-gray-600"
+                                }`}
+                              >
+                                {doc.keterangan}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <ResultsPanel result={result} isDark={isDark} />
               </div>
             )}

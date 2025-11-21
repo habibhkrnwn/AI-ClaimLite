@@ -27,6 +27,11 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 # Note: fuzzywuzzy removed per new flow (we rely on exact DB match + AI normalization)
 import threading
 
@@ -233,9 +238,13 @@ class FornasAINormalizer:
         # Get database context if not provided
         if not db_context:
             similar_drugs = db_search_by_keywords(drug_name, limit=20)
-            db_context = [drug.obat_name for drug in similar_drugs]
+            db_context = [drug.obat_name for drug in similar_drugs] if similar_drugs else []
         
-        # Build RAG prompt
+        if not db_context:
+            print(f"[FORNAS_AI] ⚠️ No database context for '{drug_name}'")
+            print(f"[FORNAS_AI] AI will normalize based on pharmaceutical knowledge only")
+        
+        # Build RAG prompt (handles empty context)
         prompt = self._build_rag_prompt(drug_name, db_context)
         
         # Call AI (robust parsing)
@@ -530,22 +539,33 @@ DATABASE CONTEXT (obat yang tersedia):
             }
     
     def _build_rag_prompt(self, drug_name: str, db_context: List[str]) -> str:
-        """Build RAG prompt dengan database context"""
+        """Build RAG prompt dengan database context (or fallback to AI knowledge)"""
         
-        context_str = "\n".join([f"- {name}" for name in db_context[:15]])  # Limit 15 untuk token
-        
-        prompt = f"""Normalisasi nama obat ke bahasa Indonesia sesuai database FORNAS.
-
-INPUT OBAT: {drug_name}
-
-DATABASE CONTEXT (Obat yang mirip):
-{context_str if context_str else "- (tidak ada context)"}
+        if db_context:
+            context_str = "\n".join([f"- {name}" for name in db_context[:15]])  # Limit 15 untuk token
+            context_section = f"""DATABASE CONTEXT (Obat yang mirip):
+{context_str}
 
 TUGAS:
 1. Identifikasi nama obat generik dari input
 2. Normalisasi ke terminologi farmasi Indonesia
 3. PILIH nama yang PALING MIRIP dengan database context
-4. Pastikan nama yang dipilih ADA di database context
+4. Pastikan nama yang dipilih ADA di database context"""
+        else:
+            # No DB context - AI uses pharmaceutical knowledge
+            context_section = """DATABASE CONTEXT: (tidak tersedia)
+
+TUGAS:
+1. Identifikasi nama obat generik dari input
+2. Normalisasi ke terminologi farmasi Indonesia standar
+3. Gunakan pengetahuan farmasi untuk transliterasi yang benar
+4. Hasil akan divalidasi dengan database setelah normalisasi"""
+        
+        prompt = f"""Normalisasi nama obat ke bahasa Indonesia sesuai database FORNAS.
+
+INPUT OBAT: {drug_name}
+
+{context_section}
 
 ATURAN TRANSLITERASI:
 - "c" sebelum e/i → "s" (ceftriaxone → seftriakson)

@@ -46,26 +46,38 @@ export default function ICD9Explorer({
 
   const loadICD9Hierarchy = async () => {
     setIsLoading(true);
+    console.log('[ICD9Explorer] Loading hierarchy for:', correctedTerm, 'synonyms:', synonyms);
+    
     try {
       const { apiService } = await import('../lib/api');
       const response = await apiService.getICD9Hierarchy(correctedTerm, synonyms);
       
-      if (response.success && response.data.categories.length > 0) {
+      console.log('[ICD9Explorer] API Response:', response);
+      
+      if (response.success && response.data.categories) {
+        console.log('[ICD9Explorer] Categories found:', response.data.categories.length);
         setIcd9Categories(response.data.categories);
         
-        // Auto-select first category
-        const firstCategory = response.data.categories[0];
-        setSelectedHeadCode(firstCategory.headCode);
-        setSelectedDetails(firstCategory.details || []);
-        
-        // If no specific sub-codes, auto-select HEAD code as mapping
-        if (!firstCategory.details || firstCategory.details.length === 0) {
-          setSelectedSubCode(firstCategory.headCode);
-          onCodeSelected?.(firstCategory.headCode, firstCategory.headName);
+        if (response.data.categories.length > 0) {
+          // Auto-select first category
+          const firstCategory = response.data.categories[0];
+          console.log('[ICD9Explorer] Auto-selecting first category:', firstCategory.headCode);
+          setSelectedHeadCode(firstCategory.headCode);
+          setSelectedDetails(firstCategory.details || []);
+          
+          // If no specific sub-codes, auto-select HEAD code as mapping
+          if (!firstCategory.details || firstCategory.details.length === 0) {
+            setSelectedSubCode(firstCategory.headCode);
+            onCodeSelected?.(firstCategory.headCode, firstCategory.headName);
+          }
         }
+      } else {
+        console.warn('[ICD9Explorer] No categories found or request failed');
+        setIcd9Categories([]);
       }
     } catch (error) {
-      // Silent error handling
+      console.error('[ICD9Explorer] Error loading hierarchy:', error);
+      setIcd9Categories([]);
     } finally {
       setIsLoading(false);
     }

@@ -50,9 +50,7 @@ def db_search_exact(user_input: str) -> Optional[Dict]:
     if not user_input or user_input.strip() == "":
         return None
     
-    db = get_db_session()
-    
-    try:
+    with get_db_session() as db:
         # Clean input
         cleaned_input = user_input.strip()
         
@@ -95,9 +93,6 @@ def db_search_exact(user_input: str) -> Optional[Dict]:
             }
         
         return None
-    
-    finally:
-        db.close()
 
 
 def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
@@ -120,9 +115,7 @@ def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
     if not user_input or user_input.strip() == "":
         return []
     
-    db = get_db_session()
-    
-    try:
+    with get_db_session() as db:
         cleaned_input = user_input.strip()
         
         query = text("""
@@ -161,9 +154,6 @@ def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
             }
             for row in results
         ]
-    
-    finally:
-        db.close()
 
 
 def get_similar_diagnoses(user_input: str, limit: int = 50) -> List[Dict]:
@@ -238,9 +228,7 @@ def get_subcategories(parent_code: str) -> Dict[str, any]:
     if not category:
         return {"parent": None, "children": []}
     
-    db = get_db_session()
-    
-    try:
+    with get_db_session() as db:
         # Query parent + all children
         query = text("""
             SELECT code, name, source, validation_status
@@ -277,9 +265,6 @@ def get_subcategories(parent_code: str) -> Dict[str, any]:
             "children": children,
             "total_subcategories": len(children)
         }
-    
-    finally:
-        db.close()
 
 
 # =====================================================
@@ -333,8 +318,8 @@ def validate_ai_output_against_db(ai_output: Dict) -> Optional[Dict]:
     return None
 
 
-# =====================================================
-# 3️⃣ MAIN LOOKUP FUNCTION (WITHOUT AI - will be added in Phase 2)
+# ============================H=========================
+# 3️⃣ MAIN LOOKUP FUNCTION (WITOUT AI - will be added in Phase 2)
 # =====================================================
 
 def lookup_icd10_basic(user_input: str, max_suggestions: int = 10) -> Dict:
@@ -465,9 +450,7 @@ def get_icd10_statistics() -> Dict:
     Returns:
         Dict dengan total codes, chapters, etc
     """
-    db = get_db_session()
-    
-    try:
+    with get_db_session() as db:
         # Total codes
         total_query = text("SELECT COUNT(*) FROM icd10_master")
         total = db.execute(total_query).scalar()
@@ -487,9 +470,6 @@ def get_icd10_statistics() -> Dict:
             "database_source": "ICD10_2010",
             "last_updated": datetime.now().isoformat()
         }
-    
-    finally:
-        db.close()
 
 
 # =====================================================

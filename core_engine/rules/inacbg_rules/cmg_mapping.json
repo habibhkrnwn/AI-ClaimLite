@@ -1,0 +1,184 @@
+{
+  "description": "ICD10 Chapter to CMG (Case Mix Group) Mapping - Berdasarkan Permenkes",
+  "version": "1.0",
+  "last_updated": "2025-11-18",
+  "mappings": {
+    "A00-A99": {
+      "cmg": "A",
+      "description": "Infectious & parasitic diseases",
+      "examples": ["A09 (Gastroenteritis)", "A15 (Tuberculosis)"]
+    },
+    "B00-B99": {
+      "cmg": "A",
+      "description": "Infectious & parasitic diseases",
+      "examples": ["B01 (Varicella)", "B20-B24 (HIV)"]
+    },
+    "C00-C97": {
+      "cmg": "C",
+      "description": "Myeloproliferative system & neoplasms",
+      "examples": ["C50 (Breast cancer)", "C18 (Colon cancer)"]
+    },
+    "D00-D89": {
+      "cmg": "D",
+      "description": "Haemopoietic & immune system",
+      "examples": ["D50 (Anemia)", "D64 (Other anemias)"]
+    },
+    "E00-E90": {
+      "cmg": "E",
+      "description": "Endocrine system, nutrition & metabolism",
+      "examples": ["E11 (Type 2 diabetes)", "E87 (Electrolyte disorders)"]
+    },
+    "F00-F99": {
+      "cmg": "F",
+      "description": "Mental health and behavioral",
+      "examples": ["F32 (Depressive episode)", "F10 (Alcohol disorders)"]
+    },
+    "G00-G99": {
+      "cmg": "G",
+      "description": "Central nervous system",
+      "examples": ["G40 (Epilepsy)", "G43 (Migraine)"]
+    },
+    "H00-H59": {
+      "cmg": "H",
+      "description": "Eye and adnexa",
+      "examples": ["H25 (Cataract)", "H40 (Glaucoma)"]
+    },
+    "H60-H95": {
+      "cmg": "U",
+      "description": "Ear, nose, mouth & throat",
+      "examples": ["H66 (Otitis media)", "H81 (Vertigo)"]
+    },
+    "I00-I99": {
+      "cmg": "I",
+      "description": "Cardiovascular system",
+      "examples": ["I21 (Myocardial infarction)", "I50 (Heart failure)"]
+    },
+    "J00-J99": {
+      "cmg": "J",
+      "description": "Respiratory system",
+      "examples": ["J18 (Pneumonia)", "J44 (COPD)"]
+    },
+    "K00-K69": {
+      "cmg": "K",
+      "description": "Digestive system",
+      "examples": ["K29 (Gastritis)", "K30 (Dyspepsia)"]
+    },
+    "K70-K77": {
+      "cmg": "B",
+      "description": "Hepatobiliary & pancreatic system",
+      "examples": ["K70 (Alcoholic liver disease)", "K76 (Other liver diseases)"]
+    },
+    "K80-K87": {
+      "cmg": "B",
+      "description": "Hepatobiliary & pancreatic system",
+      "examples": ["K80 (Cholelithiasis)", "K85 (Acute pancreatitis)"]
+    },
+    "K88-K93": {
+      "cmg": "K",
+      "description": "Digestive system",
+      "examples": ["K92 (Other digestive diseases)"]
+    },
+    "L00-L99": {
+      "cmg": "L",
+      "description": "Skin, subcutaneous tissue & breast",
+      "examples": ["L02 (Cutaneous abscess)", "L89 (Pressure ulcer)"]
+    },
+    "M00-M99": {
+      "cmg": "M",
+      "description": "Musculoskeletal system & connective tissue",
+      "examples": ["M16 (Osteoarthritis hip)", "M51 (Disc disorders)"]
+    },
+    "N00-N39": {
+      "cmg": "N",
+      "description": "Nephro-urinary system",
+      "examples": ["N18 (Chronic kidney disease)", "N20 (Urolithiasis)"]
+    },
+    "N40-N53": {
+      "cmg": "V",
+      "description": "Male reproductive system",
+      "examples": ["N40 (Benign prostatic hyperplasia)", "N48 (Other penile disorders)"]
+    },
+    "N60-N99": {
+      "cmg": "W",
+      "description": "Female reproductive system",
+      "examples": ["N80 (Endometriosis)", "N83 (Ovarian cyst)"]
+    },
+    "O00-O99": {
+      "cmg": "O",
+      "description": "Deliveries",
+      "examples": ["O80 (Normal delivery)", "O34 (Maternal care)"]
+    },
+    "P00-P96": {
+      "cmg": "P",
+      "description": "Newborns & neonates",
+      "examples": ["P22 (Respiratory distress)", "P81 (Temperature regulation)"]
+    },
+    "Q00-Q99": {
+      "cmg": "Q",
+      "description": "Congenital anomalies (mapped to Ambulatory)",
+      "examples": ["Q20 (Congenital heart)", "Q35 (Cleft palate)"]
+    },
+    "S00-S99": {
+      "cmg": "S",
+      "description": "Injuries, poisonings & toxic effects",
+      "examples": ["S72 (Fracture femur)", "S06 (Intracranial injury)"]
+    },
+    "T00-T98": {
+      "cmg": "S",
+      "description": "Injuries, poisonings & toxic effects",
+      "examples": ["T50 (Poisoning)", "T82 (Prosthetic device complications)"]
+    },
+    "V01-Y98": {
+      "cmg": "S",
+      "description": "External causes of morbidity",
+      "examples": ["V89 (Traffic accident)", "W19 (Fall)"]
+    },
+    "Z00-Z99": {
+      "cmg": "Z",
+      "description": "Factors influencing health status & other contacts",
+      "examples": ["Z51 (Other medical care)", "Z38 (Liveborn infants)"]
+    }
+  },
+  "special_cmg": {
+    "Q": {
+      "description": "Ambulatory Groups - Episodic",
+      "note": "Untuk kasus rawat jalan tertentu"
+    },
+    "QP": {
+      "description": "Ambulatory Groups - Package",
+      "note": "Untuk paket rawat jalan"
+    },
+    "SA": {
+      "description": "Sub-Acute Groups",
+      "note": "Untuk perawatan sub-akut"
+    },
+    "YY": {
+      "description": "Special Procedures",
+      "note": "Prosedur khusus dengan top-up"
+    },
+    "DD": {
+      "description": "Special Drugs",
+      "note": "Obat khusus dengan top-up"
+    },
+    "II": {
+      "description": "Special Investigations I",
+      "note": "Pemeriksaan khusus dengan top-up"
+    },
+    "IJ": {
+      "description": "Special Investigations II",
+      "note": "Pemeriksaan khusus dengan top-up"
+    },
+    "RR": {
+      "description": "Special Prosthesis",
+      "note": "Prostesis khusus dengan top-up"
+    },
+    "CD": {
+      "description": "Chronic Groups",
+      "note": "Untuk penyakit kronis"
+    },
+    "X": {
+      "description": "Errors CMGs",
+      "note": "Untuk error grouping"
+    }
+  }
+}

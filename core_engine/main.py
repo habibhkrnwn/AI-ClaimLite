@@ -449,6 +449,80 @@ async def get_icd9_hierarchy(request: Request):
             content={"status": "error", "message": str(e)}
         )
 
+
+# ============================================================
+# 🏥 INA-CBG PREDICTION ENDPOINT
+# ============================================================
+@app.post("/api/lite/predict-inacbg")
+async def predict_inacbg(request: Request):
+    """
+    Predict INA-CBG code and tariff based on diagnosis and procedures
+    
+    Request body:
+    {
+        "icd10_primary": "I21.0",           // Required: Primary diagnosis ICD-10
+        "icd10_secondary": ["E11.9"],       // Optional: Secondary diagnoses
+        "icd9_list": ["36.06", "36.07"],    // Optional: ICD-9 procedures
+        "layanan": "RI",                     // Required: RI (Rawat Inap) or RJ (Rawat Jalan)
+        "regional": "1",                     // Required: 1-5 (regional tarif)
+        "kelas_rs": "B",                     // Required: A, B, C, D (hospital class)
+        "tipe_rs": "Pemerintah",            // Required: Pemerintah or Swasta
+        "kelas_bpjs": 1                      // Required: 1, 2, or 3 (BPJS class)
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "data": {
+            "cbg_code": "I-4-10-II",        // Predicted CBG code
+            "description": "...",            // CBG description
+            "tarif": 12500000,              // Tariff amount
+            "tarif_detail": {...},          // Full tariff record
+            "breakdown": {                   // CBG code breakdown
+                "cmg": "I",
+                "case_type": "4",
+                "specific": "10",
+                "severity": "II"
+            },
+            "matching_detail": {            // How the match was found
+                "level": 1,
+                "strategy": "exact_empirical",
+                "confidence": 0.95,
+                "source": "cleaned_mapping_inacbg",
+                "matched_records": 1
+            },
+            "classification": {             // Classification details
+                "cmg_source": "...",
+                "case_type_source": "...",
+                "severity_count": 1
+            },
+            "warnings": []                   // Any warnings
+        },
+        "timestamp": "2024-01-15T10:30:00"
+    }
+    """
+    try:
+        from lite_endpoints import endpoint_predict_inacbg
+        
+        data = await request.json()
+        result = endpoint_predict_inacbg(data)
+        
+        if result.get("status") == "error":
+            return JSONResponse(
+                status_code=400,
+                content=result
+            )
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        logger.error(f"Error in predict_inacbg: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
 # ============================================================
 # 🔧 CONFIGURATION ENDPOINTS
 # ============================================================

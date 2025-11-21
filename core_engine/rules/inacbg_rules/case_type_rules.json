@@ -1,0 +1,244 @@
+{
+  "description": "Case Type Rules untuk INA-CBG - Digit ke-2 dari kode",
+  "version": "1.0",
+  "last_updated": "2025-11-18",
+  "case_types": {
+    "1": {
+      "code": "1",
+      "description": "Prosedur Rawat Inap",
+      "layanan": "RI",
+      "has_procedure": true,
+      "procedure_type": "any",
+      "examples": [
+        "I-1-10-I (Cardiovascular procedure)",
+        "K-1-14-III (GI procedure berat)"
+      ]
+    },
+    "2": {
+      "code": "2",
+      "description": "Prosedur Besar Rawat Jalan",
+      "layanan": "RJ",
+      "has_procedure": true,
+      "procedure_type": "major",
+      "examples": [
+        "M-2-10-0 (Orthopedic major procedure RJ)"
+      ]
+    },
+    "3": {
+      "code": "3",
+      "description": "Prosedur Signifikan Rawat Jalan",
+      "layanan": "RJ",
+      "has_procedure": true,
+      "procedure_type": "minor",
+      "examples": [
+        "L-3-20-0 (Skin minor procedure RJ)"
+      ]
+    },
+    "4": {
+      "code": "4",
+      "description": "Rawat Inap Bukan Prosedur",
+      "layanan": "RI",
+      "has_procedure": false,
+      "procedure_type": null,
+      "examples": [
+        "I-4-10-I (AMI tanpa prosedur - ringan)",
+        "K-4-11-III (Gastritis tanpa prosedur - berat)"
+      ]
+    },
+    "5": {
+      "code": "5",
+      "description": "Rawat Jalan Bukan Prosedur",
+      "layanan": "RJ",
+      "has_procedure": false,
+      "procedure_type": null,
+      "examples": [
+        "Q-5-18-0 (Konsultasi/pemeriksaan)",
+        "Q-5-35-0 (Infeksi akut RJ)"
+      ]
+    },
+    "6": {
+      "code": "6",
+      "description": "Rawat Inap Kebidanan",
+      "layanan": "RI",
+      "has_procedure": null,
+      "procedure_type": null,
+      "special": "obstetric",
+      "icd10_chapter": "O00-O99",
+      "examples": [
+        "O-6-10-I (Normal delivery)"
+      ]
+    },
+    "7": {
+      "code": "7",
+      "description": "Rawat Jalan Kebidanan",
+      "layanan": "RJ",
+      "has_procedure": null,
+      "procedure_type": null,
+      "special": "obstetric",
+      "icd10_chapter": "O00-O99",
+      "examples": [
+        "O-7-10-0 (Antenatal care)"
+      ]
+    },
+    "8": {
+      "code": "8",
+      "description": "Rawat Inap Neonatal",
+      "layanan": "RI",
+      "has_procedure": null,
+      "procedure_type": null,
+      "special": "neonatal",
+      "icd10_chapter": "P00-P96",
+      "examples": [
+        "P-8-12-I (Respiratory distress neonatal)"
+      ]
+    },
+    "9": {
+      "code": "9",
+      "description": "Rawat Jalan Neonatal",
+      "layanan": "RJ",
+      "has_procedure": null,
+      "procedure_type": null,
+      "special": "neonatal",
+      "icd10_chapter": "P00-P96",
+      "examples": [
+        "P-9-10-0 (Neonatal follow-up)"
+      ]
+    },
+    "0": {
+      "code": "0",
+      "description": "Error Group",
+      "layanan": null,
+      "has_procedure": null,
+      "procedure_type": null,
+      "note": "Untuk kasus yang tidak bisa di-grouping"
+    }
+  },
+  "determination_logic": {
+    "priority_order": [
+      "check_special_cases",
+      "check_procedure_availability",
+      "check_layanan_type"
+    ],
+    "rules": [
+      {
+        "priority": 1,
+        "condition": "ICD10 primary starts with 'O' AND layanan='RI'",
+        "result": "6",
+        "note": "Kebidanan rawat inap"
+      },
+      {
+        "priority": 2,
+        "condition": "ICD10 primary starts with 'O' AND layanan='RJ'",
+        "result": "7",
+        "note": "Kebidanan rawat jalan"
+      },
+      {
+        "priority": 3,
+        "condition": "ICD10 primary starts with 'P' AND layanan='RI'",
+        "result": "8",
+        "note": "Neonatal rawat inap"
+      },
+      {
+        "priority": 4,
+        "condition": "ICD10 primary starts with 'P' AND layanan='RJ'",
+        "result": "9",
+        "note": "Neonatal rawat jalan"
+      },
+      {
+        "priority": 5,
+        "condition": "layanan='RI' AND has_icd9=true",
+        "result": "1",
+        "note": "Prosedur rawat inap"
+      },
+      {
+        "priority": 6,
+        "condition": "layanan='RI' AND has_icd9=false",
+        "result": "4",
+        "note": "Rawat inap tanpa prosedur"
+      },
+      {
+        "priority": 7,
+        "condition": "layanan='RJ' AND has_icd9=true AND is_major_procedure=true",
+        "result": "2",
+        "note": "Prosedur besar rawat jalan"
+      },
+      {
+        "priority": 8,
+        "condition": "layanan='RJ' AND has_icd9=true AND is_major_procedure=false",
+        "result": "3",
+        "note": "Prosedur signifikan rawat jalan"
+      },
+      {
+        "priority": 9,
+        "condition": "layanan='RJ' AND has_icd9=false",
+        "result": "5",
+        "note": "Rawat jalan tanpa prosedur"
+      }
+    ]
+  },
+  "major_procedure_chapters": {
+    "description": "ICD9 chapter ranges yang dianggap major procedure",
+    "ranges": [
+      {
+        "start": 0,
+        "end": 5,
+        "category": "CNS procedures",
+        "is_major": true
+      },
+      {
+        "start": 6,
+        "end": 7,
+        "category": "Endocrine procedures",
+        "is_major": false
+      },
+      {
+        "start": 30,
+        "end": 34,
+        "category": "Respiratory procedures",
+        "is_major": true
+      },
+      {
+        "start": 35,
+        "end": 39,
+        "category": "Cardiovascular procedures",
+        "is_major": true
+      },
+      {
+        "start": 42,
+        "end": 54,
+        "category": "Digestive procedures",
+        "is_major": true
+      },
+      {
+        "start": 55,
+        "end": 59,
+        "category": "Urinary procedures",
+        "is_major": false
+      },
+      {
+        "start": 65,
+        "end": 71,
+        "category": "Female genital procedures",
+        "is_major": true
+      },
+      {
+        "start": 72,
+        "end": 75,
+        "category": "Obstetric procedures",
+        "is_major": true
+      },
+      {
+        "start": 76,
+        "end": 84,
+        "category": "Musculoskeletal procedures",
+        "is_major": true
+      },
+      {
+        "start": 87,
+        "end": 99,
+        "category": "Diagnostic/therapeutic",
+        "is_major": false
+      }
+    ]
+  }
+}

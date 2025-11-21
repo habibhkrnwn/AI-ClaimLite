@@ -32,6 +32,7 @@ export interface AnalysisResult {
   };
   fornasList: any[];        // ADD
   fornasSummary: any;
+  pnpk_summary?: any;       // ADD for PNPK compliance
   aiInsight: string;
   consistency: {
     dx_tx: {

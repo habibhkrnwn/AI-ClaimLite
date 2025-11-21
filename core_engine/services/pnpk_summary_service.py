@@ -10,6 +10,9 @@ from typing import List, Dict, Optional, Tuple
 from difflib import SequenceMatcher
 import asyncpg
 
+# Import shared diagnosis matcher
+from services.diagnosis_matcher import DiagnosisMatcher
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -154,6 +157,31 @@ class PNPKSummaryService:
         """
         return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
     
+    @staticmethod
+    def extract_medical_keywords(diagnosis: str) -> List[str]:
+        """
+        Extract key medical terms from diagnosis name
+        Example: "Pneumonia, unspecified organism" -> ["pneumonia"]
+        Example: "Bacterial pneumonia, not elsewhere classified" -> ["bacterial", "pneumonia"]
+        """
+        # Remove common medical modifiers
+        stop_words = {
+            'unspecified', 'organism', 'not', 'elsewhere', 'classified',
+            'with', 'without', 'due', 'to', 'other', 'nos', 'specified',
+            'type', 'associated', 'related', 'induced', 'secondary'
+        }
+        
+        # Clean and tokenize
+        cleaned = diagnosis.lower()
+        # Remove punctuation
+        cleaned = re.sub(r'[,;()\[\]]', ' ', cleaned)
+        # Split into words
+        words = cleaned.split()
+        # Filter out stop words and short words
+        keywords = [w for w in words if w not in stop_words and len(w) > 2]
+        
+        return keywords
+    
     async def get_all_diagnoses(self) -> List[Dict]:
         """
         Get list of all available diagnoses in PNPK database
@@ -289,27 +317,36 @@ class PNPKSummaryService:
     async def find_best_match(self, input_diagnosis: str) -> Optional[Dict]:
         """
         Find the best matching diagnosis from database
+        Uses shared DiagnosisMatcher for consistency with Dokumen Wajib
         
         Args:
-            input_diagnosis: User input diagnosis name
+            input_diagnosis: User input diagnosis name (can be ICD-10 name)
             
         Returns:
             Best match dict with diagnosis_name and confidence score, or None
         """
-        logger.debug(f"Finding best match for: '{input_diagnosis}'")
+        logger.info(f"[PNPK] Finding best match for: '{input_diagnosis}'")
         
-        results = await self.search_diagnoses(input_diagnosis, limit=1)
+        # Get all available diagnoses
+        all_diagnoses_data = await self.get_all_diagnoses()
+        available_diagnoses = [d["diagnosis_name"] for d in all_diagnoses_data]
         
-        if results and results[0]["match_score"] >= 0.7:
-            match = {
-                "diagnosis_name": results[0]["diagnosis_name"],
-                "confidence": results[0]["match_score"],
-                "matched_by": results[0]["matched_by"]
+        # Use shared matcher (min confidence: 0.6)
+        match_result = DiagnosisMatcher.match_diagnosis(
+            input_diagnosis,
+            available_diagnoses,
+            min_confidence=0.6
+        )
+        
+        if match_result:
+            matched_name, confidence, method = match_result
+            return {
+                "diagnosis_name": matched_name,
+                "confidence": confidence,
+                "matched_by": method
             }
-            logger.info(f"Best match found: '{match['diagnosis_name']}' (confidence: {match['confidence']}, method: {match['matched_by']})")
-            return match
         
-        logger.warning(f"No sufficient match found for: '{input_diagnosis}'")
+        logger.warning(f"[PNPK] No match found for: '{input_diagnosis}'")
         return None
     
     async def get_pnpk_summary(
