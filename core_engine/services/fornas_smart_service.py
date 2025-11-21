@@ -87,7 +87,7 @@ def db_exact_match(drug_name: str) -> Optional[FornasDrug]:
     try:
         # Try obat_name first (case-insensitive exact-ish)
         result = db.query(FornasDrug).filter(
-            FornasDrug.obat_name.ilike(drug_name)
+            FornasDrug.obat_name.ilike(f"%{drug_name}%")
         ).first()
 
         if result:
@@ -654,19 +654,25 @@ class FornasSmartMatcher:
         return self._not_found_result(drug_name)
     
     def _clean_drug_name(self, name: str) -> str:
-        """Clean drug name dari dosage, route, dll"""
-        cleaned = name.strip()
-        
-        # Remove dosage (1g, 500mg, dll)
+        cleaned = name.lower().strip()
+
+        # Remove fornas markers
+        cleaned = cleaned.replace("[p]", "").replace("(p)", "")
+
+        # Remove underscores from frontend sediaan
+        cleaned = cleaned.replace("_", " ")
+
+        # Remove dosage
         cleaned = re.sub(r'\d+\s*(mg|g|ml|mcg|iu|cc)\b', '', cleaned, flags=re.IGNORECASE)
-        
-        # Remove route (IV, oral, dll)
+
+        # Remove route
         cleaned = re.sub(r'\b(iv|im|sc|po|oral|injeksi|infus|tablet|kapsul)\b', '', cleaned, flags=re.IGNORECASE)
-        
-        # Clean whitespace
+
+        # Multiple spaces → single space
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
+
         return cleaned
+
     
     def _not_found_result(self, drug_name: str) -> Dict[str, Any]:
         """Standard not found result"""
@@ -748,6 +754,12 @@ class FornasBatchValidator:
             cleaned = self.matcher._clean_drug_name(drug_name)
             db_match = db_exact_match(cleaned)
 
+            # NEW FIX — Gunakan AI normalization kalau exact match gagal
+            if not db_match:
+                ai_res = self.matcher.ai_normalizer.normalize_to_indonesian(drug_name)
+                if ai_res.get("found_in_db"):
+                    db_match = ai_res.get("db_match")
+
             if db_match:
                 fornas_drugs.append({
                     "index": idx,
@@ -781,8 +793,9 @@ class FornasBatchValidator:
         
         return {
             "fornas_validation": all_results,
-            "summary": summary
+            "fornas_summary": summary    # <-- WAJIB MENGGUNAKAN FIELD INI
         }
+
     
     def _batch_ai_validate(
         self,
@@ -976,6 +989,16 @@ def validate_fornas(
         ... )
         >>> print(result["summary"]["total_obat"])  # 2
     """
+    # === FIX AMAN (TAMBAHAN 4 BARIS) ===
+    # Jika FE hanya kirim nama generik (mis: 'fentanil'), padahal data fornas hanya punya sediaan detail,
+    # kita gunakan nama generik sebagai fallback match.
+    normalized = []
+    for drug in drug_list:
+        generic = drug.lower().split()[0]  # ambil nama generik saja
+        normalized.append(generic)
+
+    drug_list = normalized
+    # ==================================
     validator = FornasBatchValidator()
     return validator.validate_drugs(drug_list, diagnosis_icd10, diagnosis_name)
 

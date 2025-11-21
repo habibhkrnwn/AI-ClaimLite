@@ -263,10 +263,11 @@ class ApiService {
   }
 
   async analyzeClaimAI(data: {
-    mode?: 'form' | 'text';
+    mode: 'form' | 'text';
     diagnosis?: string;
     procedure?: string;
     medication?: string;
+    drug_list: string[];
     input_text?: string;
     icd10_code?: string;
     icd9_code?: string | null;

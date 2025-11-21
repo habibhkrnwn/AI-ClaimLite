@@ -420,33 +420,56 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
     
     setIsLoading(true);
     const startTime = Date.now();
+
+    // ================================================
+    // 1) CONSTRUCT DRUG LIST
+    // ================================================
+    let drugList: string[] = [];
+
+    // ================================================
+    // FIX: Gunakan nama obat generik, bukan ID sediaan
+    // ================================================
+    if (selectedMedicationDetails.length > 0) {
+        drugList = [selectedMedicationCategory?.generic_name.toLowerCase()];
+    }
+    else if (medication) {
+        // User ketik manual → sudah generik
+        drugList = [medication.toLowerCase().split(" ")[0]];
+    }
+
+    // Jika free text → pakai hasil parsed "medication"
+    else if (freeText && medication) {
+      drugList = [medication];
+    }
     
     try {
       // Determine input mode
-      const inputMode: InputMode = freeText.trim() ? 'text' : 'form';
+      const modeToUse: InputMode = freeText.trim() ? 'text' : 'form';
       
       // Prepare request data based on input mode
-      const requestData = inputMode === 'text' 
-        ? { 
-            mode: 'text' as const, 
-            input_text: freeText,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          }
-        : { 
-            mode: 'form' as const, 
-            diagnosis, 
-            procedure, 
-            medication,
+      const requestData: any = modeToUse === 'text'
+      ? {
+          mode: 'text',
+          input_text: freeText,
+          drug_list: drugList,   // ⬅ WAJIB
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        }
+      : {
+          mode: 'form',
+          diagnosis,
+          procedure,
+          medication,
             service_type: serviceType,
             bpjs_class: bpjsClass,
-            icd10_code: selectedICD10Code.code,
-            icd9_code: selectedICD9Code?.code || null,
-            use_optimized: true,
-            save_history: true
-          };
+          drug_list: drugList,   // ⬅ WAJIB
+          icd10_code: selectedICD10Code.code,
+          icd9_code: selectedICD9Code?.code || null,
+          use_optimized: true,
+          save_history: true
+        };
 
       console.log('[Generate Analysis] Request data:', requestData);
       console.log('[Generate Analysis] Starting analysis at', new Date().toISOString());
@@ -468,27 +491,30 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         }
 
         // Transform API response to match AnalysisResult interface
-        const aiResult = response.data;
+        const aiResult = response.data?.data ?? response.data;
         
         // Use selected ICD-10 code instead of auto-detected
         const icd10Code = selectedICD10Code.code; // Use user-selected code
         
-        // Extract ICD-9 codes from tindakan array (NEW FORMAT)
+        // Extract ICD-9 codes (support BOTH new + old format)
         const tindakanArray = aiResult.klasifikasi?.tindakan || [];
+
         const icd9Codes = tindakanArray
           .map((t: any) => {
-            // New format: tindakan is array of objects with icd9 property
+            // NEW FORMAT: object { icd9: "87.09" }
             if (typeof t === 'object' && t.icd9 && t.icd9 !== '-') {
               return t.icd9;
             }
-            // Old format fallback: extract from string pattern
+
+            // OLD FORMAT: "Foto thorax (87.44)"
             if (typeof t === 'string') {
-              const match = t.match(/\((\d{2}\.\d{2})\)/);
+              const match = t.match(/\b(\d{2}\.\d{2}|\d{2}\.\d{1}|\d{2}\d{2})\b/);
               return match ? match[1] : null;
             }
+
             return null;
           })
-          .filter((code: any) => code !== null);
+          .filter((code: any) => code);
 
         // Map validation status from validasi_klinis
         let validationStatus: 'valid' | 'warning' | 'invalid' = 'valid';
@@ -539,7 +565,11 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
         const analysisResult: AnalysisResult = {
           classification: {
             icd10: icd10Code ? [icd10Code] : [],
-            icd9: icd9Codes,
+            icd9: icd9Codes.length > 0 
+                  ? icd9Codes 
+                  : selectedICD9Code 
+                    ? [selectedICD9Code.code] 
+                    : [],
           },
           validation: {
             status: validationStatus,
@@ -739,42 +769,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
             Smart Input Hybrid
           </h2>
 
-          {/* AI Usage Indicator */}
-          {aiUsage && (
-            <div className={`mb-4 p-3 rounded-lg flex-shrink-0 ${
-              isDark ? 'bg-slate-700/50 border border-cyan-500/20' : 'bg-blue-50/80 border border-blue-200'
-            }`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-xs font-medium ${isDark ? 'text-cyan-300' : 'text-blue-700'}`}>
-                  AI Usage Today
-                </span>
-                <span className={`text-xs font-bold ${
-                  aiUsage.remaining === 0 
-                    ? 'text-red-500' 
-                    : aiUsage.remaining < 10 
-                    ? 'text-yellow-500' 
-                    : isDark ? 'text-cyan-400' : 'text-blue-600'
-                }`}>
-                  {aiUsage.used}/{aiUsage.limit}
-                </span>
-              </div>
-              <div className={`w-full h-2 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-200'}`}>
-                <div 
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    aiUsage.remaining === 0 
-                      ? 'bg-red-500' 
-                      : aiUsage.remaining < 10 
-                      ? 'bg-yellow-500' 
-                      : 'bg-gradient-to-r from-cyan-500 to-blue-500'
-                  }`}
-                  style={{ width: `${(aiUsage.used / aiUsage.limit) * 100}%` }}
-                />
-              </div>
-              <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                {aiUsage.remaining} requests remaining
-              </p>
-            </div>
-          )}
+          {/* AI Usage Indicator (moved to navbar profile menu) */}
 
           {/* Input Mode Toggle */}
           <div
@@ -786,7 +781,7 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
           >
             <button
               onClick={() => handleInputModeChange('text')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-300 ${
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
                 inputMode === 'text'
                   ? isDark
                     ? 'bg-cyan-500 text-slate-900 shadow-md'

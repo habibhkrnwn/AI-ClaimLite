@@ -1,3 +1,4 @@
+import { useRef, KeyboardEvent } from 'react';
 import { FileText, Activity, Pill, Building2 } from 'lucide-react';
 
 type InputMode = 'form' | 'text';
@@ -48,6 +49,40 @@ export default function SmartInputPanel({
   const safeProcedure = String(procedure || '');
   const safeMedication = String(medication || '');
   const safeFreeText = String(freeText || '');
+
+  const diagnosisRef = useRef<HTMLInputElement | null>(null);
+  const procedureRef = useRef<HTMLInputElement | null>(null);
+  const medicationRef = useRef<HTMLInputElement | null>(null);
+
+  const isFormSubmitDisabled =
+    isLoading ||
+    !safeDiagnosis.trim() ||
+    !safeProcedure.trim() ||
+    !safeMedication.trim() ||
+    isLimitReached;
+
+  const handleDiagnosisKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      procedureRef.current?.focus();
+    }
+  };
+
+  const handleProcedureKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      medicationRef.current?.focus();
+    }
+  };
+
+  const handleMedicationKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!isFormSubmitDisabled) {
+        void onGenerate();
+      }
+    }
+  };
 
   // Original Input Mode (Form or Text)
   if (mode === 'text') {
@@ -101,6 +136,8 @@ export default function SmartInputPanel({
             type="text"
             value={safeDiagnosis}
             onChange={(e) => onDiagnosisChange(e.target.value)}
+            ref={diagnosisRef}
+            onKeyDown={handleDiagnosisKeyDown}
             placeholder="Masukkan diagnosis (mis: paru2 basah)..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -121,6 +158,8 @@ export default function SmartInputPanel({
             type="text"
             value={safeProcedure}
             onChange={(e) => onProcedureChange(e.target.value)}
+            ref={procedureRef}
+            onKeyDown={handleProcedureKeyDown}
             placeholder="Masukkan tindakan medis..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -141,6 +180,8 @@ export default function SmartInputPanel({
             type="text"
             value={safeMedication}
             onChange={(e) => onMedicationChange(e.target.value)}
+            ref={medicationRef}
+            onKeyDown={handleMedicationKeyDown}
             placeholder="Masukkan daftar obat..."
             className={`w-full px-4 py-2.5 rounded-lg border ${
               isDark
@@ -202,7 +243,7 @@ export default function SmartInputPanel({
 
       <button
         onClick={onGenerate}
-        disabled={isLoading || !diagnosis.trim() || !procedure.trim() || !medication.trim() || !serviceType.trim() || !bpjsClass.trim() || isLimitReached}
+        disabled={isFormSubmitDisabled}
         className={`w-full py-3 px-6 rounded-lg font-semibold text-white transition-all duration-300 flex-shrink-0 ${
           isLimitReached
             ? 'bg-gray-400 cursor-not-allowed'
