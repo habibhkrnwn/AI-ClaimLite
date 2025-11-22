@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { FileText, Pill } from 'lucide-react';
 import SmartInputPanel from './SmartInputPanel';
 import ICD10Explorer from './ICD10Explorer';
@@ -266,18 +267,26 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
       const medicationToUse = inputMode === 'text' ? medication : medication;
       setOriginalMedicationTerm(medicationToUse || '');
 
+      // === NEW FLOW: Using Translate Services (NO DUPLICATE SMART LOOKUP) ===
       const promises: Promise<any>[] = [];
+      
+      // Translate Medical Term (Diagnosis)
       if (inputTerm) {
         promises.push(apiService.translateMedicalTerm(inputTerm));
       } else {
         promises.push(Promise.resolve(null));
       }
+      
+      // Translate Procedure Term (ICD-9)
       if (procedureTerm) {
         promises.push(apiService.translateProcedureTerm(procedureTerm));
       } else {
         promises.push(Promise.resolve(null));
       }
+      
+      // Translate Medication Term (FORNAS)
       if (medicationToUse) {
+        setIsMedicationLoading(true);
         promises.push(apiService.translateMedicationTerm(medicationToUse));
       } else {
         promises.push(Promise.resolve(null));
@@ -285,63 +294,75 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
 
       const [dxResp, pxResp, medResp] = await Promise.all(promises);
 
-      // Handle diagnosis translation
-      if (inputTerm) {
-        if (dxResp && dxResp.success) {
-          const medicalTerm = dxResp.data.translated;
-          setCorrectedTerm(medicalTerm);
-        } else {
-          setCorrectedTerm(inputTerm);
-        }
+      // Handle Medical Term Translation (Diagnosis)
+      if (inputTerm && dxResp && dxResp.success) {
+        const data = dxResp.data;
+        console.log('[AdminRS] Translated Diagnosis Response:', data);
+        
+        // Translate returns {original, translated, confidence}
+        const translatedTerm = data.translated || inputTerm;
+        console.log('[AdminRS] Diagnosis translated:', inputTerm, '→', translatedTerm);
+        
+        // Force synchronous state update to prevent race condition
+        flushSync(() => {
+          setOriginalSearchTerm(inputTerm);
+          setCorrectedTerm(translatedTerm);
+        });
+        
+        // Show explorer after state is guaranteed to update
         setShowICD10Explorer(true);
       }
 
-      // Handle procedure translation
-      if (procedureTerm) {
-        console.log('[AdminRS] Procedure translation response:', pxResp);
-        if (pxResp && pxResp.success) {
-          const medicalProcedureTerm = pxResp.data.translated;
-          const synonyms = pxResp.data.synonyms || [medicalProcedureTerm];
-          console.log('[AdminRS] Setting correctedProcedureTerm:', medicalProcedureTerm, 'synonyms:', synonyms);
-          setCorrectedProcedureTerm(medicalProcedureTerm);
-          setProcedureSynonyms(synonyms);
-        } else {
-          console.log('[AdminRS] No success, using original procedureTerm:', procedureTerm);
-          setCorrectedProcedureTerm(procedureTerm);
-          setProcedureSynonyms([procedureTerm]);
-        }
-        console.log('[AdminRS] Setting showICD9Explorer to TRUE');
+      // Handle Procedure Term Translation (ICD-9)
+      if (procedureTerm && pxResp && pxResp.success) {
+        const data = pxResp.data;
+        console.log('[AdminRS] Translated Procedure:', data);
+        
+        // Translate just returns {original, translated, confidence}
+        // Set translated term and show ICD-9 Explorer for code selection
+        const translatedTerm = data.translated || procedureTerm;
+        setCorrectedProcedureTerm(translatedTerm);
+        setProcedureSynonyms([translatedTerm]);
+        console.log('[AdminRS] Procedure translated:', procedureTerm, '→', translatedTerm);
         setShowICD9Explorer(true);
       }
       
-      // Handle medication translation (ICD-like hierarchy)
-      if (medicationToUse) {
-        setIsMedicationLoading(true);
-        if (medResp && medResp.success) {
-          const normalized = medResp.data.normalized_generic || medResp.data.normalized;
-          const categories = medResp.data.categories || [];
+      // Handle Medication Term Translation (FORNAS)
+      if (medicationToUse && medResp && medResp.success) {
+        const data = medResp.data;
+        console.log('[AdminRS] Translated Medication Response:', data);
+        
+        // Response bisa punya 2 format:
+        // 1. Simple: {original, translated, confidence}
+        // 2. Full: {original, normalized, categories: [...]}
+        
+        const translatedTerm = data.normalized || data.translated || medicationToUse;
+        setNormalizedMedicationTerm(translatedTerm);
+        console.log('[AdminRS] Medication normalized:', medicationToUse, '→', translatedTerm);
+        
+        // Check if categories already included in translate response
+        if (data.categories && data.categories.length > 0) {
+          console.log('[AdminRS] Categories found in translate response:', data.categories.length);
+          setMedicationCategories(data.categories);
           
-          // DEBUG: Log categories untuk check kode_fornas
-          console.log('[MEDICATION] Categories:', categories);
-          categories.forEach((cat: any, catIdx: number) => {
-            console.log(`[MEDICATION] Category ${catIdx}: ${cat.generic_name} (${cat.total_dosage_forms} sediaan)`);
-            cat.details?.forEach((detail: any, detailIdx: number) => {
-              console.log(`  [${detailIdx}] Kode: ${detail.kode_fornas} | Obat: ${detail.obat_name}`);
-            });
-          });
+          // Auto-select first category
+          setSelectedMedicationCategory(data.categories[0]);
           
-          setNormalizedMedicationTerm(normalized);
-          setMedicationCategories(categories);
-          // Auto-select first category if available
-          if (categories.length > 0) {
-            setSelectedMedicationCategory(categories[0]);
-          }
+          setIsMedicationLoading(false);
+          setShowMedicationExplorer(true);
         } else {
-          setNormalizedMedicationTerm(medicationToUse);
+          console.warn('[AdminRS] No categories in translate response, medication explorer will be empty');
           setMedicationCategories([]);
+          setIsMedicationLoading(false);
+          setShowMedicationExplorer(true);
         }
+      } else if (medicationToUse) {
+        // Error or no response
+        console.warn('[AdminRS] Medication translation failed or no response');
+        setNormalizedMedicationTerm(medicationToUse);
+        setMedicationCategories([]);
         setIsMedicationLoading(false);
-        setShowMedicationExplorer(true);
+        setShowMedicationExplorer(false);
       }
       
     } catch (error: any) {
@@ -1149,109 +1170,6 @@ export default function AdminRSDashboard({ isDark }: AdminRSDashboardProps) {
                     </button>
                   </div>
                 </div>
-
-                {/* PNPK Summary Panel - Clinical Pathway */}
-                {result?.pnpk_summary && result.pnpk_summary.available && (
-                  <div
-                    className={`rounded-xl p-6 mb-4 ${
-                      isDark
-                        ? "bg-blue-500/10 border border-blue-500/30"
-                        : "bg-blue-50 border border-blue-200"
-                    }`}
-                  >
-                    <h3
-                      className={`text-lg font-semibold mb-4 flex items-center gap-2 ${
-                        isDark ? "text-blue-300" : "text-blue-700"
-                      }`}
-                    >
-                      <span>📋</span> Ringkasan PNPK (Clinical Pathway)
-                    </h3>
-
-                    {/* PNPK Header Info */}
-                    <div
-                      className={`mb-4 p-4 rounded-lg ${
-                        isDark
-                          ? "bg-blue-500/20 border border-blue-500/30"
-                          : "bg-blue-100 border border-blue-300"
-                      }`}
-                    >
-                      <p
-                        className={`font-semibold text-lg mb-2 ${
-                          isDark ? "text-blue-200" : "text-blue-800"
-                        }`}
-                      >
-                        {result.pnpk_summary.diagnosis}
-                      </p>
-                      <p
-                        className={`text-sm ${
-                          isDark ? "text-slate-300" : "text-gray-700"
-                        }`}
-                      >
-                        Total Tahapan: <span className="font-semibold">{result.pnpk_summary.total_stages}</span>
-                      </p>
-                      
-                      {/* Match Info (if available) */}
-                      {result.pnpk_summary.match_info && (
-                        <div
-                          className={`mt-2 pt-2 border-t text-xs ${
-                            isDark ? "border-blue-400/30 text-slate-400" : "border-blue-300 text-gray-600"
-                          }`}
-                        >
-                          <p>
-                            📌 Matched: "{result.pnpk_summary.match_info.original_input}" → "{result.pnpk_summary.match_info.matched_name}"
-                          </p>
-                          <p>
-                            Confidence: {Math.round(result.pnpk_summary.match_info.confidence * 100)}% ({result.pnpk_summary.match_info.matched_by})
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* PNPK Stages */}
-                    {result.pnpk_summary.stages && result.pnpk_summary.stages.length > 0 && (
-                      <div className="space-y-3">
-                        {result.pnpk_summary.stages.map((stage: any) => (
-                          <div
-                            key={stage.id}
-                            className={`p-4 rounded-lg border ${
-                              isDark
-                                ? "bg-slate-700/50 border-slate-600"
-                                : "bg-white border-gray-200"
-                            }`}
-                          >
-                            <div className="flex items-start gap-3">
-                              <div
-                                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                                  isDark
-                                    ? "bg-blue-500/30 text-blue-200"
-                                    : "bg-blue-200 text-blue-800"
-                                }`}
-                              >
-                                {stage.order}
-                              </div>
-                              <div className="flex-1">
-                                <p
-                                  className={`font-semibold mb-2 ${
-                                    isDark ? "text-white" : "text-gray-900"
-                                  }`}
-                                >
-                                  {stage.stage_name}
-                                </p>
-                                <p
-                                  className={`text-sm whitespace-pre-line ${
-                                    isDark ? "text-slate-300" : "text-gray-600"
-                                  }`}
-                                >
-                                  {stage.description}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* Conditional Panel based on resultViewMode */}
                 {resultViewMode === 'analysis' ? (

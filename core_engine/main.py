@@ -362,6 +362,25 @@ async def translate_procedure_term(request: Request):
 # ============================================================
 # 💊 TRANSLATE MEDICATION ENDPOINT
 # ============================================================
+# ============================================================
+# 🔗 ALIAS ROUTES FOR FRONTEND COMPATIBILITY
+# ============================================================
+@app.post("/api/ai/translate-medical-term")
+async def translate_medical_term_alias(request: Request):
+    """Alias for /api/lite/translate-medical"""
+    return await translate_medical_term(request)
+
+@app.post("/api/ai/translate-procedure-term")
+async def translate_procedure_term_alias(request: Request):
+    """Alias for /api/lite/translate-procedure"""
+    return await translate_procedure_term(request)
+
+@app.post("/api/ai/translate-medication-term")
+async def translate_medication_term_alias(request: Request):
+    """Alias for /api/lite/translate-medication"""
+    return await translate_medication_term(request)
+
+
 @app.post("/api/lite/translate-medication")
 async def translate_medication_term(request: Request):
     """
@@ -494,6 +513,12 @@ async def get_icd9_hierarchy(request: Request):
             content={"status": "error", "message": str(e)}
         )
 
+
+# ============================================================
+# ❌ DEPRECATED: SMART LOOKUP ENDPOINTS (REMOVED - USE TRANSLATE ENDPOINTS)
+# These endpoints were duplicate functionality with translate endpoints.
+# Use /api/ai/translate-medical-term, translate-procedure-term, translate-medication-term instead.
+# ============================================================
 
 # ============================================================
 # 🏥 INA-CBG PREDICTION ENDPOINT

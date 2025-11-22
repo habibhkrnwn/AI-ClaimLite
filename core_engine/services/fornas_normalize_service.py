@@ -330,48 +330,58 @@ def get_drug_details(drug_name: str) -> List[Dict]:
 
 def lookup_fornas_smart(drug_input: str) -> Dict:
     """
-    Smart FORNAS lookup - NEW FLOW
+    Smart FORNAS lookup - CONSISTENT FLOW dengan ICD-10 & ICD-9
     
-    Flow:
-    1. Exact match → Return drug details directly
-    2. Partial match (< 5 results) → Return suggestions
-    3. AI normalize ke Indonesian → Search DB → Return recommendations (PANEL KIRI)
+    Flow (EXACT SAME as ICD-10/ICD-9):
+    1. Exact match di database → Return drug details (Panel Kanan)
+    2. Partial match (≤5 hasil) → Return suggestions (Panel Kiri)
+    3. AI normalize ke Indonesian name → Search DB → Return ALL drugs (Panel Kiri)
+    4. User pilih dari Panel Kiri → Frontend fetch details (Panel Kanan)
     
     Args:
-        drug_input: User input
+        drug_input: User input (bisa English/typo, e.g., "ceftriaxone", "seftriakson")
     
     Returns:
-        Dict dengan flow type dan data
+        Dict dengan flow type dan data (consistent format)
     """
-    print(f"\n[FORNAS_SMART] Processing: {drug_input}")
+    print(f"\n[FORNAS_SMART_RAG] Processing: {drug_input}")
     
-    # Step 1: Exact match
+    # Step 1: Exact match (fast path)
     db = SessionLocal()
-    exact = db.query(FornasDrug).filter(
-        FornasDrug.obat_name.ilike(drug_input.strip())
-    ).first()
-    db.close()
+    try:
+        exact = db.query(FornasDrug).filter(
+            FornasDrug.obat_name.ilike(drug_input.strip())
+        ).first()
+    finally:
+        db.close()
     
     if exact:
-        print("[FORNAS_SMART] ✅ Exact match found")
+        print(f"[FORNAS_SMART_RAG] ✅ Exact match found: {exact.obat_name}")
         details = get_drug_details(exact.obat_name)
         
         return {
             "flow": "direct",
             "requires_modal": False,
-            "selected_drug": exact.obat_name,
-            "details": details,
+            "status": "success",
+            "result": {
+                "obat_name": exact.obat_name,
+                "kode_fornas": exact.kode_fornas,
+                "kelas_terapi": exact.kelas_terapi,
+                "subkelas_terapi": exact.subkelas_terapi,
+                "details": details
+            },
             "ai_used": False
         }
     
-    # Step 2: Partial match (jika sedikit, langsung suggest)
+    # Step 2: Partial match (jika sedikit, langsung suggest tanpa AI)
     partial = search_drugs_by_name(drug_input, limit=10)
     
     if partial and len(partial) <= 5:
-        print(f"[FORNAS_SMART] ✅ Found {len(partial)} partial matches (skip AI)")
+        print(f"[FORNAS_SMART_RAG] ✅ Found {len(partial)} partial matches (skip AI)")
         return {
             "flow": "suggestion",
             "requires_modal": True,
+            "status": "suggestions",
             "suggestions": partial,
             "total_suggestions": len(partial),
             "ai_used": False,
@@ -379,48 +389,51 @@ def lookup_fornas_smart(drug_input: str) -> Dict:
         }
     
     # Step 3: AI Normalize ke Indonesian
-    print("[FORNAS_SMART] 🤖 Using AI to normalize to Indonesian...")
+    print("[FORNAS_SMART_RAG] 🤖 Using AI to normalize to Indonesian...")
     ai_result = ai_normalize_to_indonesian(drug_input)
     
     indonesian_name = ai_result.get("indonesian_name", "")
     
     if not indonesian_name or ai_result.get("error"):
-        print("[FORNAS_SMART] ⚠️ AI normalization failed, using partial results")
+        print("[FORNAS_SMART_RAG] ⚠️ AI normalization failed, using partial results")
         return {
             "flow": "fallback_suggestions",
             "requires_modal": True,
+            "status": "suggestions",
             "suggestions": partial[:10] if partial else [],
             "total_suggestions": len(partial[:10]) if partial else 0,
             "ai_used": True,
-            "message": "AI normalization failed. Berikut suggestions:"
+            "message": "AI normalization failed. Berikut suggestions berdasarkan input:"
         }
     
-    print(f"[FORNAS_SMART] ✅ AI normalized: '{drug_input}' → '{indonesian_name}'")
+    print(f"[FORNAS_SMART_RAG] ✅ AI normalized: '{drug_input}' → '{indonesian_name}'")
     
     # Step 4: Search DB dengan normalized name
-    print(f"[FORNAS_SMART] 🔍 Searching DB for drugs containing '{indonesian_name}'...")
+    print(f"[FORNAS_SMART_RAG] 🔍 Searching DB for all drugs containing '{indonesian_name}'...")
     recommendations = search_drugs_by_name(indonesian_name, limit=50)
     
     if not recommendations:
-        print("[FORNAS_SMART] ⚠️ No matches for normalized name, fallback to original")
+        print("[FORNAS_SMART_RAG] ⚠️ No matches for normalized name, fallback to original input")
         recommendations = partial[:10] if partial else []
     
     if len(recommendations) == 0:
         return {
             "flow": "not_found",
             "requires_modal": True,
+            "status": "not_found",
             "suggestions": [],
             "total_suggestions": 0,
             "ai_used": True,
             "message": f"Tidak ditemukan obat untuk '{drug_input}' (normalized: '{indonesian_name}')"
         }
     
-    # Step 5: Return recommendations (PANEL KIRI)
-    print(f"[FORNAS_SMART] ✅ Found {len(recommendations)} recommendations")
+    # Step 5: Return ALL recommendations (PANEL KIRI - belum detail)
+    print(f"[FORNAS_SMART_RAG] ✅ Found {len(recommendations)} drug categories")
     
     return {
         "flow": "ai_recommendations",
         "requires_modal": True,
+        "status": "suggestions",
         "suggestions": recommendations,
         "total_suggestions": len(recommendations),
         "ai_used": True,

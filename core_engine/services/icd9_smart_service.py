@@ -131,27 +131,52 @@ def partial_search_icd9(procedure_input: str, limit: int = 10) -> List[Dict]:
         try:
             search_term = procedure_input.strip().lower()
             
-            # Strategy 1: Name starts with input (highest relevance)
-            query = text("""
-                SELECT code, name,
-                       CASE 
-                           WHEN LOWER(name) LIKE :starts_with THEN 90
-                           WHEN LOWER(name) LIKE :contains THEN 70
-                           ELSE 50
-                       END as confidence
-                FROM icd9cm_master 
-                WHERE LOWER(name) LIKE :contains
-                ORDER BY confidence DESC, LENGTH(name) ASC
-                LIMIT :limit
-            """)
+            # FIX: Normalize typos - "nebulizr" → "nebuliz", remove trailing incomplete chars
+            # Common typo patterns: missing vowels, wrong endings
+            normalized_term = search_term.rstrip('r').rstrip('z')  # "nebulizr" → "nebuli"
             
-            results = session.execute(query, {
-                "starts_with": f"{search_term}%",
-                "contains": f"%{search_term}%",
-                "limit": limit
-            }).fetchall()
+            # Try multiple search variations
+            search_variations = [search_term]
+            if normalized_term != search_term and len(normalized_term) >= 4:
+                search_variations.append(normalized_term)
             
-            if results:
+            all_results = []
+            for term in search_variations:
+                # Strategy 1: Name starts with input (highest relevance)
+                query = text("""
+                    SELECT code, name,
+                           CASE 
+                               WHEN LOWER(name) LIKE :starts_with THEN 90
+                               WHEN LOWER(name) LIKE :contains THEN 70
+                               ELSE 50
+                           END as confidence
+                    FROM icd9cm_master 
+                    WHERE LOWER(name) LIKE :contains
+                    ORDER BY confidence DESC, LENGTH(name) ASC
+                    LIMIT :limit
+                """)
+                
+                results = session.execute(query, {
+                    "starts_with": f"{term}%",
+                    "contains": f"%{term}%",
+                    "limit": limit
+                }).fetchall()
+                
+                all_results.extend(results)
+                
+                # If found results, stop trying other variations
+                if results:
+                    break
+            
+            # Remove duplicates
+            if all_results:
+                seen_codes = set()
+                unique_results = []
+                for row in all_results:
+                    if row[0] not in seen_codes:
+                        seen_codes.add(row[0])
+                        unique_results.append(row)
+                
                 matches = [
                     {
                         "code": row[0],
@@ -160,7 +185,7 @@ def partial_search_icd9(procedure_input: str, limit: int = 10) -> List[Dict]:
                         "valid": True,
                         "confidence": row[2]
                     }
-                    for row in results
+                    for row in unique_results[:limit]
                 ]
                 print(f"[ICD9] 🔍 Found {len(matches)} partial matches for '{procedure_input}'")
                 return matches
@@ -188,14 +213,19 @@ def get_similar_procedures_from_db(procedure_input: str, limit: int = 20) -> Lis
     
     with get_db_session() as session:
         try:
-            # Extract keywords
-            keywords = procedure_input.lower().split()
+            # FIX: Normalize typo first
+            search_input = procedure_input.lower().strip()
+            normalized_input = search_input.rstrip('r').rstrip('z')  # Handle typos
+            
+            # Extract keywords from both original and normalized
+            keywords = search_input.split() + (normalized_input.split() if normalized_input != search_input else [])
+            keywords = list(set(keywords))  # Remove duplicates
             
             # Build search condition (ILIKE untuk partial match)
             search_conditions = []
             params = {}
             
-            for idx, keyword in enumerate(keywords[:3]):  # Max 3 keywords
+            for idx, keyword in enumerate(keywords[:5]):  # Max 5 keywords (increased for better coverage)
                 if len(keyword) > 2:  # Skip very short words
                     param_name = f"keyword{idx}"
                     search_conditions.append(f"LOWER(name) LIKE :{param_name}")
@@ -371,16 +401,7 @@ def ai_normalize_procedure_to_term(procedure_input: str) -> Dict:
         }
 
 
-# Legacy function - kept for backward compatibility but deprecated
-def normalize_procedure_with_ai(procedure_input: str) -> List[str]:
-    """
-    DEPRECATED: Use ai_normalize_procedure_to_term() instead
-    
-    This function is kept for backward compatibility but now uses the new flow.
-    Returns empty list to force fallback to new approach.
-    """
-    print("[ICD9] ⚠️ normalize_procedure_with_ai() is deprecated, use new flow")
-    return []  # Force fallback to new approach
+# REMOVED: normalize_procedure_with_ai() - deprecated, use ai_normalize_procedure_to_term()
 
 
 def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
@@ -457,25 +478,25 @@ def validate_ai_suggestions(ai_suggestions: List[str]) -> List[Dict]:
 
 def lookup_icd9_procedure(procedure_input: str) -> Dict:
     """
-    Main orchestrator - Enhanced 4-step flow with SMART MATCHER.
+    Main orchestrator - CONSISTENT FLOW with ICD-10 & FORNAS.
     
-    Flow:
-        1. Exact search di database
-        2. Smart keyword search (NEW!)
-        3. Partial/fuzzy search di database
-        4. Jika tidak ada → AI normalization
-        5. Validate AI suggestions
-        6. Return results
+    Flow (AI-FIRST APPROACH):
+        1. AI normalization (typo correction, Indo→Eng translation)
+        2. Exact search dengan normalized term
+        3. Smart keyword search (fallback)
+        4. Partial search (last resort)
     
     Args:
-        procedure_input: Input dari user
+        procedure_input: Input dari user (bisa typo, bahasa Indonesia, dll)
     
     Returns:
         {
             "status": "success" | "suggestions" | "not_found",
             "result": {...} atau None,
             "suggestions": [...],
-            "needs_selection": True/False
+            "needs_selection": True/False,
+            "ai_used": True/False,
+            "flow": "exact" | "ai_normalized" | "smart_search" | "partial"
         }
     """
     if not procedure_input or procedure_input.strip() == "":
@@ -484,90 +505,149 @@ def lookup_icd9_procedure(procedure_input: str) -> Dict:
             "result": None,
             "suggestions": [],
             "needs_selection": False,
-            "message": "No input provided"
+            "message": "No input provided",
+            "ai_used": False,
+            "flow": None
         }
     
     print(f"\n[ICD9] 🔍 Looking up: '{procedure_input}'")
     
-    # STEP 1: Exact search
+    # STEP 1: Try exact search first (fast path)
     exact_match = exact_search_icd9(procedure_input)
     if exact_match:
+        print(f"[ICD9] ✅ Exact match found (fast path)")
         return {
             "status": "success",
             "result": exact_match,
             "suggestions": [],
-            "needs_selection": False
+            "needs_selection": False,
+            "ai_used": False,
+            "flow": "exact"
         }
     
-    # STEP 2: SMART KEYWORD SEARCH (NEW!)
+    # STEP 2: AI NORMALIZATION (handle typo + translation)
+    # This is the CORRECT approach - AI untuk normalize dulu baru search DB
+    print(f"[ICD9] 🤖 Using AI to normalize term...")
+    
+    try:
+        ai_result = ai_normalize_procedure_to_term(procedure_input)
+        
+        if ai_result and ai_result.get("medical_term"):
+            normalized_term = ai_result["medical_term"]
+            print(f"[ICD9] 🤖 AI normalized: '{procedure_input}' → '{normalized_term}'")
+            
+            # Search database dengan normalized term
+            exact_match = exact_search_icd9(normalized_term)
+            if exact_match:
+                print(f"[ICD9] ✅ Match found with AI-normalized term")
+                return {
+                    "status": "success",
+                    "result": exact_match,
+                    "suggestions": [],
+                    "needs_selection": False,
+                    "ai_used": True,
+                    "flow": "ai_normalized",
+                    "original_input": procedure_input,
+                    "normalized_term": normalized_term
+                }
+            
+            # Try smart search dengan normalized term
+            if SMART_MATCHER_AVAILABLE:
+                smart_matches = smart_search_icd9(normalized_term, limit=10)
+                if smart_matches:
+                    best_match = auto_select_best_match(smart_matches)
+                    if best_match:
+                        print(f"[ICD9] ✅ Smart match with AI-normalized term")
+                        return {
+                            "status": "success",
+                            "result": best_match,
+                            "suggestions": [],
+                            "needs_selection": False,
+                            "ai_used": True,
+                            "flow": "ai_normalized_smart"
+                        }
+                    else:
+                        return {
+                            "status": "suggestions",
+                            "result": None,
+                            "suggestions": smart_matches,
+                            "needs_selection": True,
+                            "message": f"Found {len(smart_matches)} possible matches",
+                            "ai_used": True,
+                            "flow": "ai_normalized_smart"
+                        }
+    
+    except Exception as e:
+        print(f"[ICD9] ⚠️ AI normalization failed: {e}")
+    
+    # STEP 3: Fallback - Smart keyword search dengan original input
     if SMART_MATCHER_AVAILABLE:
         try:
-            print(f"[ICD9] 🔍 No exact match, trying smart keyword search...")
+            print(f"[ICD9] 🔍 Trying smart keyword search (fallback)...")
             smart_matches = smart_search_icd9(procedure_input, limit=10)
             
             if smart_matches:
-                # Try auto-select best match
                 best_match = auto_select_best_match(smart_matches)
-                
                 if best_match:
-                    print(f"[ICD9] ✅ Smart match (auto-selected): {best_match['name']} ({best_match['confidence']}%)")
+                    print(f"[ICD9] ✅ Smart match (fallback)")
                     return {
                         "status": "success",
                         "result": best_match,
                         "suggestions": [],
-                        "needs_selection": False
+                        "needs_selection": False,
+                        "ai_used": False,
+                        "flow": "smart_search"
                     }
                 else:
-                    # Multiple matches, high confidence but needs selection
-                    print(f"[ICD9] 🔍 Found {len(smart_matches)} smart matches, needs selection")
                     return {
                         "status": "suggestions",
                         "result": None,
                         "suggestions": smart_matches,
                         "needs_selection": True,
-                        "message": f"Found {len(smart_matches)} possible matches. Please select:"
+                        "message": f"Found {len(smart_matches)} possible matches",
+                        "ai_used": False,
+                        "flow": "smart_search"
                     }
         except Exception as e:
             print(f"[ICD9] ⚠️ Smart matcher failed: {e}")
     
-    # STEP 3: Partial/fuzzy search (fallback)
-    print(f"[ICD9] 🔍 Trying partial search...")
+    # STEP 4: Last resort - Partial search
+    print(f"[ICD9] 🔍 Trying partial search (last resort)...")
     partial_matches = partial_search_icd9(procedure_input, limit=10)
     
     if partial_matches:
         if len(partial_matches) == 1:
-            # Auto-select if only 1 match
-            print(f"[ICD9] ✅ Single partial match (auto-selected): {partial_matches[0]['name']}")
+            print(f"[ICD9] ✅ Single partial match (auto-selected)")
             return {
                 "status": "success",
                 "result": partial_matches[0],
                 "suggestions": [],
-                "needs_selection": False
+                "needs_selection": False,
+                "ai_used": False,
+                "flow": "partial"
             }
         else:
-            # Multiple matches → show to user
-            print(f"[ICD9] 🔍 Found {len(partial_matches)} partial matches, needs selection")
             return {
                 "status": "suggestions",
                 "result": None,
                 "suggestions": partial_matches,
                 "needs_selection": True,
-                "message": f"Found {len(partial_matches)} possible matches. Please select:"
+                "message": f"Found {len(partial_matches)} possible matches",
+                "ai_used": False,
+                "flow": "partial"
             }
     
-    # STEP 4: AI normalization (last resort)
-    print(f"[ICD9] 🤖 No matches, using AI normalization...")
-    ai_suggestions = normalize_procedure_with_ai(procedure_input)
-    
-    if not ai_suggestions:
-        print(f"[ICD9] ❌ AI could not normalize input")
-        return {
-            "status": "not_found",
-            "result": None,
-            "suggestions": [],
-            "needs_selection": False,
-            "message": "AI could not normalize input. Please rephrase."
-        }
+    # Nothing found
+    print(f"[ICD9] ❌ No matches found")
+    return {
+        "status": "not_found",
+        "result": None,
+        "suggestions": [],
+        "needs_selection": False,
+        "message": "No matching procedures found. Please rephrase.",
+        "ai_used": True,
+        "flow": None
+    }
     
     # STEP 5: Validate AI suggestions
     valid_matches = validate_ai_suggestions(ai_suggestions)

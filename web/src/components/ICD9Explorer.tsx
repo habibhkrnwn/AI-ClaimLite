@@ -46,10 +46,13 @@ export default function ICD9Explorer({
 
   const loadICD9Hierarchy = async () => {
     setIsLoading(true);
-    console.log('[ICD9Explorer] Loading hierarchy for:', correctedTerm, 'synonyms:', synonyms);
+    console.log('[ICD9Explorer] Searching ICD-9 for:', correctedTerm);
     
     try {
       const { apiService } = await import('../lib/api');
+      
+      // Use getICD9Hierarchy which already does the search (NO SMART LOOKUP NEEDED)
+      // Because correctedTerm already translated from translate-procedure-term endpoint
       const response = await apiService.getICD9Hierarchy(correctedTerm, synonyms);
       
       console.log('[ICD9Explorer] API Response:', response);
@@ -72,11 +75,11 @@ export default function ICD9Explorer({
           }
         }
       } else {
-        console.warn('[ICD9Explorer] No categories found or request failed');
+        console.warn('[ICD9Explorer] No categories found');
         setIcd9Categories([]);
       }
     } catch (error) {
-      console.error('[ICD9Explorer] Error loading hierarchy:', error);
+      console.error('[ICD9Explorer] Search error:', error);
       setIcd9Categories([]);
     } finally {
       setIsLoading(false);

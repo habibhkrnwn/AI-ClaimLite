@@ -265,18 +265,42 @@ async def _parallel_ai_analysis(
             obat_list
         )
     
-    # Task 3: PNPK Data Fetch (I/O bound, truly async)
-    async def fetch_pnpk_data():
+    # Task 3: PNPK Data Fetch - REMOVED FROM PARALLEL (depends on lite_diagnosis)
+    # Will be fetched sequentially after lite_diagnosis completes
+    async def fetch_pnpk_data_deferred(icd10_name: str):
+        """Fetch PNPK using ICD-10 name from lite_diagnosis (more accurate)"""
         if not db_pool:
             return None
         try:
             pnpk_service = PNPKSummaryService(db_pool)
             
-            # Use parsed diagnosis name
-            logger.info(f"[PNPK] Using parsed diagnosis name: {diagnosis_name}")
-            return await pnpk_service.get_pnpk_summary(diagnosis_name, auto_match=True)
+            # Use ICD-10 name from database (more reliable than user input)
+            logger.info(f"[PNPK] Using ICD-10 name: {icd10_name}")
+            return await pnpk_service.get_pnpk_summary(icd10_name, auto_match=True)
         except Exception as e:
             logger.warning(f"[PARALLEL] PNPK fetch failed: {e}")
+            return None
+    
+    # Task 4: Dokumen Wajib Fetch (I/O bound)
+    async def fetch_dokumen_wajib():
+        try:
+            from services.dokumen_wajib_service import get_dokumen_wajib_service
+            
+            logger.info(f"[DOKUMEN_WAJIB] Fetching for '{diagnosis_name}'")
+            loop = asyncio.get_event_loop()
+            service = get_dokumen_wajib_service()
+            result = await loop.run_in_executor(
+                None,
+                service.get_dokumen_wajib_by_diagnosis,
+                diagnosis_name
+            )
+            
+            if result and result.get("dokumen_list"):
+                dokumen_names = [doc.get("nama_dokumen", "") for doc in result["dokumen_list"] if doc.get("nama_dokumen")]
+                return dokumen_names[:5] if dokumen_names else None
+            return None
+        except Exception as e:
+            logger.warning(f"[PARALLEL] Dokumen Wajib fetch failed: {e}")
             return None
     
     # Task 4: Fornas DB Match (CPU bound, run in executor)
@@ -357,16 +381,16 @@ async def _parallel_ai_analysis(
         logger.info(f"[PARALLEL] ICD-9 lookup completed: {found_count}/{total_count} found")
         return tindakan_with_icd9
     
-    # 🚀 RUN ALL INDEPENDENT TASKS IN PARALLEL
+    # 🚀 RUN ALL INDEPENDENT TASKS IN PARALLEL (excluding PNPK - depends on lite_diagnosis)
     start_time = asyncio.get_event_loop().time()
     
     try:
-        lite_diagnosis, fornas_lite_result, pnpk_data, fornas_matched, icd9_results = await asyncio.gather(
+        lite_diagnosis, fornas_lite_result, dokumen_wajib_list, fornas_matched, icd9_results = await asyncio.gather(
             run_lite_diagnosis(),
             run_fornas_validation(),
-            fetch_pnpk_data(),
+            fetch_dokumen_wajib(),  # Dokumen Wajib from database
             run_fornas_match(),
-            run_icd9_lookup(),  # NEW: ICD-9 lookup in parallel
+            run_icd9_lookup(),  # ICD-9 lookup in parallel
             return_exceptions=True  # Don't fail if one task fails
         )
         
@@ -387,9 +411,9 @@ async def _parallel_ai_analysis(
                 "validations": []
             }
         
-        if isinstance(pnpk_data, Exception):
-            logger.warning(f"[PARALLEL] PNPK fetch failed: {pnpk_data}")
-            pnpk_data = None
+        if isinstance(dokumen_wajib_list, Exception):
+            logger.warning(f"[PARALLEL] Dokumen Wajib fetch failed: {dokumen_wajib_list}")
+            dokumen_wajib_list = None
         
         if isinstance(fornas_matched, Exception):
             logger.error(f"[PARALLEL] Fornas match failed: {fornas_matched}")
@@ -398,6 +422,13 @@ async def _parallel_ai_analysis(
         if isinstance(icd9_results, Exception):
             logger.error(f"[PARALLEL] ICD-9 lookup failed: {icd9_results}")
             icd9_results = []
+        
+        # Task 4: PNPK Data Fetch (sequential - depends on lite_diagnosis for ICD-10 name)
+        start_pnpk = asyncio.get_event_loop().time()
+        icd10_name = lite_diagnosis.get("icd10", {}).get("nama", diagnosis_name)
+        pnpk_data = await fetch_pnpk_data_deferred(icd10_name)
+        pnpk_time = asyncio.get_event_loop().time() - start_pnpk
+        logger.info(f"[PARALLEL] ✅ PNPK fetch completed in {pnpk_time:.2f}s")
         
         # Task 5: Combined AI Content (depends on lite_diagnosis)
         # Run this sequentially after parallel tasks
@@ -424,6 +455,7 @@ async def _parallel_ai_analysis(
             "lite_diagnosis": lite_diagnosis,
             "fornas_lite_result": fornas_lite_result,
             "pnpk_data": pnpk_data,
+            "dokumen_wajib_list": dokumen_wajib_list,  # NEW: Dokumen Wajib from database
             "fornas_matched": fornas_matched,
             "icd9_results": icd9_results,  # NEW: ICD-9 results
             "combined_ai": combined_ai,
@@ -625,6 +657,7 @@ async def analyze_lite_single_ultra_fast(
         lite_diagnosis = analysis_results["lite_diagnosis"]
         fornas_lite_result = analysis_results["fornas_lite_result"]
         pnpk_data = analysis_results["pnpk_data"]
+        dokumen_wajib_list = analysis_results["dokumen_wajib_list"]  # NEW: Dokumen Wajib
         fornas_matched = analysis_results["fornas_matched"]
         icd9_results = analysis_results["icd9_results"]  # NEW: ICD-9 results
         combined_ai = analysis_results["combined_ai"]
@@ -724,7 +757,7 @@ async def analyze_lite_single_ultra_fast(
             } if pnpk_data else {"available": False, "message": "PNPK data tidak ditemukan"},
             
             "cp_ringkas": _summarize_cp(lite_diagnosis, diagnosis_name, parser.client if hasattr(parser, 'client') else None, pnpk_data),
-            "checklist_dokumen": combined_ai["checklist_dokumen"],
+            "checklist_dokumen": dokumen_wajib_list if dokumen_wajib_list else combined_ai["checklist_dokumen"],
             "insight_ai": combined_ai["insight_ai"],
             
             # 🔹 Backward compatible (Indonesian key)

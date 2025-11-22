@@ -469,6 +469,126 @@ class ApiService {
       method: 'GET',
     });
   }
+
+  // =====================================================
+  // SMART LOOKUP METHODS (Using Backend AI Services)
+  // =====================================================
+
+  /**
+   * ICD-10 Smart Lookup dengan AI Normalization
+   * Uses: icd10_ai_normalizer.py → lookup_icd10_smart_with_rag()
+   * 
+   * Flow:
+   * 1. Exact match → Return direct dengan subcategories
+   * 2. Partial match (< 5) → Return suggestions
+   * 3. AI normalize → Return recommendations
+   */
+  async getICD10SmartLookup(searchTerm: string): Promise<{
+    success: boolean;
+    data: {
+      flow: 'direct' | 'suggestion' | 'ai_recommendations' | 'fallback_suggestions' | 'not_found';
+      requires_modal: boolean;
+      selected_code?: string;
+      selected_name?: string;
+      source?: string;
+      subcategories?: {
+        parent: { code: string; name: string };
+        children: Array<{ code: string; name: string }>;
+        total_subcategories: number;
+      };
+      suggestions?: Array<{
+        code: string;
+        name: string;
+        source: string;
+        rank?: number;
+      }>;
+      total_suggestions?: number;
+      ai_used: boolean;
+      normalized_term?: string;
+      original_input?: string;
+      ai_confidence?: number;
+      ai_reasoning?: string;
+      message?: string;
+    };
+  }> {
+    return this.request('/api/ai/icd10-smart-lookup', {
+      method: 'POST',
+      body: JSON.stringify({ search_term: searchTerm }),
+    });
+  }
+
+  /**
+   * ICD-9 Smart Lookup dengan AI Normalization
+   * Uses: icd9_smart_service.py → lookup_icd9_procedure()
+   * 
+   * Flow:
+   * 1. Exact search → Return matched code
+   * 2. Partial search → Return suggestions
+   * 3. AI normalization → Return normalized + search results
+   */
+  async getICD9SmartLookup(searchTerm: string): Promise<{
+    success: boolean;
+    data: {
+      flow: 'exact' | 'partial' | 'ai_normalized' | 'not_found';
+      matched_code?: string;
+      matched_name?: string;
+      source?: string;
+      confidence?: number;
+      suggestions?: Array<{
+        code: string;
+        name: string;
+        source: string;
+        confidence: number;
+      }>;
+      normalized_term?: string;
+      original_input?: string;
+      ai_used: boolean;
+      message?: string;
+    };
+  }> {
+    return this.request('/api/ai/icd9-smart-lookup', {
+      method: 'POST',
+      body: JSON.stringify({ search_term: searchTerm }),
+    });
+  }
+
+  /**
+   * FORNAS Smart Lookup dengan AI Normalization
+   * Uses: fornas_normalize_service.py → lookup_fornas_smart()
+   * 
+   * Flow:
+   * 1. AI normalize (English → Indonesian)
+   * 2. Search database
+   * 3. Return categories dengan details
+   */
+  async getFornasSmartLookup(searchTerm: string): Promise<{
+    success: boolean;
+    data: {
+      flow: 'direct' | 'partial' | 'ai_normalized' | 'not_found';
+      drug_name?: string;
+      normalized_name?: string;
+      categories?: Array<{
+        generic_name: string;
+        kelas_terapi: string;
+        sub_kelas_terapi: string;
+        total_variants: number;
+        details: Array<{
+          kode_fornas: string;
+          obat_name: string;
+          sediaan_kekuatan: string;
+          restriksi_penggunaan?: string;
+        }>;
+      }>;
+      ai_used: boolean;
+      confidence?: number;
+      message?: string;
+    };
+  }> {
+    return this.request('/api/ai/fornas-smart-lookup', {
+      method: 'POST',
+      body: JSON.stringify({ search_term: searchTerm }),
+    });
+  }
 }
 
 export const apiService = new ApiService();

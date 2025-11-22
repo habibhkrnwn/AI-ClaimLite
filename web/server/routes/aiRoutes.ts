@@ -724,17 +724,11 @@ router.post('/translate-medication-term', async (req: Request, res: Response): P
       timeout: 30000, // 30 seconds
     });
 
-    if (response.data.status === 'success') {
+    // Core engine now returns {success: true, data: {...}} format
+    if (response.data.success) {
       res.status(200).json({
         success: true,
-        data: {
-          original: term,
-          normalized: response.data.result.normalized_name || response.data.result.normalized_generic,
-          normalized_generic: response.data.result.normalized_generic,
-          categories: response.data.result.categories || [],
-          confidence: response.data.result.confidence || 0,
-          found_in_db: response.data.result.found_in_db || false,
-        },
+        data: response.data.data, // Pass through the data directly
       });
     } else {
       res.status(500).json({
@@ -908,6 +902,166 @@ router.get('/dokumen-wajib/:diagnosisName', async (req: Request, res: Response):
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get dokumen wajib',
+    });
+  }
+});
+
+// =====================================================
+// SMART LOOKUP ENDPOINTS (Using Backend AI Services)
+// =====================================================
+
+// ICD-10 Smart Lookup (Uses icd10_ai_normalizer.py → lookup_icd10_smart_with_rag)
+router.post('/icd10-smart-lookup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search_term } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated',
+      });
+      return;
+    }
+
+    if (!search_term || search_term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Search term is required',
+      });
+      return;
+    }
+
+    console.log(`[ICD10 Smart Lookup] Calling core_engine for: ${search_term}`);
+
+    // Call core_engine smart lookup endpoint
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/icd10-smart-lookup`, {
+      search_term: search_term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('[ICD10 Smart Lookup] Response:', response.data);
+
+    // Return the result from core_engine
+    res.json({
+      success: true,
+      data: response.data,
+    });
+
+  } catch (error: any) {
+    console.error('[ICD10 Smart Lookup] Error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      message: error.response?.data?.message || 'Failed to perform ICD-10 smart lookup',
+      detail: error.message,
+    });
+  }
+});
+
+// ICD-9 Smart Lookup (Uses icd9_smart_service.py → lookup_icd9_procedure)
+router.post('/icd9-smart-lookup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search_term } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated',
+      });
+      return;
+    }
+
+    if (!search_term || search_term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Search term is required',
+      });
+      return;
+    }
+
+    console.log(`[ICD9 Smart Lookup] Calling core_engine for: ${search_term}`);
+
+    // Call core_engine smart lookup endpoint
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/icd9-smart-lookup`, {
+      procedure_input: search_term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('[ICD9 Smart Lookup] Response:', response.data);
+
+    // Return the result from core_engine
+    res.json({
+      success: true,
+      data: response.data,
+    });
+
+  } catch (error: any) {
+    console.error('[ICD9 Smart Lookup] Error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      message: error.response?.data?.message || 'Failed to perform ICD-9 smart lookup',
+      detail: error.message,
+    });
+  }
+});
+
+// FORNAS Smart Lookup (Uses fornas_normalize_service.py → lookup_fornas_smart)
+router.post('/fornas-smart-lookup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search_term } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: 'User not authenticated',
+      });
+      return;
+    }
+
+    if (!search_term || search_term.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Search term is required',
+      });
+      return;
+    }
+
+    console.log(`[FORNAS Smart Lookup] Calling core_engine for: ${search_term}`);
+
+    // Call core_engine smart lookup endpoint
+    const response = await axios.post(`${CORE_ENGINE_URL}/api/lite/fornas-smart-lookup`, {
+      drug_input: search_term.trim(),
+    }, {
+      timeout: 30000, // 30 seconds
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('[FORNAS Smart Lookup] Response:', response.data);
+
+    // Return the result from core_engine
+    res.json({
+      success: true,
+      data: response.data,
+    });
+
+  } catch (error: any) {
+    console.error('[FORNAS Smart Lookup] Error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      message: error.response?.data?.message || 'Failed to perform FORNAS smart lookup',
+      detail: error.message,
     });
   }
 });

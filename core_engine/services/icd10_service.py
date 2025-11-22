@@ -97,13 +97,14 @@ def db_search_exact(user_input: str) -> Optional[Dict]:
 
 def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
     """
-    Partial match search dengan ranking
+    Partial match search dengan ranking + typo tolerance
     
     Ranking strategy:
     1. Name starts with input (highest priority)
     2. Name ends with input
     3. Name contains input
-    4. Shorter names preferred (more specific)
+    4. Fuzzy match for typos (e.g., "paru2" → "paru", "nebulizr" → "nebuliz")
+    5. Shorter names preferred (more specific)
     
     Args:
         user_input: Search term
@@ -118,30 +119,56 @@ def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
     with get_db_session() as db:
         cleaned_input = user_input.strip()
         
-        query = text("""
-            SELECT 
-                code,
-                name,
-                source,
-                validation_status,
-                CASE 
-                    WHEN name ILIKE :starts_with THEN 1
-                    WHEN name ILIKE :ends_with THEN 2
-                    ELSE 3
-                END as relevance,
-                LENGTH(name) as name_length
-            FROM icd10_master
-            WHERE name ILIKE :contains
-            ORDER BY relevance ASC, name_length ASC
-            LIMIT :limit
-        """)
+        # FIX: Normalize common typos/variations
+        # "paru2" → "paru", "jantung2" → "jantung"
+        normalized_input = cleaned_input.replace('2', '').replace('  ', ' ').strip()
         
-        results = db.execute(query, {
-            "starts_with": f"{cleaned_input}%",
-            "ends_with": f"%{cleaned_input}",
-            "contains": f"%{cleaned_input}%",
-            "limit": limit
-        }).fetchall()
+        # Try original input first, then normalized
+        search_terms = [cleaned_input]
+        if normalized_input != cleaned_input:
+            search_terms.append(normalized_input)
+        
+        # Try both original and normalized terms
+        all_results = []
+        for search_term in search_terms:
+            query = text("""
+                SELECT 
+                    code,
+                    name,
+                    source,
+                    validation_status,
+                    CASE 
+                        WHEN name ILIKE :starts_with THEN 1
+                        WHEN name ILIKE :ends_with THEN 2
+                        ELSE 3
+                    END as relevance,
+                    LENGTH(name) as name_length
+                FROM icd10_master
+                WHERE name ILIKE :contains
+                ORDER BY relevance ASC, name_length ASC
+                LIMIT :limit
+            """)
+            
+            results = db.execute(query, {
+                "starts_with": f"{search_term}%",
+                "ends_with": f"%{search_term}",
+                "contains": f"%{search_term}%",
+                "limit": limit
+            }).fetchall()
+            
+            all_results.extend(results)
+            
+            # If we found results with first term, no need to try second
+            if results:
+                break
+        
+        # Remove duplicates (same code) and sort
+        seen_codes = set()
+        unique_results = []
+        for row in all_results:
+            if row[0] not in seen_codes:
+                seen_codes.add(row[0])
+                unique_results.append(row)
         
         return [
             {
@@ -152,7 +179,7 @@ def db_search_partial(user_input: str, limit: int = 10) -> List[Dict]:
                 "relevance": row[4],
                 "match_type": "partial"
             }
-            for row in results
+            for row in unique_results[:limit]  # Limit final results
         ]
 
 

@@ -1087,16 +1087,34 @@ Berikan dalam format JSON array of strings dengan format "Tahap X: [deskripsi]".
 def _generate_dokumen_wajib(diagnosis: str, tindakan_list: List[str], full_analysis: Dict, client: Any = None) -> List[str]:
     """
     Ambil daftar dokumen wajib dengan prioritas:
-    1. AI (generate berdasarkan diagnosis & tindakan)
-    2. DB (belum tersedia, reserved untuk future)
+    1. Database dokumen_wajib_service (PRIORITY)
+    2. AI (fallback jika DB tidak tersedia)
     
     Returns list of strings (bukan dict dengan checkbox)
     """
     
-    # 🔹 PRIORITAS 1: Generate dengan AI
+    # 🔹 PRIORITAS 1: Database dokumen_wajib_service
+    try:
+        from services.dokumen_wajib_service import get_dokumen_wajib_service
+        
+        logger.info(f"[DOKUMEN_WAJIB] 📊 Fetching from database for '{diagnosis}'")
+        service = get_dokumen_wajib_service()
+        result = service.get_dokumen_wajib_by_diagnosis(diagnosis)
+        
+        if result and result.get("dokumen_list"):
+            dokumen_names = [doc.get("nama_dokumen", "") for doc in result["dokumen_list"] if doc.get("nama_dokumen")]
+            if dokumen_names:
+                logger.info(f"[DOKUMEN_WAJIB] ✓ Using database ({len(dokumen_names)} docs)")
+                return dokumen_names[:5]  # Max 5 items
+        
+        logger.warning(f"[DOKUMEN_WAJIB] ⚠️ Database returned empty for '{diagnosis}'")
+    except Exception as e:
+        logger.warning(f"[DOKUMEN_WAJIB] ❌ Database fetch error: {e}")
+    
+    # 🔹 PRIORITAS 2: AI Fallback
     if client and OPENAI_AVAILABLE:
         try:
-            logger.info(f"[DOKUMEN_WAJIB] 🤖 Generating with AI for {diagnosis}")
+            logger.info(f"[DOKUMEN_WAJIB] 🤖 Fallback to AI for {diagnosis}")
             
             tindakan_str = ", ".join(tindakan_list[:3]) if tindakan_list else "tidak ada"
             
@@ -1120,29 +1138,22 @@ Hanya dokumen yang relevan dan wajib."""
             )
             
             content = response.choices[0].message.content.strip()
-            # Parse JSON array
             if content.startswith("[") and content.endswith("]"):
                 dokumen_list = json.loads(content)
                 logger.info(f"[DOKUMEN_WAJIB] ✓ AI generated {len(dokumen_list)} items")
-                return dokumen_list[:5]  # Max 5 items
+                return dokumen_list[:5]
             
         except Exception as e:
-            logger.warning(f"[DOKUMEN_WAJIB] ❌ AI generation error: {e}")
+            logger.warning(f"[DOKUMEN_WAJIB] ❌ AI fallback error: {e}")
     
-    # 🔹 PRIORITAS 2: Ambil dari DB (belum ada implementasi)
-    # TODO: Implementasi fetch dari database ketika tabel dokumen_wajib sudah tersedia
-    # rawat_inap = full_analysis.get("rawat_inap", {})
-    # dokumen_db = rawat_inap.get("dokumen_wajib", [])
-    # if dokumen_db:
-    #     logger.info(f"[DOKUMEN_WAJIB] ✓ Using DB data ({len(dokumen_db)} docs)")
-    #     return dokumen_db
-    
-    # 🔹 Semua prioritas gagal - return warning
-    logger.error(f"[DOKUMEN_WAJIB] ❌ All sources failed for {diagnosis}")
+    # 🔹 Semua prioritas gagal - return default
+    logger.error(f"[DOKUMEN_WAJIB] ❌ Both DB and AI failed for {diagnosis}")
     return [
-        "⚠️ Data dokumen wajib tidak tersedia di database",
-        "⚠️ AI tidak dapat menghasilkan daftar dokumen",
-        "⚠️ Silakan hubungi admin untuk menambahkan data dokumen wajib"
+        "Resume Medis",
+        "Hasil Laboratorium",
+        "Resep Obat",
+        "Catatan Medis",
+        "Bukti Pembayaran"
     ]
 
 def _generate_ai_insight(full_analysis: Dict, diagnosis: str, tindakan_list: List[str], obat_list: List[str], client: Any = None) -> str:

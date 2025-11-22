@@ -44,15 +44,23 @@ export default function ICD10Explorer({
 
   const loadICD10Hierarchy = async () => {
     setIsLoading(true);
+    console.log('[ICD10Explorer] Loading hierarchy for already-translated term:', correctedTerm);
+    
     try {
       const { apiService } = await import('../lib/api');
+      
+      // Call hierarchy endpoint directly (correctedTerm already translated by AdminRSDashboard)
       const response = await apiService.getICD10Hierarchy(correctedTerm);
       
+      console.log('[ICD10Explorer] Hierarchy response:', response);
+      
       if (response.success && response.data.categories && response.data.categories.length > 0) {
+        console.log('[ICD10Explorer] Categories found:', response.data.categories.length);
         setIcd10Categories(response.data.categories);
         
         // Auto-select first category
         const firstCategory = response.data.categories[0];
+        console.log('[ICD10Explorer] Auto-selecting first category:', firstCategory.headCode);
         setSelectedHeadCode(firstCategory.headCode);
         setSelectedDetails(firstCategory.details || []);
         
@@ -61,9 +69,13 @@ export default function ICD10Explorer({
           setSelectedSubCode(firstCategory.headCode);
           onCodeSelected?.(firstCategory.headCode, firstCategory.headName);
         }
+      } else {
+        console.warn('[ICD10Explorer] No categories found');
+        setIcd10Categories([]);
       }
     } catch (error) {
-      // Silent error handling
+      console.error('[ICD10Explorer] Hierarchy error:', error);
+      setIcd10Categories([]);
     } finally {
       setIsLoading(false);
     }

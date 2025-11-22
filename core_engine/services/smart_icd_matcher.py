@@ -76,73 +76,73 @@ def smart_search_icd10(
     
     print(f"[SMART_ICD10] Input: '{diagnosis_input}' → Keywords: {keywords}")
     
-    session = get_db_session()
     try:
-        # Build dynamic query for keyword matching
-        # Each keyword gets an OR condition
-        keyword_conditions = []
-        params = {}
-        
-        for idx, keyword in enumerate(keywords):
-            param_name = f"kw{idx}"
-            keyword_conditions.append(f"LOWER(name) LIKE :{param_name}")
-            params[param_name] = f"%{keyword}%"
-        
-        # Build WHERE clause
-        where_clause = " OR ".join(keyword_conditions)
-        
-        # Query dengan ranking berdasarkan keyword matches
-        query_str = f"""
-            WITH keyword_matches AS (
-                SELECT 
-                    code,
-                    name,
-                    ({' + '.join([f"CASE WHEN LOWER(name) LIKE :kw{i} THEN 1 ELSE 0 END" for i in range(len(keywords))])}) as match_count,
-                    CASE 
-                        WHEN LOWER(name) = LOWER(:exact_match) THEN 100
-                        WHEN LOWER(name) LIKE LOWER(:starts_with) THEN 90
-                        ELSE 70
-                    END as position_score
-                FROM icd10_master
-                WHERE {where_clause}
-            )
-            SELECT code, name, 
-                   (match_count * 30 + position_score) as confidence
-            FROM keyword_matches
-            WHERE match_count >= :min_match
-            ORDER BY confidence DESC, LENGTH(name) ASC
-            LIMIT :limit
-        """
-        
-        params['exact_match'] = diagnosis_input.strip()
-        params['starts_with'] = f"{diagnosis_input.strip()}%"
-        params['min_match'] = min_keyword_match
-        params['limit'] = limit
-        
-        query = text(query_str)
-        results = session.execute(query, params).fetchall()
-        
-        if results:
-            matches = [
-                {
-                    "code": row[0],
-                    "name": row[1],
-                    "confidence": min(int(row[2]), 100),  # Cap at 100
-                    "source": "database_smart",
-                    "valid": True
-                }
-                for row in results
-            ]
-            print(f"[SMART_ICD10] ✅ Found {len(matches)} matches (top: {matches[0]['name']} - {matches[0]['confidence']}%)")
-            return matches
-        
-        return []
-        
+        with get_db_session() as session:
+            # Build dynamic query for keyword matching
+            # Each keyword gets an OR condition
+            keyword_conditions = []
+            params = {}
+            
+            for idx, keyword in enumerate(keywords):
+                param_name = f"kw{idx}"
+                keyword_conditions.append(f"LOWER(name) LIKE :{param_name}")
+                params[param_name] = f"%{keyword}%"
+            
+            # Build WHERE clause
+            where_clause = " OR ".join(keyword_conditions)
+            
+            # Query dengan ranking berdasarkan keyword matches
+            query_str = f"""
+                WITH keyword_matches AS (
+                    SELECT 
+                        code,
+                        name,
+                        ({' + '.join([f"CASE WHEN LOWER(name) LIKE :kw{i} THEN 1 ELSE 0 END" for i in range(len(keywords))])}) as match_count,
+                        CASE 
+                            WHEN LOWER(name) = LOWER(:exact_match) THEN 100
+                            WHEN LOWER(name) LIKE LOWER(:starts_with) THEN 90
+                            ELSE 70
+                        END as position_score
+                    FROM icd10_master
+                    WHERE {where_clause}
+                )
+                SELECT code, name, 
+                       (match_count * 30 + position_score) as confidence
+                FROM keyword_matches
+                WHERE match_count >= :min_match
+                ORDER BY confidence DESC, LENGTH(name) ASC
+                LIMIT :limit
+            """
+            
+            params['exact_match'] = diagnosis_input.strip()
+            params['starts_with'] = f"{diagnosis_input.strip()}%"
+            params['min_match'] = min_keyword_match
+            params['limit'] = limit
+            
+            query = text(query_str)
+            results = session.execute(query, params).fetchall()
+            
+            if results:
+                matches = [
+                    {
+                        "code": row[0],
+                        "name": row[1],
+                        "confidence": min(int(row[2]), 100),  # Cap at 100
+                        "source": "database_smart",
+                        "valid": True
+                    }
+                    for row in results
+                ]
+                print(f"[SMART_ICD10] ✅ Found {len(matches)} matches (top: {matches[0]['name']} - {matches[0]['confidence']}%)")
+                return matches
+            
+            return []
+            
     except Exception as e:
         print(f"[SMART_ICD10] ❌ Search error: {e}")
+        import traceback
+        print(f"[SMART_ICD10] Traceback: {traceback.format_exc()}")
         return []
-    finally:
-        session.close()
 
 
 def smart_search_icd9(
@@ -173,72 +173,72 @@ def smart_search_icd9(
     
     print(f"[SMART_ICD9] Input: '{procedure_input}' → Keywords: {keywords}")
     
-    session = get_db_session()
     try:
-        # Build dynamic query for keyword matching
-        keyword_conditions = []
-        params = {}
-        
-        for idx, keyword in enumerate(keywords):
-            param_name = f"kw{idx}"
-            keyword_conditions.append(f"LOWER(name) LIKE :{param_name}")
-            params[param_name] = f"%{keyword}%"
-        
-        # Build WHERE clause
-        where_clause = " OR ".join(keyword_conditions)
-        
-        # Query dengan ranking
-        query_str = f"""
-            WITH keyword_matches AS (
-                SELECT 
-                    code,
-                    name,
-                    ({' + '.join([f"CASE WHEN LOWER(name) LIKE :kw{i} THEN 1 ELSE 0 END" for i in range(len(keywords))])}) as match_count,
-                    CASE 
-                        WHEN LOWER(name) = LOWER(:exact_match) THEN 100
-                        WHEN LOWER(name) LIKE LOWER(:starts_with) THEN 90
-                        ELSE 70
-                    END as position_score
-                FROM icd9cm_master
-                WHERE {where_clause}
-            )
-            SELECT code, name, 
-                   (match_count * 30 + position_score) as confidence
-            FROM keyword_matches
-            WHERE match_count >= :min_match
-            ORDER BY confidence DESC, LENGTH(name) ASC
-            LIMIT :limit
-        """
-        
-        params['exact_match'] = procedure_input.strip()
-        params['starts_with'] = f"{procedure_input.strip()}%"
-        params['min_match'] = min_keyword_match
-        params['limit'] = limit
-        
-        query = text(query_str)
-        results = session.execute(query, params).fetchall()
-        
-        if results:
-            matches = [
-                {
-                    "code": row[0],
-                    "name": row[1],
-                    "confidence": min(int(row[2]), 100),
-                    "source": "database_smart",
-                    "valid": True
-                }
-                for row in results
-            ]
-            print(f"[SMART_ICD9] ✅ Found {len(matches)} matches (top: {matches[0]['name']} - {matches[0]['confidence']}%)")
-            return matches
-        
-        return []
-        
+        with get_db_session() as session:
+            # Build dynamic query for keyword matching
+            keyword_conditions = []
+            params = {}
+            
+            for idx, keyword in enumerate(keywords):
+                param_name = f"kw{idx}"
+                keyword_conditions.append(f"LOWER(name) LIKE :{param_name}")
+                params[param_name] = f"%{keyword}%"
+            
+            # Build WHERE clause
+            where_clause = " OR ".join(keyword_conditions)
+            
+            # Query dengan ranking
+            query_str = f"""
+                WITH keyword_matches AS (
+                    SELECT 
+                        code,
+                        name,
+                        ({' + '.join([f"CASE WHEN LOWER(name) LIKE :kw{i} THEN 1 ELSE 0 END" for i in range(len(keywords))])}) as match_count,
+                        CASE 
+                            WHEN LOWER(name) = LOWER(:exact_match) THEN 100
+                            WHEN LOWER(name) LIKE LOWER(:starts_with) THEN 90
+                            ELSE 70
+                        END as position_score
+                    FROM icd9cm_master
+                    WHERE {where_clause}
+                )
+                SELECT code, name, 
+                       (match_count * 30 + position_score) as confidence
+                FROM keyword_matches
+                WHERE match_count >= :min_match
+                ORDER BY confidence DESC, LENGTH(name) ASC
+                LIMIT :limit
+            """
+            
+            params['exact_match'] = procedure_input.strip()
+            params['starts_with'] = f"{procedure_input.strip()}%"
+            params['min_match'] = min_keyword_match
+            params['limit'] = limit
+            
+            query = text(query_str)
+            results = session.execute(query, params).fetchall()
+            
+            if results:
+                matches = [
+                    {
+                        "code": row[0],
+                        "name": row[1],
+                        "confidence": min(int(row[2]), 100),
+                        "source": "database_smart",
+                        "valid": True
+                    }
+                    for row in results
+                ]
+                print(f"[SMART_ICD9] ✅ Found {len(matches)} matches (top: {matches[0]['name']} - {matches[0]['confidence']}%)")
+                return matches
+            
+            return []
+            
     except Exception as e:
         print(f"[SMART_ICD9] ❌ Search error: {e}")
+        import traceback
+        print(f"[SMART_ICD9] Traceback: {traceback.format_exc()}")
         return []
-    finally:
-        session.close()
 
 
 def auto_select_best_match(matches: List[Dict]) -> Optional[Dict]:

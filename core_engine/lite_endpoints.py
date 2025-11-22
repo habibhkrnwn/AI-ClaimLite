@@ -242,7 +242,7 @@ from services.lite_service_ultra_fast import analyze_lite_single_ultra_fast, get
 from services.fornas_smart_service import validate_fornas
 from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
 from services.icd10_service import select_icd10_code, get_icd10_statistics, lookup_icd10_basic, db_search_partial
-from services.icd9_smart_service import lookup_icd9_procedure
+from services.icd9_ai_normalizer import lookup_icd9_smart_with_rag as lookup_icd9_smart
 from services.dokumen_wajib_service import get_dokumen_wajib_service
 
 # ============================================================
@@ -1024,6 +1024,64 @@ def endpoint_icd10_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# 📌 ENDPOINT 7B: ICD-10 Smart Lookup (NEW - FLAT RESPONSE)
+# ============================================================
+def endpoint_icd10_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd10-smart-lookup
+    
+    Smart lookup ICD-10 dengan AI normalization.
+    Returns FLAT response format (tidak wrapped dalam 'data').
+    
+    Request:
+    {
+        "search_term": "paru2 basah"
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "flow": "direct" | "suggestion" | "ai_recommendations" | "not_found",
+        "requires_modal": true/false,
+        "selected_code": "J18.9",
+        "selected_name": "Pneumonia, unspecified",
+        "suggestions": [...],
+        "ai_used": true,
+        "normalized_term": "pneumonia",
+        "timestamp": "2025-11-21T..."
+    }
+    """
+    try:
+        search_term = request_data.get("search_term", "")
+        
+        if not search_term or search_term.strip() == "":
+            return {
+                "status": "error",
+                "message": "search_term is required"
+            }
+        
+        print(f"[ENDPOINT_ICD10_SMART] Lookup: {search_term}")
+        
+        # Call smart lookup dengan RAG
+        result = lookup_icd10_smart_with_rag(search_term)
+        
+        # Return FLAT response (spread result fields at root level)
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        print(f"[ENDPOINT_ICD10_SMART] ❌ Error: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
 # 📌 ENDPOINT 8: ICD-10 Select Code (NEW)
 # ============================================================
 def endpoint_icd10_select(request_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1174,6 +1232,67 @@ def endpoint_icd9_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         print(f"[ENDPOINT_ICD9] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================
+# 📌 ICD-9 SMART LOOKUP ENDPOINT (NEW - FLAT RESPONSE)
+# ============================================================
+def endpoint_icd9_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/icd9-smart-lookup
+    
+    Smart lookup ICD-9 dengan AI normalization.
+    Returns FLAT response format matching ICD-10.
+    
+    Request:
+    {
+        "procedure_input": "nebulizr"  // Typo handling
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "flow": "direct" | "partial" | "ai_normalized" | "not_found",
+        "requires_modal": true/false,
+        "matched_code": "93.94",
+        "matched_name": "Respiratory therapy",
+        "suggestions": [...],
+        "ai_used": true,
+        "normalized_term": "nebulizer",
+        "timestamp": "2025-11-21T..."
+    }
+    """
+    try:
+        procedure_input = request_data.get("procedure_input", "")
+        
+        if not procedure_input or procedure_input.strip() == "":
+            return {
+                "status": "error",
+                "message": "procedure_input is required",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        print(f"[ENDPOINT_ICD9_SMART] Lookup: {procedure_input}")
+        
+        # Call NEW AI normalizer (same flow as ICD-10)
+        result = lookup_icd9_smart(procedure_input)
+        
+        # Return FLAT response (spread result fields at root level)
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ENDPOINT_ICD9_SMART] ❌ Error: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -1486,6 +1605,70 @@ def endpoint_fornas_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "status": "error",
             "message": str(e)
+        }
+
+
+# ============================================================
+# 📌 FORNAS SMART LOOKUP ENDPOINT (NEW - FLAT RESPONSE)
+# ============================================================
+def endpoint_fornas_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    POST /api/lite/fornas-smart-lookup
+    
+    FORNAS Smart Lookup dengan AI Normalization (English → Indonesian).
+    Returns FLAT response format matching ICD-10.
+    
+    Request:
+    {
+        "drug_input": "ceftriaxone"  // English, typo, colloquial
+    }
+    
+    Response:
+    {
+        "status": "success",
+        "flow": "direct" | "partial" | "ai_normalized" | "not_found",
+        "requires_modal": true/false,
+        "drug_name": "seftriakson",
+        "normalized_name": "seftriakson",
+        "categories": [...],
+        "suggestions": [...],
+        "ai_used": true,
+        "confidence": 95,
+        "timestamp": "2025-11-21T..."
+    }
+    """
+    try:
+        from services.fornas_normalize_service import lookup_fornas_smart
+        
+        drug_input = request_data.get("drug_input", "").strip()
+        
+        if not drug_input:
+            return {
+                "status": "error",
+                "message": "drug_input is required",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        print(f"[ENDPOINT_FORNAS_SMART] Lookup: {drug_input}")
+        
+        # Call FORNAS smart lookup
+        result = lookup_fornas_smart(drug_input)
+        
+        # Return FLAT response (spread result fields at root level)
+        return {
+            "status": "success",
+            **result,  # Spread all result fields
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[ENDPOINT_FORNAS_SMART] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
         }
 
 
@@ -2107,11 +2290,12 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
         
         try:
             # Search for all dosage forms of this generic drug
+            # Use EXACT match on obat_name (generic_name column) since normalized_name is already the generic
             results = db.query(FornasDrug).filter(
-                FornasDrug.obat_name.ilike(f"{generic_name}%")
-            ).order_by(FornasDrug.obat_name).limit(30).all()
+                FornasDrug.obat_name == generic_name.lower()
+            ).order_by(FornasDrug.sediaan_kekuatan).limit(30).all()
             
-            print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms")
+            print(f"[TRANSLATE_MEDICATION] Found {len(results)} dosage forms for '{generic_name}'")
             
             # Step 5: Group by generic name (like ICD categories)
             categories = {}
@@ -2167,9 +2351,10 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
             categories_list.sort(key=category_sort_key)
             
             return {
-                "status": "success",
-                "result": {
-                    "original_term": term,
+                "success": True,
+                "data": {
+                    "original": term,
+                    "normalized": generic_name,
                     "normalized_generic": generic_name,
                     "categories": categories_list,
                     "confidence": ai_result.get("confidence", 100),
@@ -2184,9 +2369,9 @@ def endpoint_translate_medication(request_data: Dict[str, Any]) -> Dict[str, Any
         print(f"[TRANSLATE_MEDICATION] ❌ Error: {error_msg}")
         
         return {
-            "status": "error",
-            "message": f"Medication translation failed: {error_msg}",
-            "result": None
+            "success": False,
+            "data": None,
+            "message": f"Medication translation failed: {error_msg}"
         }
 
 
@@ -2219,64 +2404,10 @@ def endpoint_icd10_hierarchy(request_data: Dict[str, Any], db) -> Dict[str, Any]
         
         print(f"[ICD10_HIERARCHY] Searching for: '{search_term}'")
         
-        # STEP 1: Try smart lookup with AI normalization
-        from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
-        smart_result = lookup_icd10_smart_with_rag(search_term)
-        
-        # Extract matches based on flow type
-        matches = []
-        
-        if smart_result["flow"] == "direct":
-            # Single exact match - get subcategories for hierarchy display
-            print(f"[ICD10_HIERARCHY] Direct match: {smart_result['selected_code']}")
-            subcats = smart_result.get("subcategories", {})
-            
-            # Add parent
-            if subcats.get("parent"):
-                matches.append({
-                    "code": subcats["parent"]["code"],
-                    "name": subcats["parent"]["name"],
-                    "source": subcats["parent"]["source"]
-                })
-            
-            # Add all children
-            for child in subcats.get("children", []):
-                matches.append({
-                    "code": child["code"],
-                    "name": child["name"],
-                    "source": child["source"]
-                })
-        
-        elif smart_result["flow"] in ["suggestion", "fallback_suggestions"]:
-            # Multiple suggestions
-            print(f"[ICD10_HIERARCHY] Got {smart_result['total_suggestions']} suggestions")
-            matches = smart_result.get("suggestions", [])
-        
-        elif smart_result["flow"] == "ai_direct":
-            # AI found match - get subcategories
-            print(f"[ICD10_HIERARCHY] AI match: {smart_result['selected_code']} (confidence: {smart_result.get('ai_confidence')})")
-            subcats = smart_result.get("subcategories", {})
-            
-            # Add parent
-            if subcats.get("parent"):
-                matches.append({
-                    "code": subcats["parent"]["code"],
-                    "name": subcats["parent"]["name"],
-                    "source": subcats["parent"]["source"]
-                })
-            
-            # Add all children
-            for child in subcats.get("children", []):
-                matches.append({
-                    "code": child["code"],
-                    "name": child["name"],
-                    "source": child["source"]
-                })
-        
-        # STEP 2: If smart lookup failed, fallback to direct database search
-        if not matches:
-            print(f"[ICD10_HIERARCHY] Smart lookup empty, using fallback db_search_partial")
-            matches = db_search_partial(search_term, limit=50)
+        # DIRECT DATABASE SEARCH (NO SMART LOOKUP - AVOID DUPLICATE)
+        # Translation already done in AdminRSDashboard, hierarchy just needs to search DB
+        print(f"[ICD10_HIERARCHY] Using direct DB search (search_term already translated)")
+        matches = db_search_partial(search_term, limit=50)
         
         if not matches:
             print(f"[ICD10_HIERARCHY] No matches found")
@@ -2399,42 +2530,10 @@ def endpoint_icd9_hierarchy(request_data: dict, db):
         if synonyms:
             print(f"[ICD9_HIERARCHY] With synonyms: {synonyms}")
         
-        # STEP 1: Try smart lookup with AI normalization
-        smart_result = lookup_icd9_procedure(search_term)
-        
-        # Extract matches based on result type
-        matches = []
-        
-        if smart_result["status"] == "success" and smart_result.get("result"):
-            # Single match found - get related procedures for hierarchy
-            print(f"[ICD9_HIERARCHY] Direct match: {smart_result['result']['code']}")
-            single_match = smart_result["result"]
-            
-            # Add the direct match
-            matches.append(single_match)
-            
-            # Get HEAD code to find related procedures
-            code = single_match["code"]
-            if '.' in code:
-                head_code = code.split('.')[0]
-            else:
-                head_code = code[:2] if len(code) >= 2 else code
-            
-            # Search for related procedures with same HEAD code
-            related_matches = partial_search_icd9(head_code, limit=20)
-            for related in related_matches:
-                if related["code"] != code:  # Don't duplicate
-                    matches.append(related)
-        
-        elif smart_result["status"] == "suggestions" and smart_result.get("suggestions"):
-            # Multiple suggestions from AI/database
-            print(f"[ICD9_HIERARCHY] Got {len(smart_result['suggestions'])} suggestions")
-            matches = smart_result["suggestions"]
-        
-        # STEP 2: If smart lookup failed or empty, try fallback with partial search
-        if not matches:
-            print(f"[ICD9_HIERARCHY] Smart lookup empty, using fallback partial_search_icd9")
-            matches = partial_search_icd9(search_term, limit=50)
+        # DIRECT DATABASE SEARCH (NO SMART LOOKUP - AVOID DUPLICATE)
+        # Translation already done in AdminRSDashboard, hierarchy just needs to search DB
+        print(f"[ICD9_HIERARCHY] Using direct DB search (search_term already translated)")
+        matches = partial_search_icd9(search_term, limit=50)
         
         # If synonyms provided, search for them too and merge results
         if synonyms and isinstance(synonyms, list):
@@ -2799,6 +2898,204 @@ def endpoint_translation_stats(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# 🤖 SMART LOOKUP ENDPOINTS (AI + Database)
+# ============================================================
+
+def endpoint_icd10_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    ICD-10 Smart Lookup dengan AI Normalization (RAG-based)
+    
+    Uses: services/icd10_ai_normalizer.py → lookup_icd10_smart_with_rag()
+    
+    Request format:
+    {
+        "search_term": "paru2 basah"  // User input (bisa Indonesia/informal)
+    }
+    
+    Response format:
+    {
+        "status": "success",
+        "result": {
+            "flow": "direct" | "suggestion" | "ai_recommendations" | "not_found",
+            "requires_modal": bool,
+            "selected_code": "J18.9",  // If direct match
+            "selected_name": "Pneumonia, unspecified",
+            "subcategories": {...},  // If direct match
+            "suggestions": [...],  // If requires user selection
+            "ai_used": bool,
+            "normalized_term": "pneumonia",
+            "ai_reasoning": "...",
+            "message": "..."
+        }
+    }
+    """
+    try:
+        search_term = request_data.get("search_term", "").strip()
+        
+        if not search_term:
+            return {
+                "status": "error",
+                "message": "search_term is required"
+            }
+        
+        print(f"[ICD10_SMART_LOOKUP] Request: {search_term}")
+        
+        # Import dan panggil smart lookup
+        from services.icd10_ai_normalizer import lookup_icd10_smart_with_rag
+        
+        result = lookup_icd10_smart_with_rag(search_term)
+        
+        print(f"[ICD10_SMART_LOOKUP] Flow: {result.get('flow')}, AI Used: {result.get('ai_used')}")
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        print(f"[ICD10_SMART_LOOKUP] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"ICD-10 smart lookup failed: {str(e)}"
+        }
+
+
+def endpoint_icd9_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    ICD-9 Smart Lookup dengan AI Normalization
+    
+    Uses: services/icd9_smart_service.py → lookup_icd9_procedure()
+    
+    Request format:
+    {
+        "procedure_input": "rontgen thorax"  // User input
+    }
+    
+    Response format:
+    {
+        "status": "success",
+        "result": {
+            "flow": "exact" | "partial" | "ai_normalized" | "not_found",
+            "matched_code": "87.44",  // If exact match
+            "matched_name": "Routine chest X-ray",
+            "source": "database_exact" | "database_partial" | "ai_normalized",
+            "confidence": 100,
+            "suggestions": [...],  // If partial/ai_normalized
+            "ai_used": bool,
+            "normalized_term": "chest x-ray",
+            "message": "..."
+        }
+    }
+    """
+    try:
+        procedure_input = request_data.get("procedure_input", "").strip()
+        
+        if not procedure_input:
+            return {
+                "status": "error",
+                "message": "procedure_input is required"
+            }
+        
+        print(f"[ICD9_SMART_LOOKUP] Request: {procedure_input}")
+        
+        # Import dan panggil smart lookup (NEW: Uses AI normalizer like ICD-10)
+        from services.icd9_ai_normalizer import lookup_icd9_smart_with_rag
+        
+        result = lookup_icd9_smart_with_rag(procedure_input)
+        
+        print(f"[ICD9_SMART_LOOKUP] Flow: {result.get('flow')}, AI Used: {result.get('ai_used')}")
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        print(f"[ICD9_SMART_LOOKUP] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"ICD-9 smart lookup failed: {str(e)}"
+        }
+
+
+def endpoint_fornas_smart_lookup(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    FORNAS Smart Lookup dengan AI Normalization (English → Indonesian)
+    
+    Uses: services/fornas_normalize_service.py → lookup_fornas_smart()
+    
+    Request format:
+    {
+        "drug_input": "ceftriaxone"  // User input (bisa English/typo)
+    }
+    
+    Response format:
+    {
+        "status": "success",
+        "result": {
+            "flow": "direct" | "partial" | "ai_normalized" | "not_found",
+            "drug_name": "seftriakson",
+            "normalized_name": "seftriakson",
+            "categories": [
+                {
+                    "generic_name": "seftriakson",
+                    "kelas_terapi": "Anti Infeksi",
+                    "sub_kelas_terapi": "Antibiotik Betalaktam",
+                    "total_variants": 5,
+                    "details": [
+                        {
+                            "kode_fornas": "FOR001",
+                            "obat_name": "Ceftriaxone 1 g injeksi",
+                            "sediaan_kekuatan": "Injeksi 1 g/vial",
+                            "restriksi_penggunaan": "..."
+                        }
+                    ]
+                }
+            ],
+            "ai_used": bool,
+            "confidence": 95,
+            "message": "..."
+        }
+    }
+    """
+    try:
+        drug_input = request_data.get("drug_input", "").strip()
+        
+        if not drug_input:
+            return {
+                "status": "error",
+                "message": "drug_input is required"
+            }
+        
+        print(f"[FORNAS_SMART_LOOKUP] Request: {drug_input}")
+        
+        # Import dan panggil smart lookup
+        from services.fornas_normalize_service import lookup_fornas_smart
+        
+        result = lookup_fornas_smart(drug_input)
+        
+        print(f"[FORNAS_SMART_LOOKUP] Flow: {result.get('flow')}, AI Used: {result.get('ai_used')}")
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        print(f"[FORNAS_SMART_LOOKUP] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"FORNAS smart lookup failed: {str(e)}"
+        }
+
+
+# ============================================================
 # 📌 ENDPOINT REGISTRY - untuk integrasi dengan main router
 # ============================================================
 # IMPORTANT: Dictionary ini HARUS di akhir file setelah semua fungsi didefinisikan
@@ -2832,7 +3129,11 @@ LITE_ENDPOINTS = {
     "translate_procedure_v2": endpoint_translate_procedure_v2,
     "search_medical_terms": endpoint_search_medical_terms,
     "translation_stats": endpoint_translation_stats,
-    "predict_inacbg": None  # Will be defined below
+    "predict_inacbg": None,  # Will be defined below
+    # Smart Lookup endpoints (AI + Database)
+    "icd10_smart_lookup": endpoint_icd10_smart_lookup,
+    "icd9_smart_lookup": endpoint_icd9_smart_lookup,
+    "fornas_smart_lookup": endpoint_fornas_smart_lookup,
 }
 
 
